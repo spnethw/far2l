@@ -204,6 +204,25 @@ add_subdirectory (WinPort)
 add_subdirectory (utils)
 add_subdirectory (far2l)
 
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_compile_options(far2l
+        PRIVATE
+            $<$<CONFIG:Debug>:-g>
+            $<$<CONFIG:Debug>:-fno-omit-frame-pointer>
+    )
+
+    target_compile_options(far2l
+        PRIVATE
+            $<$<CONFIG:Debug>:-fvisibility=default>
+    )
+
+    target_link_options(far2l
+        PRIVATE
+            $<$<AND:$<CONFIG:Debug>,$<NOT:$<PLATFORM_ID:Darwin>>>:-rdynamic>
+            $<$<AND:$<CONFIG:Debug>,$<PLATFORM_ID:Darwin>>:-Wl,-export_dynamic>
+    )
+endif()
+
 if (NOT ${USEWX})
     message(STATUS "Building without GUI/wxWidgets backend due to USEWX=${USEWX}")
 else()

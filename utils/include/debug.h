@@ -28,7 +28,9 @@
 #include <iterator>
 #include <algorithm>
 #include <array>
+#include <dlfcn.h>
 #include "WideMB.h"
+#include <map>
 
 
 /** This ABORT_* / ASSERT_* have following distinctions comparing to abort/assert:
@@ -52,6 +54,25 @@ void FN_NORETURN FN_PRINTF_ARGS(1) Panic(const char *format, ...) noexcept;
 #define DBGLINE fprintf(stderr, "%d %d @%s\n", getpid(), __LINE__, __FILE__)
 
 
+// Platform-specific includes for stack trace functionality
+#if !defined(__FreeBSD__) && !defined(__DragonFly__) && !defined(__MUSL__) && !defined(__UCLIBC__) && !defined(__HAIKU__) && !defined(__ANDROID__) // todo: pass to linker -lexecinfo under BSD and then may remove this ifndef
+# include <execinfo.h>
+# define HAS_BACKTRACE
+#endif
+
+#if defined(__has_include)
+#if __has_include(<cxxabi.h>)
+# include <cxxabi.h>
+# define HAS_CXX_DEMANGLE 1
+#endif
+#else
+#if defined(__GLIBCXX__) || defined(__GLIBCPP__) || ((defined(__GNUC__) || defined(__clang__)) && !defined(__APPLE__))
+# include <cxxabi.h>
+# define HAS_CXX_DEMANGLE 1
+#endif
+#endif
+
+
 namespace Dumper {
 
 	struct DumperConfig {
@@ -66,6 +87,12 @@ namespace Dumper {
 		static constexpr size_t HEXDUMP_MAX_LENGTH = 1024 * 1024;
 
 		static constexpr std::size_t CONTAINERS_MAX_INDENT_LEVEL = 32;
+
+		static constexpr size_t STACKTRACE_MAX_FRAMES = 64;
+		static constexpr size_t STACKTRACE_SKIP_FRAMES = 2;
+		static constexpr bool STACKTRACE_SHOW_ADDRESSES = true;
+		static constexpr bool STACKTRACE_DEMANGLE_NAMES = true;
+		static constexpr bool STACKTRACE_SHOW_ADDR2LINE_INFO = true;
 	};
 
 
@@ -164,6 +191,165 @@ namespace Dumper {
 
 	template <typename T>
 	inline constexpr bool is_container_v = is_container<T>::value;
+
+
+	// ****************************************************************************************************
+	// Stack trace support functionality
+	// ****************************************************************************************************
+
+
+	inline std::string DemangleName(const char* mangled_name)
+	{
+		if (!mangled_name || !*mangled_name) return "[unknown]";
+#ifdef HAS_CXX_DEMANGLE
+		try {
+			int status = 0;
+			char* demangled = abi::__cxa_demangle(mangled_name, nullptr, nullptr, &status);
+			std::string res = (status == 0 && demangled && *demangled) ? demangled : mangled_name;
+			std::free(demangled);
+			return res;
+		} catch(...) {
+			return std::string(mangled_name);
+		}
+#else
+		return std::string(mangled_name);
+#endif
+	}
+
+
+	inline std::string HexAddr(uintptr_t v)
+	{
+		std::ostringstream os;
+		os << "0x" << std::hex << v;
+		return os.str();
+	}
+
+
+	inline std::string FormatFrameUsingDladdr(void* raw_addr, uintptr_t &out_module_base, std::string &out_module_name)
+	{
+		out_module_base = 0;
+		out_module_name.clear();
+		std::ostringstream frame_stream;
+
+		Dl_info dl_info;
+		if (dladdr(raw_addr, &dl_info) != 0) {
+			out_module_base = reinterpret_cast<uintptr_t>(dl_info.dli_fbase);
+			if (dl_info.dli_fname) {
+				out_module_name = dl_info.dli_fname; // full path for addr2line
+			}
+			// prepare printed fields
+			uintptr_t addr = reinterpret_cast<uintptr_t>(raw_addr);
+			uintptr_t symbol_addr = dl_info.dli_saddr ? reinterpret_cast<uintptr_t>(dl_info.dli_saddr) : 0;
+			uintptr_t offset_from_module = (out_module_base != 0 && addr >= out_module_base) ? (addr - out_module_base) : addr;
+			uintptr_t offset_from_symbol = (symbol_addr != 0) ? (addr - symbol_addr) : 0;
+
+			std::string func = (dl_info.dli_sname && *dl_info.dli_sname) ? std::string(dl_info.dli_sname) : std::string("[unknown]");
+
+			if constexpr (DumperConfig::STACKTRACE_DEMANGLE_NAMES) {
+				if (!func.empty() && func != "[unknown]") {
+					func = DemangleName(func.c_str());
+				}
+			}
+
+			// module filename for display
+			std::string module_short = dl_info.dli_fname ? std::string(dl_info.dli_fname) : std::string("[module?]");
+			size_t slash = module_short.find_last_of('/');
+			if (slash != std::string::npos && slash + 1 < module_short.size()) {
+				module_short = module_short.substr(slash + 1);
+			}
+
+
+			frame_stream << module_short;
+			if (!func.empty()) {
+				frame_stream << " :: " << func;
+			}
+
+			if constexpr (DumperConfig::STACKTRACE_SHOW_ADDRESSES) {
+				frame_stream << " [absolute-address: " << HexAddr(addr) << "]";
+				if (out_module_base) {
+					frame_stream << " [module-base: " << HexAddr(out_module_base) << "]";
+				}
+				frame_stream << " [offset-from-module: " << HexAddr(offset_from_module) << "]";
+				if (symbol_addr) {
+					frame_stream << " [offset-from-symbol: " << HexAddr(offset_from_symbol) << "]";
+				}
+			}
+		}
+		return frame_stream.str();
+	}
+
+
+	struct StackTrace
+	{
+		std::vector<std::string> frames;
+		std::vector<std::string> addr2line_invocations;
+		std::map<std::string, std::vector<uintptr_t>> per_module_addrs;
+
+
+		StackTrace() { CaptureStackTrace(); }
+
+		void CaptureStackTrace() {
+#ifdef HAS_BACKTRACE
+			void* raw_frames[DumperConfig::STACKTRACE_MAX_FRAMES];
+			int frames_obtained = backtrace(raw_frames, static_cast<int>(DumperConfig::STACKTRACE_MAX_FRAMES));
+			if (frames_obtained <= 0) {
+				frames.emplace_back("[no stack frames available]");
+				return;
+			}
+
+			size_t frame_count = static_cast<size_t>(frames_obtained);
+			if (frame_count <= DumperConfig::STACKTRACE_SKIP_FRAMES) {
+				frames.emplace_back("[no stack frames available]");
+				return;
+			}
+
+			frames.reserve(frame_count - DumperConfig::STACKTRACE_SKIP_FRAMES);
+
+			for (size_t i = DumperConfig::STACKTRACE_SKIP_FRAMES; i < frame_count; ++i) {
+				void* addr = raw_frames[i];
+				// addr correction: many tools prefer addr-1 to point inside the calling instruction
+				uintptr_t corrected_addr = reinterpret_cast<uintptr_t>(addr);
+				if (corrected_addr > 0) --corrected_addr;
+
+				uintptr_t module_base = 0;
+				std::string module_name;
+				std::string line = FormatFrameUsingDladdr(reinterpret_cast<void*>(corrected_addr), module_base, module_name);
+
+				frames.emplace_back(std::move(line));
+
+				// store for addr2line — relative to module base
+				if constexpr (DumperConfig::STACKTRACE_SHOW_ADDR2LINE_INFO) {
+					std::string key = module_name;
+					if (key.empty()) {
+						continue; // skip adding addresses for unknown module
+					}
+					uintptr_t rel_addr = (module_base != 0) ? (corrected_addr - module_base) : corrected_addr;
+					auto &entry = per_module_addrs[key];
+					entry.push_back(rel_addr);
+				}
+			}
+
+			// Append addr2line commands per module (helpful for user to run)
+			if constexpr (DumperConfig::STACKTRACE_SHOW_ADDR2LINE_INFO) {
+				for (const auto &kv : per_module_addrs) {
+					const std::string &module_name = kv.first;
+					const auto &addrs = kv.second;
+					if (addrs.empty()) continue;
+					std::ostringstream command_line_stream;
+					command_line_stream << "addr2line -e \"" << module_name << "\" -f -C -i";
+					for (uintptr_t a : addrs) {
+						command_line_stream << " " << HexAddr(a);
+					}
+					addr2line_invocations.emplace_back(command_line_stream.str());
+				}
+			}
+
+#else
+			frames.emplace_back("[stack trace not available on this platform]");
+#endif
+		}
+	};
+
 
 	// ****************************************************************************************************
 	// Formatting variable names/values according to their nesting level when displaying containers
@@ -598,6 +784,25 @@ namespace Dumper {
 		log_stream << "|=> " << var_name << " = " << decoded << '\n';
 	}
 
+
+	// ****************************************************************************************************
+	// Support for [STACKTRACE]
+	// ****************************************************************************************************
+
+
+	inline void DumpValue(
+		std::ostringstream& log_stream,
+		std::string_view var_name,
+		const StackTrace& stack_trace,
+		const IndentInfo& indent_info = IndentInfo())
+	{
+		LogVarWithIndentation(log_stream, "[STACKTRACE]", nullptr, indent_info, false);
+		DumpValue(log_stream, "[FRAMES]", stack_trace.frames, indent_info.CreateChild(DumperConfig::STACKTRACE_SHOW_ADDR2LINE_INFO));
+		if constexpr (DumperConfig::STACKTRACE_SHOW_ADDR2LINE_INFO) {
+			DumpValue(log_stream, "[ADDR2LINE]", stack_trace.addr2line_invocations, indent_info.CreateChild(false));
+		}
+	}
+
 	// ****************************************************************************************************
 	// Helper code for logging
 	// ****************************************************************************************************
@@ -716,6 +921,7 @@ namespace Dumper {
 	}
 
 
+
 	inline void ReportDumpVError(std::ostringstream &log_stream)
 	{
 		const std::string error_message =
@@ -763,3 +969,4 @@ namespace Dumper {
 #define DSTRBUF(ptr,length) #ptr, Dumper::StrBufWrapper(ptr,length)
 #define DCONT(container,max_elements) #container, Dumper::ContainerWrapper(container,max_elements)
 #define DFLAGS(var, treat_as) #var, Dumper::FlagsWrapper(var, treat_as)
+#define DSTACKTRACE() "[STACKTRACE]", Dumper::StackTrace()
