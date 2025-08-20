@@ -116,7 +116,7 @@ bool CommandLine::ProcessOSCommands(const wchar_t *CmdLine, bool SeparateWindow,
 		if (PushDirStackSize > 0) {
 			--PushDirStackSize;
 		}
-#if 0
+#if 1
 	} else if (ecl[0]=="crash" && ecl.size() == 2 && ecl[1]=="far") {
 		*(volatile int *)100 = 200;
 #endif
