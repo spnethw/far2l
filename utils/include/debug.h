@@ -63,12 +63,12 @@ void FN_NORETURN FN_PRINTF_ARGS(1) Panic(const char *format, ...) noexcept;
 #if defined(__has_include)
 #if __has_include(<cxxabi.h>)
 # include <cxxabi.h>
-# define HAS_CXX_DEMANGLE 1
+# define HAS_CXX_DEMANGLE
 #endif
 #else
 #if defined(__GLIBCXX__) || defined(__GLIBCPP__) || ((defined(__GNUC__) || defined(__clang__)) && !defined(__APPLE__))
 # include <cxxabi.h>
-# define HAS_CXX_DEMANGLE 1
+# define HAS_CXX_DEMANGLE
 #endif
 #endif
 
@@ -76,6 +76,7 @@ void FN_NORETURN FN_PRINTF_ARGS(1) Panic(const char *format, ...) noexcept;
 namespace Dumper {
 
 	struct DumperConfig {
+
 		static constexpr bool WRITE_LOG_TO_FILE = true;
 		static constexpr char LOG_FILENAME[] = "far2l_debug.log";
 
@@ -88,11 +89,16 @@ namespace Dumper {
 
 		static constexpr std::size_t CONTAINERS_MAX_INDENT_LEVEL = 32;
 
-		static constexpr size_t STACKTRACE_MAX_FRAMES = 64;
-		static constexpr size_t STACKTRACE_SKIP_FRAMES = 2;
 		static constexpr bool STACKTRACE_SHOW_ADDRESSES = true;
 		static constexpr bool STACKTRACE_DEMANGLE_NAMES = true;
-		static constexpr bool STACKTRACE_SHOW_ADDR2LINE_INFO = true;
+
+		enum class AdjustStrategy { Off, PreferAdjusted, PreferOriginal };
+
+		static constexpr AdjustStrategy STACKTRACE_ADJUST_RETURN_ADDRESSES = AdjustStrategy::Off;
+
+		static constexpr bool STACKTRACE_SHOW_CMDLINE_TOOL_COMMANDS = true;
+		static constexpr size_t STACKTRACE_MAX_FRAMES = 64;
+		static constexpr size_t STACKTRACE_SKIP_FRAMES = 2;
 	};
 
 
@@ -200,12 +206,12 @@ namespace Dumper {
 
 	inline std::string DemangleName(const char* mangled_name)
 	{
-		if (!mangled_name || !*mangled_name) return "[unknown]";
+		if (!mangled_name || !*mangled_name) return "[unknown-function]";
 #ifdef HAS_CXX_DEMANGLE
 		try {
 			int status = 0;
 			char* demangled = abi::__cxa_demangle(mangled_name, nullptr, nullptr, &status);
-			std::string res = (status == 0 && demangled && *demangled) ? demangled : mangled_name;
+			std::string res = (status == 0 && demangled) ? demangled : mangled_name;
 			std::free(demangled);
 			return res;
 		} catch(...) {
@@ -225,125 +231,257 @@ namespace Dumper {
 	}
 
 
-	inline std::string FormatFrameUsingDladdr(void* raw_addr, uintptr_t &out_module_base, std::string &out_module_name)
+	inline bool TryAdjustReturnAddress(const void* in, const void*& out)
 	{
-		out_module_base = 0;
-		out_module_name.clear();
-		std::ostringstream frame_stream;
+		out = in;
+		if (in == nullptr) return false;
+		auto original = reinterpret_cast<uintptr_t>(in);
 
-		Dl_info dl_info;
-		if (dladdr(raw_addr, &dl_info) != 0) {
-			out_module_base = reinterpret_cast<uintptr_t>(dl_info.dli_fbase);
-			if (dl_info.dli_fname) {
-				out_module_name = dl_info.dli_fname; // full path for addr2line
-			}
-			// prepare printed fields
-			uintptr_t addr = reinterpret_cast<uintptr_t>(raw_addr);
-			uintptr_t symbol_addr = dl_info.dli_saddr ? reinterpret_cast<uintptr_t>(dl_info.dli_saddr) : 0;
-			uintptr_t offset_from_module = (out_module_base != 0 && addr >= out_module_base) ? (addr - out_module_base) : addr;
-			uintptr_t offset_from_symbol = (symbol_addr != 0) ? (addr - symbol_addr) : 0;
-
-			std::string func = (dl_info.dli_sname && *dl_info.dli_sname) ? std::string(dl_info.dli_sname) : std::string("[unknown]");
-
-			if constexpr (DumperConfig::STACKTRACE_DEMANGLE_NAMES) {
-				if (!func.empty() && func != "[unknown]") {
-					func = DemangleName(func.c_str());
-				}
-			}
-
-			// module filename for display
-			std::string module_short = dl_info.dli_fname ? std::string(dl_info.dli_fname) : std::string("[module?]");
-			size_t slash = module_short.find_last_of('/');
-			if (slash != std::string::npos && slash + 1 < module_short.size()) {
-				module_short = module_short.substr(slash + 1);
-			}
-
-
-			frame_stream << module_short;
-			if (!func.empty()) {
-				frame_stream << " :: " << func;
-			}
-
-			if constexpr (DumperConfig::STACKTRACE_SHOW_ADDRESSES) {
-				frame_stream << " [absolute-address: " << HexAddr(addr) << "]";
-				if (out_module_base) {
-					frame_stream << " [module-base: " << HexAddr(out_module_base) << "]";
-				}
-				frame_stream << " [offset-from-module: " << HexAddr(offset_from_module) << "]";
-				if (symbol_addr) {
-					frame_stream << " [offset-from-symbol: " << HexAddr(offset_from_symbol) << "]";
-				}
+#if defined(__arm__) && !defined(__aarch64__)
+		if (original & 1u) {
+			auto adjusted = original & ~uintptr_t(1);
+			if (adjusted != 0) {
+				out = reinterpret_cast<const void*>(adjusted);
+				return true;
 			}
 		}
-		return frame_stream.str();
+		return false;
+#endif
+
+#if defined(__aarch64__)
+		if (original > 4) {
+			auto adjusted = original - 4;
+			if (adjusted != 0) {
+				out = reinterpret_cast<const void*>(adjusted);
+				return true;
+			}
+		}
+		return false;
+#endif
+
+
+#if defined(__x86_64__) || defined(__i386__) || defined(_M_X64) || defined(_M_IX86)
+		if (original > 1) {
+			auto adjusted = original - 1;
+			if (adjusted != 0) {
+				out = reinterpret_cast<const void*>(adjusted);
+				return true;
+			}
+		}
+		return false;
+#endif
+
+		return false;
+	}
+
+
+	struct DlAddrResult
+	{
+		int dladdr_ret = 0;
+		Dl_info info = {};
+		const void* used_address = nullptr;
+		bool used_adjusted = false;
+	};
+
+
+	inline DlAddrResult SymbolicateWithAdjustStrategy(const void* original, DumperConfig::AdjustStrategy strategy)
+	{
+		DlAddrResult result;
+		result.used_address = original;
+		result.used_adjusted = false;
+
+		auto TryDlAddr = [&](const void* addr) -> int {
+			Dl_info info_local;
+			int dladdr_ret = dladdr(addr, &info_local);
+			if (dladdr_ret) {
+				result.dladdr_ret = dladdr_ret;
+				result.info = info_local;
+				result.used_address = addr;
+			}
+			return dladdr_ret;
+		};
+
+		if (strategy == DumperConfig::AdjustStrategy::Off) {
+			TryDlAddr(original);
+			return result;
+		}
+
+		const void* adjusted = nullptr;
+		bool has_adjusted = TryAdjustReturnAddress(original, adjusted);
+
+		if (strategy == DumperConfig::AdjustStrategy::PreferAdjusted) {
+			if (has_adjusted) {
+				if (TryDlAddr(adjusted)) { result.used_adjusted = true; return result; }
+			}
+			TryDlAddr(original);
+			return result;
+		}
+
+		if (TryDlAddr(original)) { result.used_adjusted = false; return result; }
+		if (has_adjusted) {
+			if (TryDlAddr(adjusted)) { result.used_adjusted = true; return result; }
+		}
+		return result;
 	}
 
 
 	struct StackTrace
 	{
 		std::vector<std::string> frames;
-		std::vector<std::string> addr2line_invocations;
-		std::map<std::string, std::vector<uintptr_t>> per_module_addrs;
-
+		std::vector<std::string> cmdline_tool_invocations;
 
 		StackTrace() { CaptureStackTrace(); }
 
-		void CaptureStackTrace() {
-#ifdef HAS_BACKTRACE
-			void* raw_frames[DumperConfig::STACKTRACE_MAX_FRAMES];
-			int frames_obtained = backtrace(raw_frames, static_cast<int>(DumperConfig::STACKTRACE_MAX_FRAMES));
-			if (frames_obtained <= 0) {
-				frames.emplace_back("[no stack frames available]");
-				return;
+	private:
+		struct FrameInfo
+		{
+			uintptr_t original_address;
+			uintptr_t used_address;
+			bool used_adjusted;
+			std::string module_shortname;
+			std::string module_fullname;
+			uintptr_t module_base;
+			std::string func_name;
+			uintptr_t symbol_addr;
+			bool dladdr_success;
+		};
+
+
+		static FrameInfo ProcessFrame(const void* raw_addr)
+		{
+			FrameInfo frame_info;
+			frame_info.original_address = reinterpret_cast<uintptr_t>(raw_addr);
+
+			auto dladdr_result = SymbolicateWithAdjustStrategy(raw_addr, DumperConfig::STACKTRACE_ADJUST_RETURN_ADDRESSES);
+
+			frame_info.used_address = reinterpret_cast<uintptr_t>(dladdr_result.used_address);
+			frame_info.used_adjusted = dladdr_result.used_adjusted;
+			frame_info.dladdr_success = dladdr_result.dladdr_ret != 0;
+
+			if (frame_info.dladdr_success) {
+
+				if (dladdr_result.info.dli_fname && dladdr_result.info.dli_fname[0]) {
+					frame_info.module_fullname = dladdr_result.info.dli_fname;
+					auto last_slash_pos = frame_info.module_fullname.find_last_of("/");
+					frame_info.module_shortname = (last_slash_pos == std::string::npos)
+												? frame_info.module_fullname
+												: frame_info.module_fullname.substr(last_slash_pos + 1);
+				} else {
+					frame_info.module_shortname = "[unknown-module]";
+				}
+
+
+				frame_info.module_base = reinterpret_cast<uintptr_t>(dladdr_result.info.dli_fbase);
+
+
+				if (dladdr_result.info.dli_sname && dladdr_result.info.dli_sname[0]) {
+					frame_info.func_name = DumperConfig::STACKTRACE_DEMANGLE_NAMES
+										 ? DemangleName(dladdr_result.info.dli_sname)
+										 : dladdr_result.info.dli_sname;
+				} else {
+					frame_info.func_name = "[unknown-function]";
+				}
+
+				frame_info.symbol_addr = reinterpret_cast<uintptr_t>(dladdr_result.info.dli_saddr);
+
+			} else {
+
+				frame_info.module_shortname = "[unknown-module]";
+				frame_info.func_name = "[unknown-function]";
 			}
 
-			size_t frame_count = static_cast<size_t>(frames_obtained);
+			return frame_info;
+		}
+
+
+		static uintptr_t CalculateOffset(uintptr_t address, uintptr_t base) {
+			return (address >= base) ? (address - base) : 0;
+		}
+
+
+		static std::string FormatFrame(const FrameInfo& frame_info)
+		{
+			std::ostringstream frame_stream;
+			frame_stream << frame_info.module_shortname << " :: " << frame_info.func_name;
+
+			if constexpr (DumperConfig::STACKTRACE_SHOW_ADDRESSES) {
+
+				frame_stream << " :: abs=" << HexAddr(frame_info.original_address);
+
+				if (frame_info.used_adjusted) {
+					frame_stream << " (*adjusted: " << HexAddr(frame_info.used_address) << ")";
+				}
+
+				if (frame_info.module_base) {
+					uintptr_t off_mod = CalculateOffset(frame_info.original_address, frame_info.module_base);
+					frame_stream << ", mod_base=" << HexAddr(frame_info.module_base)
+								 << ", +off_mod=" << HexAddr(off_mod);
+				}
+
+				if (frame_info.symbol_addr) {
+					uintptr_t off_sym = CalculateOffset(frame_info.original_address, frame_info.symbol_addr);
+					frame_stream << ", +off_sym=" << HexAddr(off_sym);
+				}
+			}
+
+			return frame_stream.str();
+		}
+
+
+		static void CollectCmdlineToolData(const FrameInfo& info, std::map<std::string, std::vector<uintptr_t>>& per_module_addrs)
+		{
+			if (!info.module_fullname.empty() && info.module_base) {
+				uintptr_t relative_address = info.original_address - info.module_base;
+				per_module_addrs[info.module_fullname].push_back(relative_address);
+			}
+		}
+
+
+		void GenerateCmdlineToolCommands(const std::map<std::string, std::vector<uintptr_t>>& per_module_addrs)
+		{
+			for (const auto& [module_path, addresses] : per_module_addrs) {
+				if (addresses.empty()) continue;
+
+				std::ostringstream cmdline_stream;
+				cmdline_stream << "addr2line -e '" << module_path << "' -f -C";
+
+				for (uintptr_t addr : addresses) {
+					cmdline_stream << " " << HexAddr(addr);
+				}
+
+				cmdline_tool_invocations.emplace_back(cmdline_stream.str());
+			}
+		}
+
+	public:
+		void CaptureStackTrace()
+		{
+#ifdef HAS_BACKTRACE
+			static_assert(DumperConfig::STACKTRACE_MAX_FRAMES <= 0x7fffffff, "STACKTRACE_MAX_FRAMES too large for backtrace()");
+
+			void* raw_frames[DumperConfig::STACKTRACE_MAX_FRAMES];
+			auto frame_count = static_cast<size_t>(backtrace(raw_frames, DumperConfig::STACKTRACE_MAX_FRAMES));
+
 			if (frame_count <= DumperConfig::STACKTRACE_SKIP_FRAMES) {
 				frames.emplace_back("[no stack frames available]");
 				return;
 			}
 
 			frames.reserve(frame_count - DumperConfig::STACKTRACE_SKIP_FRAMES);
+			std::map<std::string, std::vector<uintptr_t>> per_module_addrs;
 
 			for (size_t i = DumperConfig::STACKTRACE_SKIP_FRAMES; i < frame_count; ++i) {
-				void* addr = raw_frames[i];
-				// addr correction: many tools prefer addr-1 to point inside the calling instruction
-				uintptr_t corrected_addr = reinterpret_cast<uintptr_t>(addr);
-				if (corrected_addr > 0) --corrected_addr;
+				FrameInfo frame_info = ProcessFrame(raw_frames[i]);
+				frames.emplace_back(FormatFrame(frame_info));
 
-				uintptr_t module_base = 0;
-				std::string module_name;
-				std::string line = FormatFrameUsingDladdr(reinterpret_cast<void*>(corrected_addr), module_base, module_name);
-
-				frames.emplace_back(std::move(line));
-
-				// store for addr2line — relative to module base
-				if constexpr (DumperConfig::STACKTRACE_SHOW_ADDR2LINE_INFO) {
-					std::string key = module_name;
-					if (key.empty()) {
-						continue; // skip adding addresses for unknown module
-					}
-					uintptr_t rel_addr = (module_base != 0) ? (corrected_addr - module_base) : corrected_addr;
-					auto &entry = per_module_addrs[key];
-					entry.push_back(rel_addr);
+				if constexpr (DumperConfig::STACKTRACE_SHOW_CMDLINE_TOOL_COMMANDS) {
+					CollectCmdlineToolData(frame_info, per_module_addrs);
 				}
 			}
 
-			// Append addr2line commands per module (helpful for user to run)
-			if constexpr (DumperConfig::STACKTRACE_SHOW_ADDR2LINE_INFO) {
-				for (const auto &kv : per_module_addrs) {
-					const std::string &module_name = kv.first;
-					const auto &addrs = kv.second;
-					if (addrs.empty()) continue;
-					std::ostringstream command_line_stream;
-					command_line_stream << "addr2line -e \"" << module_name << "\" -f -C -i";
-					for (uintptr_t a : addrs) {
-						command_line_stream << " " << HexAddr(a);
-					}
-					addr2line_invocations.emplace_back(command_line_stream.str());
-				}
+			if constexpr (DumperConfig::STACKTRACE_SHOW_CMDLINE_TOOL_COMMANDS) {
+				GenerateCmdlineToolCommands(per_module_addrs);
 			}
-
 #else
 			frames.emplace_back("[stack trace not available on this platform]");
 #endif
@@ -797,9 +935,9 @@ namespace Dumper {
 		const IndentInfo& indent_info = IndentInfo())
 	{
 		LogVarWithIndentation(log_stream, "[STACKTRACE]", nullptr, indent_info, false);
-		DumpValue(log_stream, "[FRAMES]", stack_trace.frames, indent_info.CreateChild(DumperConfig::STACKTRACE_SHOW_ADDR2LINE_INFO));
-		if constexpr (DumperConfig::STACKTRACE_SHOW_ADDR2LINE_INFO) {
-			DumpValue(log_stream, "[ADDR2LINE]", stack_trace.addr2line_invocations, indent_info.CreateChild(false));
+		DumpValue(log_stream, "[FRAMES]", stack_trace.frames, indent_info.CreateChild(DumperConfig::STACKTRACE_SHOW_CMDLINE_TOOL_COMMANDS));
+		if constexpr (DumperConfig::STACKTRACE_SHOW_CMDLINE_TOOL_COMMANDS) {
+			DumpValue(log_stream, "[CMDLINE TOOL]", stack_trace.cmdline_tool_invocations, indent_info.CreateChild(false));
 		}
 	}
 
