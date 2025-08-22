@@ -294,6 +294,11 @@ The stack trace output includes:
 
 This functionality is highly configurable through various compile-time options described in [section 4](#4-configuration-options).
 
+> **Warning: Experimental Feature**
+> 
+> Stack trace functionality is currently considered experimental and has limited platform support. It is guaranteed to work only on Linux and requires explicit enablement during build configuration:
+> `-DCMAKE_BUILD_TYPE=Debug -DDUMPER_STACKTRACE_SUPPORT=ON`
+
 
 ## 4. Configuration Options
 
@@ -347,11 +352,13 @@ Here is the full list:
 
 * `STACKTRACE_ADJUST_RETURN_ADDRESSES`
 
-	Specifies the strategy for adjusting return addresses to improve symbol resolution accuracy. Return addresses typically point to the instruction after a function call, but for debugging purposes, the call instruction itself is often more meaningful. Available strategies:
+	Specifies the strategy for adjusting return addresses to improve symbol resolution accuracy. Return addresses typically point to the instruction after a function call, but for debugging purposes, the call instruction itself is often more meaningful.
 
-        Off: Use original addresses without modification.
-        PreferAdjusted: Try adjusted addresses first, fall back to original if dladdr() fails.
-        PreferOriginal: Try original addresses first, fall back to adjusted if dladdr() fails.
+	Available strategies:
+
+	- Off: Use original addresses without modification.
+	- PreferAdjusted: Try adjusted addresses first, fall back to original if dladdr() fails.
+	- PreferOriginal: Try original addresses first, fall back to adjusted if dladdr() fails.
 
 * `STACKTRACE_SHOW_CMDLINE_TOOL_COMMANDS`
 
