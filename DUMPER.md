@@ -268,6 +268,33 @@ mode_t mode = S_IFDIR | 0755;
 DUMP(DFLAGS(mode, Dumper::FlagsAs::UNIX_MODE));
 ```
 
+### 3.7. DSTACKTRACE
+
+Captures and logs a stack trace at the point of invocation.
+
+Use when you need to understand the call flow leading to a particular code location. The macro captures the current execution context and displays it as a sequence of function calls with associated memory addresses and module information. Stack trace resolution quality depends on platform capabilities and available debug symbols.
+
+**Syntax:**
+
+```cpp
+DSTACKTRACE()
+```
+
+
+**Usage:**
+
+```cpp
+DUMP(DSTACKTRACE());
+```
+
+The stack trace output includes:
+
+- **Frames Section.** Each frame shows: module short name, function name (demangled if available and enabled), memory addresses (absolute, module-relative, and symbol-relative offsets), adjustment indicators when return addresses have been modified for better symbol resolution. 
+- **Command-line Tool Section.** Ready-to-use shell commands for external debugging tools like addr2line, grouped by module. 
+
+This functionality is highly configurable through various compile-time options described in [section 4](#4-configuration-options).
+
+
 ## 4. Configuration Options
 
 The dumper behavior can be customized through the `DumperConfig` structure located at the beginning of `debug.h`.
