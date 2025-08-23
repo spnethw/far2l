@@ -214,7 +214,7 @@ namespace Dumper {
 
 		struct DlAddrResult
 		{
-			int dladdr_ret = 0;
+			int dladdr_success = false;
 			Dl_info info = {};
 			const void* used_address = nullptr;
 			bool used_adjusted = false;
@@ -223,22 +223,21 @@ namespace Dumper {
 
 		struct FrameInfo
 		{
-			uintptr_t original_address;
-			uintptr_t used_address;
-			bool used_adjusted;
-			std::string module_shortname;
-			std::string module_fullname;
-			uintptr_t module_base;
-			std::string func_name;
-			uintptr_t symbol_addr;
-			bool dladdr_success;
+			uintptr_t original_address = 0;
+			uintptr_t used_address = 0;
+			bool used_adjusted = false;
+			std::string module_shortname {};
+			std::string module_fullname {};
+			uintptr_t module_base = 0;
+			std::string func_name {};
+			uintptr_t symbol_addr = 0;
 		};
 
 
 
 		static std::string DemangleName(const char* mangled_name)
 		{
-			if (!mangled_name || !*mangled_name) return "[unknown-function]";
+			if (!mangled_name || !*mangled_name) return "";
 #ifdef HAS_CXX_DEMANGLE
 			try {
 				int status = 0;
@@ -297,17 +296,16 @@ namespace Dumper {
 		{
 			DlAddrResult result;
 			result.used_address = original;
-			result.used_adjusted = false;
 
-			auto TryDlAddr = [&](const void* addr) -> int {
+			auto TryDlAddr = [&](const void* addr) -> bool {
 				Dl_info info_local;
-				int dladdr_ret = dladdr(addr, &info_local);
-				if (dladdr_ret) {
-					result.dladdr_ret = dladdr_ret;
+				if (dladdr(addr, &info_local)) {
+					result.dladdr_success = true;
 					result.info = info_local;
 					result.used_address = addr;
+					return true;
 				}
-				return dladdr_ret;
+				return false;
 			};
 
 			if (strategy == DumperConfig::AdjustStrategy::Off) {
@@ -335,37 +333,27 @@ namespace Dumper {
 
 
 
-		static void PopulateFrameInfoOnSuccess(FrameInfo& frame_info, const DlAddrResult& dladdr_result)
+		static void PopulateFrameInfo(FrameInfo& frame_info, const DlAddrResult& dladdr_result)
 		{
-			const char* fname = dladdr_result.info.dli_fname;
-			const char* sname = dladdr_result.info.dli_sname;
-			bool valid_fname = fname && fname[0];
-			bool valid_sname = sname && sname[0];
-
-			frame_info.module_fullname = valid_fname ? fname : "";
-
-			if (valid_fname) {
-				const char* last_slash = strrchr(fname, '/');
-				frame_info.module_shortname = last_slash ? last_slash + 1 : fname;
-			} else {
-				frame_info.module_shortname = "[unknown-module]";
+			if (!dladdr_result.dladdr_success) {
+				return;
 			}
 
-			if (valid_sname) {
+			const char* fname = dladdr_result.info.dli_fname;
+			const char* sname = dladdr_result.info.dli_sname;
+
+			if (fname && *fname) {
+				frame_info.module_fullname = fname;
+				const char* last_slash = strrchr(fname, '/');
+				frame_info.module_shortname = last_slash ? last_slash + 1 : fname;
+			}
+
+			if (sname && *sname) {
 				frame_info.func_name = DumperConfig::STACKTRACE_DEMANGLE_NAMES ? DemangleName(sname) : sname;
-			} else {
-				frame_info.func_name = "[unknown-function]";
 			}
 
 			frame_info.module_base = reinterpret_cast<uintptr_t>(dladdr_result.info.dli_fbase);
 			frame_info.symbol_addr = reinterpret_cast<uintptr_t>(dladdr_result.info.dli_saddr);
-		}
-
-
-		static void PopulateFrameInfoOnFailure(FrameInfo& frame_info)
-		{
-			frame_info.module_shortname = "[unknown-module]";
-			frame_info.func_name = "[unknown-function]";
 		}
 
 
@@ -378,13 +366,9 @@ namespace Dumper {
 
 			frame_info.used_address = reinterpret_cast<uintptr_t>(dladdr_result.used_address);
 			frame_info.used_adjusted = dladdr_result.used_adjusted;
-			frame_info.dladdr_success = dladdr_result.dladdr_ret != 0;
 
-			if (frame_info.dladdr_success) {
-				PopulateFrameInfoOnSuccess(frame_info, dladdr_result);
-			} else {
-				PopulateFrameInfoOnFailure(frame_info);
-			}
+			PopulateFrameInfo(frame_info, dladdr_result);
+
 			return frame_info;
 		}
 
@@ -397,7 +381,11 @@ namespace Dumper {
 
 		static std::string FormatFrame(const FrameInfo& frame_info)
 		{
-			std::string result = frame_info.module_shortname + " :: " + frame_info.func_name;
+			std::string result;
+
+			result += (frame_info.module_shortname.empty() ? "[unknown-module]" : frame_info.module_shortname);
+			result += " :: ";
+			result += (frame_info.func_name.empty() ? "[unknown-function]" : frame_info.func_name);
 
 			if constexpr (DumperConfig::STACKTRACE_SHOW_ADDRESSES) {
 				result += " :: abs=" + HexAddr(frame_info.original_address);
@@ -465,7 +453,7 @@ namespace Dumper {
 			std::map<std::string, std::vector<uintptr_t>> per_module_addrs;
 
 			for (size_t i = DumperConfig::STACKTRACE_SKIP_FRAMES; i < frame_count; ++i) {
-				FrameInfo frame_info = ProcessFrame(raw_frames[i]);
+				auto frame_info = ProcessFrame(raw_frames[i]);
 				frames.emplace_back(FormatFrame(frame_info));
 
 				if constexpr (DumperConfig::STACKTRACE_SHOW_CMDLINE_TOOL_COMMANDS) {
