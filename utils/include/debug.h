@@ -337,29 +337,27 @@ namespace Dumper {
 
 		static void PopulateFrameInfoOnSuccess(FrameInfo& frame_info, const DlAddrResult& dladdr_result)
 		{
-			if (dladdr_result.info.dli_fname && dladdr_result.info.dli_fname[0]) {
-				frame_info.module_fullname = dladdr_result.info.dli_fname;
-				auto last_slash_pos = frame_info.module_fullname.find_last_of("/");				
-				frame_info.module_shortname = (last_slash_pos == std::string::npos)
-												  ? frame_info.module_fullname
-												  : frame_info.module_fullname.substr(last_slash_pos + 1);
+			const char* fname = dladdr_result.info.dli_fname;
+			const char* sname = dladdr_result.info.dli_sname;
+			bool valid_fname = fname && fname[0];
+			bool valid_sname = sname && sname[0];
 
+			frame_info.module_fullname = valid_fname ? fname : "";
+
+			if (valid_fname) {
+				const char* last_slash = strrchr(fname, '/');
+				frame_info.module_shortname = last_slash ? last_slash + 1 : fname;
 			} else {
 				frame_info.module_shortname = "[unknown-module]";
 			}
 
-
-			frame_info.module_base = reinterpret_cast<uintptr_t>(dladdr_result.info.dli_fbase);
-
-
-			if (dladdr_result.info.dli_sname && dladdr_result.info.dli_sname[0]) {
-				frame_info.func_name = DumperConfig::STACKTRACE_DEMANGLE_NAMES
-										   ? DemangleName(dladdr_result.info.dli_sname)
-										   : dladdr_result.info.dli_sname;
+			if (valid_sname) {
+				frame_info.func_name = DumperConfig::STACKTRACE_DEMANGLE_NAMES ? DemangleName(sname) : sname;
 			} else {
 				frame_info.func_name = "[unknown-function]";
 			}
 
+			frame_info.module_base = reinterpret_cast<uintptr_t>(dladdr_result.info.dli_fbase);
 			frame_info.symbol_addr = reinterpret_cast<uintptr_t>(dladdr_result.info.dli_saddr);
 		}
 
