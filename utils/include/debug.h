@@ -28,7 +28,48 @@
 #include <iterator>
 #include <algorithm>
 #include <array>
+#include <map>
+#include <dlfcn.h>
 #include "WideMB.h"
+#include <fcntl.h>
+
+#if defined(__linux__)
+#  include <elf.h>
+#  define HAS_ELF_ENHANCEMENT
+#endif
+
+#if defined(HAS_ELF_ENHANCEMENT) && !defined(ELF_PSEUDO_TYPES_DEFINED)
+#  if defined(__LP64__) || defined(_LP64)
+typedef Elf64_Ehdr Elf_Ehdr;
+typedef Elf64_Phdr Elf_Phdr;
+typedef Elf64_Shdr Elf_Shdr;
+typedef Elf64_Sym  Elf_Sym;
+#  else
+typedef Elf32_Ehdr Elf_Ehdr;
+typedef Elf32_Phdr Elf_Phdr;
+typedef Elf32_Shdr Elf_Shdr;
+typedef Elf32_Sym  Elf_Sym;
+#  endif
+#  define ELF_PSEUDO_TYPES_DEFINED
+#endif
+
+// Platform-specific includes for stack trace functionality
+#if !defined(__FreeBSD__) && !defined(__DragonFly__) && !defined(__MUSL__) && !defined(__UCLIBC__) && !defined(__HAIKU__) && !defined(__ANDROID__) // todo: pass to linker -lexecinfo under BSD and then may remove this ifndef
+# include <execinfo.h>
+# define HAS_BACKTRACE
+#endif
+
+#if defined(__has_include)
+# if __has_include(<cxxabi.h>)
+#   include <cxxabi.h>
+#   define HAS_CXX_DEMANGLE
+# endif
+#else
+# if defined(__GLIBCXX__) || defined(__GLIBCPP__) || ((defined(__GNUC__) || defined(__clang__)) && !defined(__APPLE__))
+#   include <cxxabi.h>
+#   define HAS_CXX_DEMANGLE
+# endif
+#endif
 
 
 /** This ABORT_* / ASSERT_* have following distinctions comparing to abort/assert:
@@ -66,6 +107,19 @@ namespace Dumper {
 		static constexpr size_t HEXDUMP_MAX_LENGTH = 1024 * 1024;
 
 		static constexpr std::size_t CONTAINERS_MAX_INDENT_LEVEL = 32;
+
+		enum class AdjustStrategy { Off, PreferAdjusted, PreferOriginal };
+		enum class ResolveStrategy { OnlyDynsym, PreferSymtab, PreferDynsym };
+
+		static constexpr bool STACKTRACE_SHOW_ADDRESSES = true;
+		static constexpr bool STACKTRACE_DEMANGLE_NAMES = true;
+		static constexpr AdjustStrategy STACKTRACE_ADJUST_ADDRESSES = AdjustStrategy::Off;
+		static constexpr ResolveStrategy STACKTRACE_RESOLVE_SYMBOLS = ResolveStrategy::PreferSymtab;
+		static constexpr bool SHOW_SYMBOL_SOURCE = true;
+		static constexpr bool SHOW_FUNCTION_SIZE = true;
+		static constexpr bool STACKTRACE_SHOW_CMDLINE_TOOL_COMMANDS = true;
+		static constexpr size_t STACKTRACE_MAX_FRAMES = 64;
+		static constexpr size_t STACKTRACE_SKIP_FRAMES = 2;
 	};
 
 
@@ -164,6 +218,364 @@ namespace Dumper {
 
 	template <typename T>
 	inline constexpr bool is_container_v = is_container<T>::value;
+
+
+
+	// ****************************************************************************************************
+	// Stack trace support functionality
+	// ****************************************************************************************************
+
+	struct StackTrace
+	{
+		std::vector<std::string> frames;
+		std::vector<std::string> cmdline_tool_invocations;
+
+		StackTrace()
+		{
+			CaptureStackTrace();
+		}
+
+	private:
+
+		struct DlAddrResult
+		{
+			int dladdr_success = false;
+			Dl_info info = {};
+			const void* used_address = nullptr;
+			bool used_adjusted = false;
+		};
+
+
+		struct FrameInfo
+		{
+			std::string module_shortname {};
+			std::string module_fullname {};
+			std::string func_name {};
+
+			uintptr_t original_address = 0;
+			uintptr_t used_address = 0;
+			uintptr_t module_base = 0;
+			uintptr_t symbol_addr = 0;
+			uintptr_t symbol_size = 0;
+			uintptr_t offset_from_module = 0;
+			uintptr_t offset_from_symbol = 0; // S
+
+			bool used_adjusted = false;
+			bool found_in_symtab = false;
+		};
+
+
+
+		static std::string DemangleName(const char* mangled_name)
+		{
+			if (!mangled_name || !*mangled_name) return "";
+#ifdef HAS_CXX_DEMANGLE
+			try {
+				int status = 0;
+				char* demangled = abi::__cxa_demangle(mangled_name, nullptr, nullptr, &status);
+				std::string res = (status == 0 && demangled) ? demangled : mangled_name;
+				std::free(demangled);
+				return res;
+			} catch(...) {
+				return std::string(mangled_name);
+			}
+#else
+			return std::string(mangled_name);
+#endif
+		}
+
+
+		static std::string HexAddr(uintptr_t v)
+		{
+			std::ostringstream os;
+			os << "0x" << std::hex << v;
+			return os.str();
+		}
+
+
+		static bool TryAdjustReturnAddress(const void* in, const void*& out)
+		{
+			out = in;
+			if (in == nullptr) return false;
+
+			auto original = reinterpret_cast<uintptr_t>(in);
+			uintptr_t adjusted = original;
+
+#if defined(__arm__) && !defined(__aarch64__)
+			if (original & 1u) {
+				adjusted = original & ~uintptr_t(1);
+			}
+#elif defined(__aarch64__)
+			if (original > 4) {
+				adjusted = original - 4;
+			}
+#elif defined(__x86_64__) || defined(__i386__) || defined(_M_X64) || defined(_M_IX86)
+			if (original > 1) {
+				adjusted = original - 1;
+			}
+#endif
+
+			if (adjusted != original && adjusted != 0) {
+				out = reinterpret_cast<const void*>(adjusted);
+				return true;
+			}
+			return false;
+		}
+
+
+		static DlAddrResult DlAddrWithAdjust(const void* original)
+		{
+			auto adjust_strategy = DumperConfig::STACKTRACE_ADJUST_ADDRESSES;
+
+			DlAddrResult result;
+			result.used_address = original;
+
+			auto TryDlAddr = [&](const void* addr) -> bool {
+				Dl_info info_local;
+				if (dladdr(addr, &info_local)) {
+					result.dladdr_success = true;
+					result.info = info_local;
+					result.used_address = addr;
+					return true;
+				}
+				return false;
+			};
+
+			if (adjust_strategy == DumperConfig::AdjustStrategy::Off) {
+				TryDlAddr(original);
+				return result;
+			}
+
+			const void* adjusted = nullptr;
+			bool has_adjusted = TryAdjustReturnAddress(original, adjusted);
+
+			if (adjust_strategy == DumperConfig::AdjustStrategy::PreferAdjusted) {
+				if (has_adjusted) {
+					if (TryDlAddr(adjusted)) { result.used_adjusted = true; return result; }
+				}
+				TryDlAddr(original);
+				return result;
+			}
+
+			if (TryDlAddr(original)) { return result; }
+			if (has_adjusted) {
+				if (TryDlAddr(adjusted)) { result.used_adjusted = true; return result; }
+			}
+			return result;
+		}
+
+
+#ifdef HAS_ELF_ENHANCEMENT
+		struct FileData : std::vector<char>
+		{
+			FileData(const char *file, size_t offset, size_t size) : std::vector<char>(size)
+			{
+				int fd = open(file, O_RDONLY);
+				if (fd != -1) {
+					try {
+						pread(fd, data(), size, offset);
+					} catch(...) {
+						close(fd);
+						throw;
+					}
+					close(fd);
+				}
+			}
+		};
+
+
+		static bool TrySymtabResolve(DlAddrResult dladdr_result, FrameInfo &frameinfo_out)
+		{
+			if (!dladdr_result.dladdr_success) {
+				return false;
+			}
+
+			if (dladdr_result.info.dli_fname) {
+				unsigned long offset = (const char *)dladdr_result.used_address - (const char *)dladdr_result.info.dli_fbase;
+				unsigned long base_addr = 0;
+				const Elf_Ehdr *eh = (const Elf_Ehdr *)dladdr_result.info.dli_fbase;
+				for (int i = 0; i < (int)eh->e_phnum; ++i) {
+					const Elf_Phdr *ph = (const Elf_Phdr *)
+					((const char *)dladdr_result.info.dli_fbase + eh->e_phoff + i * eh->e_phentsize);
+					if (ph->p_type == PT_LOAD) {
+						base_addr = ph->p_vaddr;
+						break;
+					}
+				}
+
+				FileData shtab(dladdr_result.info.dli_fname, eh->e_shoff, eh->e_shnum * eh->e_shentsize);
+				for (int i = 0; i < (int)eh->e_shnum; ++i) {
+					const Elf_Shdr *sh = (const Elf_Shdr *)&shtab[i * eh->e_shentsize];
+					if (sh->sh_type == SHT_SYMTAB && sh->sh_link < eh->e_shnum) {
+						FileData syms(dladdr_result.info.dli_fname, sh->sh_offset, sh->sh_size);
+						size_t syms_count = sh->sh_size / sh->sh_entsize;
+						for (size_t s = 0; s < syms_count; ++s) {
+							const Elf_Sym *sym = (const Elf_Sym *)&syms[s * sh->sh_entsize];
+							if (offset >= sym->st_value - base_addr && offset < sym->st_value + sym->st_size - base_addr
+								&& (sym->st_info == STT_FUNC || sym->st_info == STT_OBJECT || sym->st_info == STT_TLS) ) {
+								const Elf_Shdr *strtab_sh = (const Elf_Shdr *)&shtab[sh->sh_link * eh->e_shentsize];
+								FileData strtab(dladdr_result.info.dli_fname, strtab_sh->sh_offset, strtab_sh->sh_size);
+								strtab.emplace_back(0); //ensure 0-terminated
+								if (sym->st_name < strtab.size() && strtab[sym->st_name] != '$') {
+									frameinfo_out.found_in_symtab = true;
+									frameinfo_out.func_name = &strtab[sym->st_name];
+									// frameinfo_out.symbol_addr = ?
+									frameinfo_out.symbol_size = sym->st_size;
+									frameinfo_out.offset_from_symbol = offset - (sym->st_value - base_addr);
+									return true;
+								}
+							}
+						}
+					}
+				}
+			}
+			return false;
+		}
+#endif
+
+
+		static bool TryDynsymResolve(DlAddrResult dladdr_result, FrameInfo &frameinfo_out)
+		{
+			const char* sname = dladdr_result.info.dli_sname;
+			const void *saddr = dladdr_result.info.dli_saddr;
+
+			if (sname && *sname && saddr) {
+				frameinfo_out.func_name = sname;
+				frameinfo_out.symbol_addr = reinterpret_cast<uintptr_t>(saddr);
+
+				frameinfo_out.offset_from_symbol = CalculateOffset(reinterpret_cast<uintptr_t>(dladdr_result.used_address), frameinfo_out.symbol_addr);
+				return true;
+			}
+			return false;
+		}
+
+
+		static FrameInfo GetFrameInfo(const void* raw_addr)
+		{
+			FrameInfo frameinfo;
+			frameinfo.original_address = reinterpret_cast<uintptr_t>(raw_addr);
+			auto dladdr_result = DlAddrWithAdjust(raw_addr);
+			frameinfo.used_address = reinterpret_cast<uintptr_t>(dladdr_result.used_address);
+			frameinfo.used_adjusted = dladdr_result.used_adjusted;
+
+			if (dladdr_result.dladdr_success) {
+
+				frameinfo.module_base = reinterpret_cast<uintptr_t>(dladdr_result.info.dli_fbase);
+				frameinfo.offset_from_module = CalculateOffset(frameinfo.used_address, frameinfo.module_base);
+
+				const char* fname = dladdr_result.info.dli_fname;
+
+				if (fname && *fname) {
+					frameinfo.module_fullname = fname;
+					const char* last_slash = strrchr(fname, '/');
+					frameinfo.module_shortname = last_slash ? last_slash + 1 : fname;
+				}
+
+				auto resolve_strategy = DumperConfig::STACKTRACE_RESOLVE_SYMBOLS;
+
+				bool symtab_first = (resolve_strategy == DumperConfig::ResolveStrategy::PreferSymtab);
+				bool use_fallback = (resolve_strategy != DumperConfig::ResolveStrategy::OnlyDynsym);
+
+#ifdef HAS_ELF_ENHANCEMENT
+				auto PreferredResolver = symtab_first ? TrySymtabResolve : TryDynsymResolve;
+				auto FallbackResolver = symtab_first ? TryDynsymResolve : TrySymtabResolve;
+
+				if (!PreferredResolver(dladdr_result, frameinfo) && use_fallback) {
+					FallbackResolver(dladdr_result, frameinfo);
+				}
+#else
+				TryDynsymResolve(dladdr_result, frameinfo);
+#endif
+			}
+
+			if constexpr (DumperConfig::STACKTRACE_DEMANGLE_NAMES) {
+				frameinfo.func_name = DemangleName(frameinfo.func_name.c_str());
+			}
+
+			return frameinfo;
+		}
+
+
+
+		static uintptr_t CalculateOffset(uintptr_t address, uintptr_t base)
+		{
+			return (address >= base) ? (address - base) : 0;
+		}
+
+
+		static std::string FormatFrame(const FrameInfo& frame_info)
+		{
+			std::string result;
+
+			result += (frame_info.module_shortname.empty() ? "[unknown-module]" : frame_info.module_shortname);
+			result += " :: ";
+			result += (frame_info.func_name.empty() ? "[unknown-function]" : frame_info.func_name);
+			result += "  ";
+
+			if constexpr (DumperConfig::SHOW_SYMBOL_SOURCE) {
+				if (frame_info.found_in_symtab) {
+					result += " [symtab]";
+				} else if (!frame_info.func_name.empty()) {
+					result += " [dynsym]";
+				}
+			}
+
+#ifdef HAS_ELF_ENHANCEMENT
+			if constexpr (DumperConfig::SHOW_FUNCTION_SIZE) {
+				if (frame_info.symbol_size > 0) {
+					result += " (size: " + HexAddr(frame_info.symbol_size) + ")";
+				}
+			}
+#endif
+
+			if constexpr (DumperConfig::STACKTRACE_SHOW_ADDRESSES) {
+				result += " :: abs=" + HexAddr(frame_info.used_address);
+
+				if (frame_info.used_adjusted) {
+					result += " (*original: " + HexAddr(frame_info.original_address) + ")";
+				}
+
+				if (frame_info.module_base) {
+					result += ", mod_base=" + HexAddr(frame_info.module_base)
+								 + ", +off_mod=" + HexAddr(frame_info.offset_from_module);
+				}
+
+				if (frame_info.symbol_addr) {
+					result += ", sym_addr=" + HexAddr(frame_info.symbol_addr);
+					result += ", +off_sym=" + HexAddr(frame_info.offset_from_symbol);
+				}
+			}
+			return result;
+		}
+
+
+		void CaptureStackTrace()
+		{
+#ifdef HAS_BACKTRACE
+			static_assert(DumperConfig::STACKTRACE_MAX_FRAMES <= 0x7fffffff, "STACKTRACE_MAX_FRAMES too large for backtrace()");
+
+			void* raw_frames[DumperConfig::STACKTRACE_MAX_FRAMES];
+			auto frame_count = static_cast<size_t>(backtrace(raw_frames, DumperConfig::STACKTRACE_MAX_FRAMES));
+
+			if (frame_count <= DumperConfig::STACKTRACE_SKIP_FRAMES) {
+				frames.emplace_back("[no stack frames available]");
+				return;
+			}
+
+			frames.reserve(frame_count - DumperConfig::STACKTRACE_SKIP_FRAMES);
+
+
+			for (size_t i = DumperConfig::STACKTRACE_SKIP_FRAMES; i < frame_count; ++i) {
+				auto frame_info = GetFrameInfo(raw_frames[i]);
+				frames.emplace_back(FormatFrame(frame_info));
+			}
+#else
+			frames.emplace_back("[stack trace not available on this platform]");
+#endif
+		}
+	};
+
+
 
 	// ****************************************************************************************************
 	// Formatting variable names/values according to their nesting level when displaying containers
@@ -598,6 +1010,26 @@ namespace Dumper {
 		log_stream << "|=> " << var_name << " = " << decoded << '\n';
 	}
 
+
+	// ****************************************************************************************************
+	// Support for [STACKTRACE]
+	// ****************************************************************************************************
+
+
+	inline void DumpValue(
+		std::ostringstream& log_stream,
+		std::string_view var_name,
+		const StackTrace& stack_trace,
+		const IndentInfo& indent_info = IndentInfo())
+	{
+		LogVarWithIndentation(log_stream, "[STACKTRACE]", nullptr, indent_info, false);
+		DumpValue(log_stream, "[FRAMES]", stack_trace.frames, indent_info.CreateChild(DumperConfig::STACKTRACE_SHOW_CMDLINE_TOOL_COMMANDS));
+		if constexpr (DumperConfig::STACKTRACE_SHOW_CMDLINE_TOOL_COMMANDS) {
+			DumpValue(log_stream, "[CMDLINE TOOL]", stack_trace.cmdline_tool_invocations, indent_info.CreateChild(false));
+		}
+	}
+
+
 	// ****************************************************************************************************
 	// Helper code for logging
 	// ****************************************************************************************************
@@ -763,3 +1195,4 @@ namespace Dumper {
 #define DSTRBUF(ptr,length) #ptr, Dumper::StrBufWrapper(ptr,length)
 #define DCONT(container,max_elements) #container, Dumper::ContainerWrapper(container,max_elements)
 #define DFLAGS(var, treat_as) #var, Dumper::FlagsWrapper(var, treat_as)
+#define DSTACKTRACE() "[STACKTRACE]", Dumper::StackTrace()
