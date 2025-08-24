@@ -114,9 +114,8 @@ namespace Dumper {
 		static constexpr bool STACKTRACE_SHOW_ADDRESSES = true;
 		static constexpr bool STACKTRACE_DEMANGLE_NAMES = true;
 		static constexpr AdjustStrategy STACKTRACE_ADJUST_ADDRESSES = AdjustStrategy::Off;
-		static constexpr ResolveStrategy STACKTRACE_RESOLVE_SYMBOLS = ResolveStrategy::PreferSymtab;
+		static constexpr ResolveStrategy STACKTRACE_RESOLVE_SYMBOLS = ResolveStrategy::PreferDynsym;
 		static constexpr bool SHOW_SYMBOL_SOURCE = true;
-		static constexpr bool SHOW_FUNCTION_SIZE = true;
 		static constexpr bool STACKTRACE_SHOW_CMDLINE_TOOL_COMMANDS = true;
 		static constexpr size_t STACKTRACE_MAX_FRAMES = 64;
 		static constexpr size_t STACKTRACE_SKIP_FRAMES = 2;
@@ -255,13 +254,14 @@ namespace Dumper {
 			uintptr_t original_address = 0;
 			uintptr_t used_address = 0;
 			uintptr_t module_base = 0;
-			uintptr_t symbol_addr = 0;
-			uintptr_t symbol_size = 0;
 			uintptr_t offset_from_module = 0;
-			uintptr_t offset_from_symbol = 0; // S
+			uintptr_t symbol_addr = 0;
 
 			bool used_adjusted = false;
 			bool found_in_symtab = false;
+
+			// uintptr_t symbol_size = 0;
+			// uintptr_t offset_from_symbol = 0;
 		};
 
 
@@ -372,12 +372,7 @@ namespace Dumper {
 			{
 				int fd = open(file, O_RDONLY);
 				if (fd != -1) {
-					try {
-						pread(fd, data(), size, offset);
-					} catch(...) {
-						close(fd);
-						throw;
-					}
+					pread(fd, data(), size, offset);
 					close(fd);
 				}
 			}
@@ -386,49 +381,46 @@ namespace Dumper {
 
 		static bool TrySymtabResolve(DlAddrResult dladdr_result, FrameInfo &frameinfo_out)
 		{
-			if (!dladdr_result.dladdr_success) {
+			if (!dladdr_result.dladdr_success || !dladdr_result.info.dli_fname) {
 				return false;
 			}
 
-			if (dladdr_result.info.dli_fname) {
-				unsigned long offset = (const char *)dladdr_result.used_address - (const char *)dladdr_result.info.dli_fbase;
-				unsigned long base_addr = 0;
-				const Elf_Ehdr *eh = (const Elf_Ehdr *)dladdr_result.info.dli_fbase;
-				for (int i = 0; i < (int)eh->e_phnum; ++i) {
-					const Elf_Phdr *ph = (const Elf_Phdr *)
-					((const char *)dladdr_result.info.dli_fbase + eh->e_phoff + i * eh->e_phentsize);
-					if (ph->p_type == PT_LOAD) {
-						base_addr = ph->p_vaddr;
-						break;
-					}
+			unsigned long offset = (const char *)dladdr_result.used_address - (const char *)dladdr_result.info.dli_fbase;
+			unsigned long base_addr = 0;
+			const Elf_Ehdr *eh = (const Elf_Ehdr *)dladdr_result.info.dli_fbase;
+			for (int i = 0; i < (int)eh->e_phnum; ++i) {
+				const Elf_Phdr *ph = (const Elf_Phdr *)
+				((const char *)dladdr_result.info.dli_fbase + eh->e_phoff + i * eh->e_phentsize);
+				if (ph->p_type == PT_LOAD) {
+					base_addr = ph->p_vaddr;
+					break;
 				}
+			}
 
-				FileData shtab(dladdr_result.info.dli_fname, eh->e_shoff, eh->e_shnum * eh->e_shentsize);
-				for (int i = 0; i < (int)eh->e_shnum; ++i) {
-					const Elf_Shdr *sh = (const Elf_Shdr *)&shtab[i * eh->e_shentsize];
-					if (sh->sh_type == SHT_SYMTAB && sh->sh_link < eh->e_shnum) {
-						FileData syms(dladdr_result.info.dli_fname, sh->sh_offset, sh->sh_size);
-						size_t syms_count = sh->sh_size / sh->sh_entsize;
-						for (size_t s = 0; s < syms_count; ++s) {
-							const Elf_Sym *sym = (const Elf_Sym *)&syms[s * sh->sh_entsize];
-							if (offset >= sym->st_value - base_addr && offset < sym->st_value + sym->st_size - base_addr
-								&& (sym->st_info == STT_FUNC || sym->st_info == STT_OBJECT || sym->st_info == STT_TLS) ) {
-								const Elf_Shdr *strtab_sh = (const Elf_Shdr *)&shtab[sh->sh_link * eh->e_shentsize];
-								FileData strtab(dladdr_result.info.dli_fname, strtab_sh->sh_offset, strtab_sh->sh_size);
-								strtab.emplace_back(0); //ensure 0-terminated
-								if (sym->st_name < strtab.size() && strtab[sym->st_name] != '$') {
-									frameinfo_out.found_in_symtab = true;
-									frameinfo_out.func_name = &strtab[sym->st_name];
-									// frameinfo_out.symbol_addr = ?
-									frameinfo_out.symbol_size = sym->st_size;
-									frameinfo_out.offset_from_symbol = offset - (sym->st_value - base_addr);
-									return true;
-								}
+
+			FileData shtab(dladdr_result.info.dli_fname, eh->e_shoff, eh->e_shnum * eh->e_shentsize);
+			for (int i = 0; i < (int)eh->e_shnum; ++i) {
+				const Elf_Shdr *sh = (const Elf_Shdr *)&shtab[i * eh->e_shentsize];
+				if (sh->sh_type == SHT_SYMTAB && sh->sh_link < eh->e_shnum) {
+					FileData syms(dladdr_result.info.dli_fname, sh->sh_offset, sh->sh_size);
+					size_t syms_count = sh->sh_size / sh->sh_entsize;
+					for (size_t s = 0; s < syms_count; ++s) {
+						const Elf_Sym *sym = (const Elf_Sym *)&syms[s * sh->sh_entsize];
+						if (offset >= sym->st_value - base_addr && offset < sym->st_value + sym->st_size - base_addr
+							&& (sym->st_info == STT_FUNC || sym->st_info == STT_OBJECT || sym->st_info == STT_TLS) ) {
+							const Elf_Shdr *strtab_sh = (const Elf_Shdr *)&shtab[sh->sh_link * eh->e_shentsize];
+							FileData strtab(dladdr_result.info.dli_fname, strtab_sh->sh_offset, strtab_sh->sh_size);
+							strtab.emplace_back(0); //ensure 0-terminated
+							if (sym->st_name < strtab.size() && strtab[sym->st_name] != '$') {
+								frameinfo_out.found_in_symtab = true;
+								frameinfo_out.func_name = &strtab[sym->st_name];
+								return true;
 							}
 						}
 					}
 				}
 			}
+
 			return false;
 		}
 #endif
@@ -442,8 +434,6 @@ namespace Dumper {
 			if (sname && *sname && saddr) {
 				frameinfo_out.func_name = sname;
 				frameinfo_out.symbol_addr = reinterpret_cast<uintptr_t>(saddr);
-
-				frameinfo_out.offset_from_symbol = CalculateOffset(reinterpret_cast<uintptr_t>(dladdr_result.used_address), frameinfo_out.symbol_addr);
 				return true;
 			}
 			return false;
@@ -503,46 +493,37 @@ namespace Dumper {
 		}
 
 
-		static std::string FormatFrame(const FrameInfo& frame_info)
+		static std::string FormatFrame(const FrameInfo& frameinfo)
 		{
 			std::string result;
 
-			result += (frame_info.module_shortname.empty() ? "[unknown-module]" : frame_info.module_shortname);
+			result += (frameinfo.module_shortname.empty() ? "[unknown-module]" : frameinfo.module_shortname);
 			result += " :: ";
-			result += (frame_info.func_name.empty() ? "[unknown-function]" : frame_info.func_name);
+			result += (frameinfo.func_name.empty() ? "[unknown-function]" : frameinfo.func_name);
 			result += "  ";
 
 			if constexpr (DumperConfig::SHOW_SYMBOL_SOURCE) {
-				if (frame_info.found_in_symtab) {
+				if (frameinfo.found_in_symtab) {
 					result += " [symtab]";
-				} else if (!frame_info.func_name.empty()) {
+				} else if (!frameinfo.func_name.empty()) {
 					result += " [dynsym]";
 				}
 			}
 
-#ifdef HAS_ELF_ENHANCEMENT
-			if constexpr (DumperConfig::SHOW_FUNCTION_SIZE) {
-				if (frame_info.symbol_size > 0) {
-					result += " (size: " + HexAddr(frame_info.symbol_size) + ")";
-				}
-			}
-#endif
-
 			if constexpr (DumperConfig::STACKTRACE_SHOW_ADDRESSES) {
-				result += " :: abs=" + HexAddr(frame_info.used_address);
+				result += " :: abs=" + HexAddr(frameinfo.used_address);
 
-				if (frame_info.used_adjusted) {
-					result += " (*original: " + HexAddr(frame_info.original_address) + ")";
+				if (frameinfo.used_adjusted) {
+					result += " (*original: " + HexAddr(frameinfo.original_address) + ")";
 				}
 
-				if (frame_info.module_base) {
-					result += ", mod_base=" + HexAddr(frame_info.module_base)
-								 + ", +off_mod=" + HexAddr(frame_info.offset_from_module);
+				if (frameinfo.module_base) {
+					result += ", mod_base=" + HexAddr(frameinfo.module_base)
+								 + ", +off_mod=" + HexAddr(frameinfo.offset_from_module);
 				}
 
-				if (frame_info.symbol_addr) {
-					result += ", sym_addr=" + HexAddr(frame_info.symbol_addr);
-					result += ", +off_sym=" + HexAddr(frame_info.offset_from_symbol);
+				if (frameinfo.symbol_addr) {
+					result += ", sym_addr=" + HexAddr(frameinfo.symbol_addr);
 				}
 			}
 			return result;
@@ -565,16 +546,35 @@ namespace Dumper {
 			frames.reserve(frame_count - DumperConfig::STACKTRACE_SKIP_FRAMES);
 
 
+			std::map<std::string, std::vector<uintptr_t>> module_addresses;
+
 			for (size_t i = DumperConfig::STACKTRACE_SKIP_FRAMES; i < frame_count; ++i) {
-				auto frame_info = GetFrameInfo(raw_frames[i]);
-				frames.emplace_back(FormatFrame(frame_info));
+				auto frameinfo = GetFrameInfo(raw_frames[i]);
+				frames.emplace_back(FormatFrame(frameinfo));
+
+				if constexpr (DumperConfig::STACKTRACE_SHOW_CMDLINE_TOOL_COMMANDS) {
+					if (!frameinfo.module_fullname.empty()) {
+						module_addresses[frameinfo.module_fullname].push_back(frameinfo.offset_from_module);
+					}
+				}
+			}
+
+			if constexpr (DumperConfig::STACKTRACE_SHOW_CMDLINE_TOOL_COMMANDS) {
+				cmdline_tool_invocations.reserve(module_addresses.size());
+				for (const auto& [module_path, addresses] : module_addresses) {
+					std::ostringstream cmdline_stream;
+					cmdline_stream << "addr2line -e '" << module_path << "' -f -p -C -i";
+					for (const auto& addr : addresses) {
+						cmdline_stream << " " << HexAddr(addr);
+					}
+					cmdline_tool_invocations.emplace_back(cmdline_stream.str());
+				}
 			}
 #else
 			frames.emplace_back("[stack trace not available on this platform]");
 #endif
 		}
 	};
-
 
 
 	// ****************************************************************************************************
