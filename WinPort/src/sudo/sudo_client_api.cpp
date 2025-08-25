@@ -361,7 +361,7 @@ extern "C" __attribute__ ((visibility("default"))) int sdc_fchmod(int fd, mode_t
 }
 
 extern "C" __attribute__ ((visibility("default"))) DIR *sdc_opendir(const char *path)
-{
+{	DUMP(DSTACKTRACE());
 	int saved_errno = errno;
 	ClientReconstructCurDir crcd(path);
 	DIR *dir = opendir(path);

@@ -108,13 +108,13 @@ namespace Dumper {
 
 		static constexpr std::size_t CONTAINERS_MAX_INDENT_LEVEL = 32;
 
-		enum class AdjustStrategy { Off, PreferAdjusted, PreferOriginal };
-		enum class ResolveStrategy { OnlyDynsym, PreferSymtab, PreferDynsym };
+		enum class AdjustmentStrategy { Off, PreferAdjusted, PreferOriginal };
+		enum class ResolutionStrategy { OnlyDynsym, PreferDynsym, PreferSymtab, OnlySymtab };
 
 		static constexpr bool STACKTRACE_SHOW_ADDRESSES = true;
 		static constexpr bool STACKTRACE_DEMANGLE_NAMES = true;
-		static constexpr AdjustStrategy STACKTRACE_ADJUST_ADDRESSES = AdjustStrategy::Off;
-		static constexpr ResolveStrategy STACKTRACE_RESOLVE_SYMBOLS = ResolveStrategy::PreferDynsym;
+		static constexpr AdjustmentStrategy STACKTRACE_RETADDR_ADJUSTMENT = AdjustmentStrategy::Off;
+		static constexpr ResolutionStrategy STACKTRACE_SYMBOL_RESOLUTION = ResolutionStrategy::PreferDynsym;
 		static constexpr bool SHOW_SYMBOL_SOURCE = true;
 		static constexpr bool STACKTRACE_SHOW_CMDLINE_TOOL_COMMANDS = true;
 		static constexpr size_t STACKTRACE_MAX_FRAMES = 64;
@@ -265,23 +265,18 @@ namespace Dumper {
 		};
 
 
-
 		static std::string DemangleName(const char* mangled_name)
 		{
 			if (!mangled_name || !*mangled_name) return "";
 #ifdef HAS_CXX_DEMANGLE
-			try {
-				int status = 0;
-				char* demangled = abi::__cxa_demangle(mangled_name, nullptr, nullptr, &status);
-				std::string res = (status == 0 && demangled) ? demangled : mangled_name;
-				std::free(demangled);
-				return res;
-			} catch(...) {
-				return std::string(mangled_name);
+			int status = 0;
+			char* raw = abi::__cxa_demangle(mangled_name, nullptr, nullptr, &status);
+			std::unique_ptr<char, decltype(&std::free)> demangled(raw, &std::free);
+			if (status == 0 && demangled) {
+				return std::string(demangled.get());
 			}
-#else
-			return std::string(mangled_name);
 #endif
+			return std::string(mangled_name);
 		}
 
 
@@ -325,7 +320,7 @@ namespace Dumper {
 
 		static DlAddrResult DlAddrWithAdjust(const void* original)
 		{
-			auto adjust_strategy = DumperConfig::STACKTRACE_ADJUST_ADDRESSES;
+			auto adjust_strategy = DumperConfig::STACKTRACE_RETADDR_ADJUSTMENT;
 
 			DlAddrResult result;
 			result.used_address = original;
@@ -341,7 +336,7 @@ namespace Dumper {
 				return false;
 			};
 
-			if (adjust_strategy == DumperConfig::AdjustStrategy::Off) {
+			if (adjust_strategy == DumperConfig::AdjustmentStrategy::Off) {
 				TryDlAddr(original);
 				return result;
 			}
@@ -349,7 +344,7 @@ namespace Dumper {
 			const void* adjusted = nullptr;
 			bool has_adjusted = TryAdjustReturnAddress(original, adjusted);
 
-			if (adjust_strategy == DumperConfig::AdjustStrategy::PreferAdjusted) {
+			if (adjust_strategy == DumperConfig::AdjustmentStrategy::PreferAdjusted) {
 				if (has_adjusted) {
 					if (TryDlAddr(adjusted)) { result.used_adjusted = true; return result; }
 				}
@@ -385,12 +380,16 @@ namespace Dumper {
 				return false;
 			}
 
-			unsigned long offset = (const char *)dladdr_result.used_address - (const char *)dladdr_result.info.dli_fbase;
+			const char *fname = dladdr_result.info.dli_fname;
+			const void *raw_addr = dladdr_result.used_address;
+			void *module_base = dladdr_result.info.dli_fbase;
+
+			unsigned long offset = (const char *)raw_addr - (const char *)module_base;
 			unsigned long base_addr = 0;
-			const Elf_Ehdr *eh = (const Elf_Ehdr *)dladdr_result.info.dli_fbase;
+			const Elf_Ehdr *eh = (const Elf_Ehdr *)module_base;
 			for (int i = 0; i < (int)eh->e_phnum; ++i) {
 				const Elf_Phdr *ph = (const Elf_Phdr *)
-				((const char *)dladdr_result.info.dli_fbase + eh->e_phoff + i * eh->e_phentsize);
+				((const char *)module_base + eh->e_phoff + i * eh->e_phentsize);
 				if (ph->p_type == PT_LOAD) {
 					base_addr = ph->p_vaddr;
 					break;
@@ -398,18 +397,18 @@ namespace Dumper {
 			}
 
 
-			FileData shtab(dladdr_result.info.dli_fname, eh->e_shoff, eh->e_shnum * eh->e_shentsize);
+			FileData shtab(fname, eh->e_shoff, eh->e_shnum * eh->e_shentsize);
 			for (int i = 0; i < (int)eh->e_shnum; ++i) {
 				const Elf_Shdr *sh = (const Elf_Shdr *)&shtab[i * eh->e_shentsize];
 				if (sh->sh_type == SHT_SYMTAB && sh->sh_link < eh->e_shnum) {
-					FileData syms(dladdr_result.info.dli_fname, sh->sh_offset, sh->sh_size);
+					FileData syms(fname, sh->sh_offset, sh->sh_size);
 					size_t syms_count = sh->sh_size / sh->sh_entsize;
 					for (size_t s = 0; s < syms_count; ++s) {
 						const Elf_Sym *sym = (const Elf_Sym *)&syms[s * sh->sh_entsize];
 						if (offset >= sym->st_value - base_addr && offset < sym->st_value + sym->st_size - base_addr
 							&& (sym->st_info == STT_FUNC || sym->st_info == STT_OBJECT || sym->st_info == STT_TLS) ) {
 							const Elf_Shdr *strtab_sh = (const Elf_Shdr *)&shtab[sh->sh_link * eh->e_shentsize];
-							FileData strtab(dladdr_result.info.dli_fname, strtab_sh->sh_offset, strtab_sh->sh_size);
+							FileData strtab(fname, strtab_sh->sh_offset, strtab_sh->sh_size);
 							strtab.emplace_back(0); //ensure 0-terminated
 							if (sym->st_name < strtab.size() && strtab[sym->st_name] != '$') {
 								frameinfo_out.found_in_symtab = true;
@@ -461,17 +460,21 @@ namespace Dumper {
 					frameinfo.module_shortname = last_slash ? last_slash + 1 : fname;
 				}
 
-				auto resolve_strategy = DumperConfig::STACKTRACE_RESOLVE_SYMBOLS;
-
-				bool symtab_first = (resolve_strategy == DumperConfig::ResolveStrategy::PreferSymtab);
-				bool use_fallback = (resolve_strategy != DumperConfig::ResolveStrategy::OnlyDynsym);
+				auto resolve_strategy = DumperConfig::STACKTRACE_SYMBOL_RESOLUTION;
 
 #ifdef HAS_ELF_ENHANCEMENT
-				auto PreferredResolver = symtab_first ? TrySymtabResolve : TryDynsymResolve;
-				auto FallbackResolver = symtab_first ? TryDynsymResolve : TrySymtabResolve;
-
-				if (!PreferredResolver(dladdr_result, frameinfo) && use_fallback) {
-					FallbackResolver(dladdr_result, frameinfo);
+				if (resolve_strategy == DumperConfig::ResolutionStrategy::PreferSymtab) {
+					if (!TrySymtabResolve(dladdr_result, frameinfo)) {
+						TryDynsymResolve(dladdr_result, frameinfo);
+					}
+				} else if (resolve_strategy == DumperConfig::ResolutionStrategy::PreferDynsym) {
+					if (!TryDynsymResolve(dladdr_result, frameinfo)) {
+						TrySymtabResolve(dladdr_result, frameinfo);
+					}
+				} else if (resolve_strategy == DumperConfig::ResolutionStrategy::OnlyDynsym) {
+					TryDynsymResolve(dladdr_result, frameinfo);
+				} else {
+					TrySymtabResolve(dladdr_result, frameinfo);
 				}
 #else
 				TryDynsymResolve(dladdr_result, frameinfo);
@@ -495,38 +498,38 @@ namespace Dumper {
 
 		static std::string FormatFrame(const FrameInfo& frameinfo)
 		{
-			std::string result;
+			std::ostringstream result;
 
-			result += (frameinfo.module_shortname.empty() ? "[unknown-module]" : frameinfo.module_shortname);
-			result += " :: ";
-			result += (frameinfo.func_name.empty() ? "[unknown-function]" : frameinfo.func_name);
-			result += "  ";
+			result << (frameinfo.module_shortname.empty() ? "[unknown-module]" : frameinfo.module_shortname.c_str());
+			result << " :: ";
+			result << (frameinfo.func_name.empty() ? "[unknown-function]" : frameinfo.func_name.c_str());
+			result << "  ";
 
 			if constexpr (DumperConfig::SHOW_SYMBOL_SOURCE) {
 				if (frameinfo.found_in_symtab) {
-					result += " [symtab]";
+					result << " [symtab]";
 				} else if (!frameinfo.func_name.empty()) {
-					result += " [dynsym]";
+					result << " [dynsym]";
 				}
 			}
 
 			if constexpr (DumperConfig::STACKTRACE_SHOW_ADDRESSES) {
-				result += " :: abs=" + HexAddr(frameinfo.used_address);
+				result << " :: abs=" << HexAddr(frameinfo.used_address);
 
 				if (frameinfo.used_adjusted) {
-					result += " (*original: " + HexAddr(frameinfo.original_address) + ")";
+					result << " (*original: " << HexAddr(frameinfo.original_address) << ")";
 				}
 
 				if (frameinfo.module_base) {
-					result += ", mod_base=" + HexAddr(frameinfo.module_base)
-								 + ", +off_mod=" + HexAddr(frameinfo.offset_from_module);
+					result << ", mod_base=" << HexAddr(frameinfo.module_base)
+					<< ", +off_mod=" << HexAddr(frameinfo.offset_from_module);
 				}
 
 				if (frameinfo.symbol_addr) {
-					result += ", sym_addr=" + HexAddr(frameinfo.symbol_addr);
+					result << ", sym_addr=" << HexAddr(frameinfo.symbol_addr);
 				}
 			}
-			return result;
+			return result.str();
 		}
 
 
