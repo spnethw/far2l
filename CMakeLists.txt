@@ -204,6 +204,12 @@ add_subdirectory (WinPort)
 add_subdirectory (utils)
 add_subdirectory (far2l)
 
+#option(OPENWITH "Build OpenWith plugin" ON)
+
+#if(OPENWITH)
+    add_subdirectory(OpenWith)
+#endif()
+
 if (NOT ${USEWX})
     message(STATUS "Building without GUI/wxWidgets backend due to USEWX=${USEWX}")
 else()

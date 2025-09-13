@@ -1,4 +1,4 @@
-
+# compare - CMakeLists.txt
 project(editcase)
 
 set(SOURCES
