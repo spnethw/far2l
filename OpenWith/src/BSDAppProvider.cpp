@@ -12,10 +12,4 @@ std::wstring BSDAppProvider :: ConstructCommandLine(const CandidateInfo& candida
 	return {};
 }
 
-std::string BSDAppProvider::IdentifyFileMimeType(const std::wstring& pathname) const
-{
-	return {};
-}
-
-
 #endif

@@ -57,8 +57,6 @@ private:
 
 			if (BreakCode == 0) { // F3
 
-				auto mimetype = StrMB2Wide(provider->IdentifyFileMimeType(pathname));
-
 				FarDialogItem di[] = {
 					{ DI_DOUBLEBOX,   3,  1, 66,  12, FALSE, {}, 0, 0, L"Application Info", 0 },
 					{ DI_TEXT,        5,  2,  20,  2, FALSE, {}, 0, 0, L"  Desktop file:", 0 },
@@ -72,11 +70,6 @@ private:
 					{ DI_TEXT,        5,  6,  20,  6, FALSE, {}, 0, 0, L"     MimeType =", 0 },
 					{ DI_EDIT,        21, 6,  64,  6, FALSE, {}, DIF_READONLY, 0, selected_app.mimetype.c_str()},
 					{ DI_TEXT,        5,  7,  0,  7, FALSE, {}, DIF_SEPARATOR, 0, L"", 0 },
-
-					{ DI_TEXT,        5,  8,  20,  8, FALSE, {}, 0, 0, L" File MIME type:", 0 },
-					{ DI_EDIT,        21, 8,  64,  8, FALSE, {}, DIF_READONLY, 0, mimetype.c_str() },
-
-
 					{ DI_TEXT,        5,  9,  20,  9, FALSE, {}, 0, 0, L"Command to run:", 0 },
 					{ DI_EDIT,        21, 9,  64,  9, FALSE, {}, DIF_READONLY, 0, cmd.c_str() },
 					{ DI_TEXT,        5,  10,  0,  10, FALSE, {}, DIF_SEPARATOR, 0, L"", 0 },
