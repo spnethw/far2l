@@ -37,6 +37,7 @@
 class LinuxAppProvider : public AppProvider
 {
 public:
+	std::string IdentifyFileMimeType(const std::wstring& pathname) const override;
     std::vector<CandidateInfo> GetAppCandidates(const std::wstring& pathname) override;
     std::wstring ConstructCommandLine(const CandidateInfo& candidate, const std::wstring& pathname) override;
 
@@ -46,6 +47,12 @@ private:
     std::string GetMimeType(const std::wstring& pathname) const;
 	std::string GetDefaultApp(const std::string& mime_type) const;
     std::vector<std::string> GetXDGDataDirs() const;
+
+	std::vector<std::string> GetUserDirs() const;
+	std::vector<std::string> GetSystemDirs() const;
+	static bool IsValidApplicationsDir(const std::string& path);
+
+
     std::optional<CandidateInfo> ParseDesktopFile(const std::string& path) const;
     std::optional<std::string> FindDesktopFileLocation(const std::string& desktopFile) const;
 	std::vector<std::string> GetMimeAppsAssociations(const std::string& mime_type) const;
@@ -54,7 +61,7 @@ private:
 
     std::string EscapePathForShell(const std::string& path) const;
 
-	std::string IdentifyFileMimeType(const std::wstring& pathname) const;
+
 	bool CheckDesktopFileMimeMatch(const std::string& desktop_pathname, const std::string& mime_type) const;
 	std::vector<CandidateInfo> DeduplicateAndSortCandidates(std::vector<CandidateInfo>& candidates, const std::string& mime_type) const;
 

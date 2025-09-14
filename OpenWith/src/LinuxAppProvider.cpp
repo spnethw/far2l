@@ -83,54 +83,64 @@ std::string LinuxAppProvider::GetDefaultApp(const std::string& mime_type) const
 	return RunCommandAndCaptureOutput(cmd);
 }
 
-// GetXDGDataDirs with directory validation
+
+bool LinuxAppProvider::IsValidApplicationsDir(const std::string& path)
+{
+	struct stat buffer;
+	if (stat(path.c_str(), &buffer) != 0) return false;
+	return S_ISDIR(buffer.st_mode);
+}
+
+std::vector<std::string> LinuxAppProvider::GetUserDirs() const
+{
+	std::vector<std::string> dirs;
+	const char* xdg_data_home = getenv("XDG_DATA_HOME");
+	if (xdg_data_home && *xdg_data_home) {
+		std::string path = std::string(xdg_data_home) + "/applications";
+		if (IsValidApplicationsDir(path)) dirs.push_back(path);
+	} else {
+		auto home = GetMyHome();
+		if (!home.empty()) {
+			std::string path = home + "/.local/share/applications";
+			if (IsValidApplicationsDir(path)) dirs.push_back(path);
+		}
+	}
+	return dirs;
+}
+
+std::vector<std::string> LinuxAppProvider::GetSystemDirs() const
+{
+	std::vector<std::string> dirs;
+	const char* xdg_data_dirs = getenv("XDG_DATA_DIRS");
+	if (xdg_data_dirs && *xdg_data_dirs) {
+		std::stringstream ss(xdg_data_dirs);
+		std::string dir;
+		size_t count = 0;
+		while (std::getline(ss, dir, ':') && count < 50) {
+			if (!dir.empty()) {
+				std::string path = dir + "/applications";
+				if (IsValidApplicationsDir(path)) dirs.push_back(path);
+			}
+			++count;
+		}
+	} else {
+		std::string paths[] = {"/usr/local/share/applications", "/usr/share/applications"};
+		for (const auto& path : paths) {
+			if (IsValidApplicationsDir(path)) dirs.push_back(path);
+		}
+	}
+	return dirs;
+}
+
 std::vector<std::string> LinuxAppProvider::GetXDGDataDirs() const
 {
-    std::vector<std::string> dirs;
-    const char* xdg_data_home = getenv("XDG_DATA_HOME");
-    if (xdg_data_home && *xdg_data_home) {
-        std::string path = std::string(xdg_data_home) + "/applications";
-        struct stat buffer;
-        if (stat(path.c_str(), &buffer) == 0 && S_ISDIR(buffer.st_mode)) {
-            dirs.push_back(path);
-        }
-    } else {
-        auto home = GetMyHome();
-        if (!home.empty()) {
-            std::string path = home + "/.local/share/applications";
-            struct stat buffer;
-            if (stat(path.c_str(), &buffer) == 0 && S_ISDIR(buffer.st_mode)) {
-                dirs.push_back(path);
-            }
-        }
-    }
-
-    const char* xdg_data_dirs = getenv("XDG_DATA_DIRS");
-    if (xdg_data_dirs && *xdg_data_dirs) {
-        std::stringstream ss(xdg_data_dirs);
-        std::string dir;
-        size_t count = 0;
-        while (std::getline(ss, dir, ':') && count < 50) { // Limit to 50 directories
-            if (!dir.empty()) {
-                std::string path = dir + "/applications";
-                struct stat buffer;
-                if (stat(path.c_str(), &buffer) == 0 && S_ISDIR(buffer.st_mode)) {
-                    dirs.push_back(path);
-                }
-            }
-            ++count;
-        }
-    } else {
-        std::string paths[] = {"/usr/local/share/applications", "/usr/share/applications"};
-        for (const auto& path : paths) {
-            struct stat buffer;
-            if (stat(path.c_str(), &buffer) == 0 && S_ISDIR(buffer.st_mode)) {
-                dirs.push_back(path);
-            }
-        }
-    }
-    return dirs;
+	auto dirs = GetUserDirs();
+	auto system_dirs = GetSystemDirs();
+	dirs.insert(dirs.end(), system_dirs.begin(), system_dirs.end());
+	return dirs;
 }
+
+
 
 bool LinuxAppProvider::IsDesktopWhitespace(wchar_t c)
 {

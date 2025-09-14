@@ -9,3 +9,8 @@ std::wstring DummyAppProvider :: ConstructCommandLine(const CandidateInfo& candi
 {
 	return {};
 }
+
+std::string DummyAppProvider::IdentifyFileMimeType(const std::wstring& pathname) const
+{
+	return {};
+}
