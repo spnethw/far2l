@@ -8,6 +8,8 @@ struct CandidateInfo
 	bool terminal;
 	std::wstring name;
 	std::wstring exec;
+	std::wstring mimetype;
+	std::wstring desktop_file;
 
 	// for deduplication by executable file
 	bool operator==(const CandidateInfo& other) const

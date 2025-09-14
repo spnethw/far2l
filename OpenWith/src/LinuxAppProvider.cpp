@@ -326,6 +326,7 @@ std::optional<CandidateInfo> LinuxAppProvider::ParseDesktopFile(const std::strin
     bool in_main_section = false;
     CandidateInfo info;
 	info.terminal = false;
+	info.desktop_file = StrMB2Wide(path);
 
     std::unordered_map<std::string, std::string> entries;
     std::string exec;
@@ -356,6 +357,7 @@ std::optional<CandidateInfo> LinuxAppProvider::ParseDesktopFile(const std::strin
 
             if (key == "Exec") exec = value;
 			else if (key == "Terminal" && value == "true") info.terminal = true;
+			else if (key == "MimeType") info.mimetype = StrMB2Wide(value);
             else if (key == "Hidden" && value == "true") hidden = true;
             else if (key == "Type" && value == "Application") is_application = true;
         }

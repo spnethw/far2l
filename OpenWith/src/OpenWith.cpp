@@ -20,7 +20,7 @@ private:
 	static bool s_UseExternalTerminal;
 	static bool s_NoWaitForCommandCompletion;
 
-	static bool ProcessFile(const std::wstring &pathname)
+	static void ProcessFile(const std::wstring &pathname)
 	{
 		auto provider = AppProvider::CreateAppProvider();
 
@@ -28,7 +28,7 @@ private:
 
 		if (candidates.empty()) {
 			ShowError(GetMsg(MError), GetMsg(MNoAppsFound));
-			return false;
+			return;
 		}
 
 		std::vector<FarMenuItem> menu_items(candidates.size());
@@ -36,26 +36,65 @@ private:
 			menu_items[i].Text = candidates[i].name.c_str();
 		}
 
-		int result = s_Info.Menu(s_Info.ModuleNumber, -1, -1, 0, FMENU_WRAPMODE,
-								 GetMsg(MMenuTitle), nullptr, L"F1", nullptr, 0, &menu_items[0], menu_items.size());
+		int BreakCode = -1;
+		const int BreakKeys[] = {VK_F3, 0};
+		int active_idx = 0;
 
-		if (result >= 0 && static_cast<std::size_t>(result) < candidates.size()) {
-			auto selected_app = candidates[result];
+		do {
+			menu_items[active_idx].Selected = true;
 
+			int selected_idx = s_Info.Menu(s_Info.ModuleNumber, -1, -1, 0, FMENU_WRAPMODE | FMENU_SHOWAMPERSAND,
+										   GetMsg(MMenuTitle), L"Up/Down Enter Esc F3", nullptr, BreakKeys, &BreakCode, &menu_items[0], menu_items.size());
+
+			if (selected_idx == -1) { break; }
+
+			menu_items[active_idx].Selected = false;
+			active_idx = selected_idx;
+
+
+			auto selected_app = candidates[selected_idx];
 			std::wstring cmd = provider->ConstructCommandLine(selected_app, pathname);
 
-			unsigned int flags = 0;
-			if (selected_app.terminal) {
-				flags = s_UseExternalTerminal ? EF_EXTERNALTERM : 0;
+			if (BreakCode == 0) { // F3
+
+				FarDialogItem di[] = {
+					{ DI_DOUBLEBOX,   3,  1, 66,  11, FALSE, {}, 0, 0, L"Application Info", 0 },
+					{ DI_TEXT,        5,  2,  20,  2, FALSE, {}, 0, 0, L"  Desktop file:", 0 },
+					{ DI_EDIT,        21, 2,  64,  2, FALSE, {}, DIF_READONLY, 0,  selected_app.desktop_file.c_str()},
+					{ DI_TEXT,        5,  3,  20,  3, FALSE, {}, 0, 0, L"         Name =", 0 },
+					{ DI_EDIT,        21, 3,  64,  3, FALSE, {}, DIF_READONLY, 0,  selected_app.name.c_str()},
+					{ DI_TEXT,        5,  4,  20,  4, FALSE, {}, 0, 0, L"         Exec =", 0 },
+					{ DI_EDIT,        21, 4,  64,  4, FALSE, {}, DIF_READONLY, 0, selected_app.exec.c_str()},
+					{ DI_TEXT,        5,  5,  20,  5, FALSE, {}, 0, 0, L"     Terminal =", 0 },
+					{ DI_EDIT,        21, 5,  64,  5, FALSE, {}, DIF_READONLY, 0, selected_app.terminal ? L"true" : L"false"},
+					{ DI_TEXT,        5,  6,  20,  6, FALSE, {}, 0, 0, L"     MimeType =", 0 },
+					{ DI_EDIT,        21, 6,  64,  6, FALSE, {}, DIF_READONLY, 0, selected_app.mimetype.c_str()},
+					{ DI_TEXT,        5,  7,  0,  7, FALSE, {}, DIF_SEPARATOR, 0, L"", 0 },
+					{ DI_TEXT,        5,  8,  20,  8, FALSE, {}, 0, 0, L"Command to run:", 0 },
+					{ DI_EDIT,        21, 8,  64,  8, FALSE, {}, DIF_READONLY, 0, cmd.c_str() },
+					{ DI_TEXT,        5,  9,  0,  9, FALSE, {}, DIF_SEPARATOR, 0, L"", 0 },
+					{ DI_BUTTON,      0,  10,  0,  0, FALSE, {}, DIF_CENTERGROUP, 0, GetMsg(MOk), 0 },
+				};
+
+				HANDLE dlg = s_Info.DialogInit(s_Info.ModuleNumber, -1, -1, 70, 13, L"ApplicationInfo", di, ARRAYSIZE(di), 0, 0, nullptr, 0);
+				if (dlg != INVALID_HANDLE_VALUE) {
+					s_Info.DialogRun(dlg);
+					s_Info.DialogFree(dlg);
+				}
+
 			} else {
-				flags = s_NoWaitForCommandCompletion ? EF_NOWAIT : 0;
+				unsigned int flags = 0;
+				if (selected_app.terminal) {
+					flags = s_UseExternalTerminal ? EF_EXTERNALTERM : 0;
+				} else {
+					flags = s_NoWaitForCommandCompletion ? EF_NOWAIT : 0;
+				}
+				if (s_FSF.Execute(cmd.c_str(), flags) == -1) {
+					ShowError(GetMsg(MError), GetMsg(MCannotExecute));
+				}
+				break;
 			}
-			if (s_FSF.Execute(cmd.c_str(), flags) == -1) {
-				ShowError(GetMsg(MError), GetMsg(MCannotExecute));
-				return false;
-			}
-		}
-		return true;
+		} while (true);
 	}
 
 
