@@ -12,4 +12,9 @@ std::wstring MacOSAppProvider::ConstructCommandLine(const CandidateInfo& candida
 	return {};
 }
 
+std::wstring MacOSAppProvider::GetMimeType(const std::wstring& pathname)
+{
+	return {};
+}
+
 #endif

@@ -12,4 +12,9 @@ std::wstring BSDAppProvider :: ConstructCommandLine(const CandidateInfo& candida
 	return {};
 }
 
+std::wstring BSDAppProvider::GetMimeType(const std::wstring& pathname)
+{
+	return {};
+}
+
 #endif

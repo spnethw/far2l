@@ -3,17 +3,20 @@
 enum LanguageID
 {
 	MPluginTitle,
+	MConfigTitle,
+	MChooseApplication,
 	MError,
 	MOk,
 	MCancel,
-	MConfigTitle,
 	MUseExternalTerminal,
 	MDirectoryError,
-	MNoFileSelected,
-	MMenuTitle,
 	MSaveConfigError,
 	MNoAppsFound,
 	MCannotExecute,
 	MNoWaitForCommandCompletion,
-	MUseMemoryCache
+	MDetails,
+	MLaunchCommand,
+	MPathname,
+	MDesktopFile,
+	MMimeType
 };

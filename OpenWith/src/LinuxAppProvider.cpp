@@ -637,4 +637,28 @@ std::wstring LinuxAppProvider::ConstructCommandLine(const CandidateInfo& candida
 	return cmd;
 }
 
+
+std::wstring LinuxAppProvider::GetMimeType(const std::wstring& pathname)
+{
+	std::string narrow_path = StrWide2MB(pathname);
+	std::string escaped_path = EscapePathForShell(narrow_path);
+
+	std::string xdg_mime_result = RunCommandAndCaptureOutput("xdg-mime query filetype " + escaped_path + " 2>/dev/null");
+	std::string file_result = RunCommandAndCaptureOutput("file -b --mime-type " + escaped_path + " 2>/dev/null");
+
+	std::string result;
+
+	if (xdg_mime_result.empty()) {
+		result = file_result;
+	} else if (file_result.empty()) {
+		result = xdg_mime_result;
+	} else if (xdg_mime_result == file_result) {
+		result = xdg_mime_result;
+	} else {
+		result = xdg_mime_result + ";" + file_result;
+	}
+
+	return StrMB2Wide(result);
+}
+
 #endif

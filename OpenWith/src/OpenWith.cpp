@@ -18,6 +18,77 @@ private:
 	static bool s_UseExternalTerminal;
 	static bool s_NoWaitForCommandCompletion;
 
+	struct Field
+	{
+		std::wstring di_text;
+		std::wstring di_edit;
+	};
+
+
+	static void ShowDetailsDialog(std::vector<Field> file_info, std::vector<Field> application_info,
+								  Field launch_command)
+	{
+		constexpr int DIALOG_WIDTH = 70;
+		int dialog_height = file_info.size() + application_info.size() + 9;
+
+		auto max_in = [](const std::vector<Field>& v) -> size_t {
+			if (v.empty()) return 0;
+			return std::max_element(v.begin(), v.end(),
+				[](const Field& x, const Field& y){ return x.di_text.size() < y.di_text.size(); })->di_text.size();
+		};
+
+		auto max_di_text_length = static_cast<int>(std::max(launch_command.di_text.size(), std::max(max_in(file_info), max_in(application_info))));
+
+		int di_text_X2 = max_di_text_length + 4;
+		int di_edit_X1 = max_di_text_length + 6;
+		int di_edit_X2 = DIALOG_WIDTH - 6;
+
+		std::vector<FarDialogItem> di;
+
+		di.push_back({ DI_DOUBLEBOX, 3,  1, DIALOG_WIDTH - 4,  dialog_height - 2, FALSE, {}, 0, 0, GetMsg(MDetails), 0 });
+
+		int cur_line = 2;
+
+		for (auto &field : file_info) {
+			int di_text_X1 = di_text_X2 - field.di_text.size() + 1;
+			di.push_back({ DI_TEXT, di_text_X1, cur_line,  di_text_X2, cur_line, FALSE, {}, 0, 0, field.di_text.c_str(), 0 });
+			di.push_back({ DI_EDIT, di_edit_X1, cur_line,  di_edit_X2, cur_line, FALSE, {}, DIF_READONLY, 0,  field.di_edit.c_str(), 0});
+			++cur_line;
+		}
+
+		di.push_back({ DI_TEXT, 5,  cur_line,  0,  cur_line, FALSE, {}, DIF_SEPARATOR, 0, L"", 0 });
+		++cur_line;
+
+		for (auto &field : application_info) {
+			int di_text_X1 = di_text_X2 - field.di_text.size() + 1;
+			di.push_back({ DI_TEXT, di_text_X1, cur_line,  di_text_X2, cur_line, FALSE, {}, 0, 0, field.di_text.c_str(), 0 });
+			di.push_back({ DI_EDIT, di_edit_X1, cur_line,  di_edit_X2, cur_line, FALSE, {}, DIF_READONLY, 0,  field.di_edit.c_str(), 0});
+			++cur_line;
+		}
+
+		di.push_back({ DI_TEXT, 5,  cur_line,  0,  cur_line, FALSE, {}, DIF_SEPARATOR, 0, L"", 0 });
+		++cur_line;
+
+		int di_text_X1 = di_text_X2 - launch_command.di_text.size() + 1;
+		di.push_back({ DI_TEXT, di_text_X1, cur_line,  di_text_X2, cur_line, FALSE, {}, 0, 0, launch_command.di_text.c_str(), 0 });
+		di.push_back({ DI_EDIT, di_edit_X1, cur_line,  di_edit_X2, cur_line, FALSE, {}, DIF_READONLY, 0,  launch_command.di_edit.c_str(), 0});
+		++cur_line;
+
+		di.push_back({ DI_TEXT, 5,  cur_line,  0,  cur_line, FALSE, {}, DIF_SEPARATOR, 0, L"", 0 });
+		++cur_line;
+
+		di.push_back({ DI_BUTTON, 0,  cur_line,  0,  cur_line, FALSE, {}, DIF_CENTERGROUP, 0, GetMsg(MOk), 0 });
+
+
+		HANDLE dlg = s_Info.DialogInit(s_Info.ModuleNumber, -1, -1, DIALOG_WIDTH, dialog_height, L"",
+										di.data(), static_cast<int>(di.size()), 0, 0, nullptr, 0);
+		if (dlg != INVALID_HANDLE_VALUE) {
+			s_Info.DialogRun(dlg);
+			s_Info.DialogFree(dlg);
+		}
+	}
+
+
 	static void ProcessFile(const std::wstring &pathname)
 	{
 		auto provider = AppProvider::CreateAppProvider();
@@ -42,7 +113,7 @@ private:
 			menu_items[active_idx].Selected = true;
 
 			int selected_idx = s_Info.Menu(s_Info.ModuleNumber, -1, -1, 0, FMENU_WRAPMODE | FMENU_SHOWAMPERSAND,
-										   GetMsg(MMenuTitle), L"F3 Ctrl+Alt+F", nullptr, BreakKeys, &BreakCode, &menu_items[0], menu_items.size());
+										   GetMsg(MChooseApplication), L"F3 Ctrl+Alt+F", nullptr, BreakKeys, &BreakCode, &menu_items[0], menu_items.size());
 
 			if (selected_idx == -1) { break; }
 
@@ -55,38 +126,22 @@ private:
 
 			if (BreakCode == 0) { // F3
 
-				FarDialogItem di[] = {
-					{ DI_DOUBLEBOX,   3,  1, 66,  12, FALSE, {}, 0, 0, L"Application Info", 0 },
-
-					{ DI_TEXT,        5,  2,  20,  2, FALSE, {}, 0, 0, L"  Desktop file:", 0 },
-					{ DI_EDIT,        21, 2,  64,  2, FALSE, {}, DIF_READONLY, 0,  selected_app.desktop_file.c_str()},
-
-					{ DI_TEXT,        5,  3,  20,  3, FALSE, {}, 0, 0, L"         Name =", 0 },
-					{ DI_EDIT,        21, 3,  64,  3, FALSE, {}, DIF_READONLY, 0,  selected_app.name.c_str()},
-
-					{ DI_TEXT,        5,  4,  20,  4, FALSE, {}, 0, 0, L"         Exec =", 0 },
-					{ DI_EDIT,        21, 4,  64,  4, FALSE, {}, DIF_READONLY, 0, selected_app.exec.c_str()},
-
-					{ DI_TEXT,        5,  5,  20,  5, FALSE, {}, 0, 0, L"     Terminal =", 0 },
-					{ DI_EDIT,        21, 5,  64,  5, FALSE, {}, DIF_READONLY, 0, selected_app.terminal ? L"true" : L"false"},
-
-					{ DI_TEXT,        5,  6,  20,  6, FALSE, {}, 0, 0, L"     MimeType =", 0 },
-					{ DI_EDIT,        21, 6,  64,  6, FALSE, {}, DIF_READONLY, 0, selected_app.mimetype.c_str()},
-
-					{ DI_TEXT,        5,  7,  0,  7, FALSE, {}, DIF_SEPARATOR, 0, L"", 0 },
-
-					{ DI_TEXT,        5,  9,  20,  9, FALSE, {}, 0, 0, L"Command to run:", 0 },
-					{ DI_EDIT,        21, 9,  64,  9, FALSE, {}, DIF_READONLY, 0, cmd.c_str() },
-
-					{ DI_TEXT,        5,  10,  0,  10, FALSE, {}, DIF_SEPARATOR, 0, L"", 0 },
-					{ DI_BUTTON,      0,  11,  0,  11, FALSE, {}, DIF_CENTERGROUP, 0, GetMsg(MOk), 0 },
+				std::vector<Field> file_info = {
+					{ GetMsg(MPathname), pathname },
+					{ GetMsg(MMimeType), provider->GetMimeType(pathname) }
 				};
 
-				HANDLE dlg = s_Info.DialogInit(s_Info.ModuleNumber, -1, -1, 70, 14, L"ApplicationInfo", di, ARRAYSIZE(di), 0, 0, nullptr, 0);
-				if (dlg != INVALID_HANDLE_VALUE) {
-					s_Info.DialogRun(dlg);
-					s_Info.DialogFree(dlg);
-				}
+				std::vector<Field> application_info = {
+					{ GetMsg(MDesktopFile), selected_app.desktop_file.c_str() },
+					{ L"Name =", selected_app.name.c_str() },
+					{ L"Terminal =", selected_app.terminal ? L"true" : L"false" },
+					{ L"MimeType =", selected_app.mimetype.c_str() },
+				};
+
+				Field launch_command { GetMsg(MLaunchCommand), cmd.c_str() };
+
+				ShowDetailsDialog(file_info, application_info, launch_command);
+
 
 			} else {
 				unsigned int flags = 0;
@@ -171,7 +226,7 @@ public:
 		}
 
 		if (pi.SelectedItemsNumber == 0 && pi.CurrentItem < 0) {
-			ShowError(GetMsg(MError), GetMsg(MNoFileSelected));
+			fprintf(stderr, "OpenWith: no files selected\n", openFrom);
 			return INVALID_HANDLE_VALUE;
 		}
 

@@ -10,3 +10,8 @@ std::wstring DummyAppProvider :: ConstructCommandLine(const CandidateInfo& candi
 	return {};
 }
 
+std::wstring DummyAppProvider::GetMimeType(const std::wstring& pathname)
+{
+	return {};
+}
+
