@@ -6,26 +6,6 @@
 
 #include "common.hpp"
 
-/*#include <optional>
-#include <algorithm>
-#include <unordered_map>
-#include <unordered_set>
-#include <fstream>
-#include <sstream>
-#include <cstdlib>
-#include <array>
-#include <list>
-#include <farplug-wide.h>
-#include <KeyFileHelper.h>
-#include <utils.h>
-#include <stdio.h>
-#include <cwctype>
-
-
-#include "AppProvider.hpp"
-#include "BSDAppProvider.hpp"
-*/
-
 class AppProvider
 {
 public:

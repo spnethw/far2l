@@ -1,5 +1,3 @@
-// file: OpenWith.cpp - plugin for far2l : https://github.com/elfmz/far2l
-
 #include "farplug-wide.h"
 #include "KeyFileHelper.h"
 #include "utils.h"
@@ -44,7 +42,7 @@ private:
 			menu_items[active_idx].Selected = true;
 
 			int selected_idx = s_Info.Menu(s_Info.ModuleNumber, -1, -1, 0, FMENU_WRAPMODE | FMENU_SHOWAMPERSAND,
-										   GetMsg(MMenuTitle), L"Up/Down Enter Esc F3", nullptr, BreakKeys, &BreakCode, &menu_items[0], menu_items.size());
+										   GetMsg(MMenuTitle), L"F3 Ctrl+Alt+F", nullptr, BreakKeys, &BreakCode, &menu_items[0], menu_items.size());
 
 			if (selected_idx == -1) { break; }
 
@@ -59,19 +57,27 @@ private:
 
 				FarDialogItem di[] = {
 					{ DI_DOUBLEBOX,   3,  1, 66,  12, FALSE, {}, 0, 0, L"Application Info", 0 },
+
 					{ DI_TEXT,        5,  2,  20,  2, FALSE, {}, 0, 0, L"  Desktop file:", 0 },
 					{ DI_EDIT,        21, 2,  64,  2, FALSE, {}, DIF_READONLY, 0,  selected_app.desktop_file.c_str()},
+
 					{ DI_TEXT,        5,  3,  20,  3, FALSE, {}, 0, 0, L"         Name =", 0 },
 					{ DI_EDIT,        21, 3,  64,  3, FALSE, {}, DIF_READONLY, 0,  selected_app.name.c_str()},
+
 					{ DI_TEXT,        5,  4,  20,  4, FALSE, {}, 0, 0, L"         Exec =", 0 },
 					{ DI_EDIT,        21, 4,  64,  4, FALSE, {}, DIF_READONLY, 0, selected_app.exec.c_str()},
+
 					{ DI_TEXT,        5,  5,  20,  5, FALSE, {}, 0, 0, L"     Terminal =", 0 },
 					{ DI_EDIT,        21, 5,  64,  5, FALSE, {}, DIF_READONLY, 0, selected_app.terminal ? L"true" : L"false"},
+
 					{ DI_TEXT,        5,  6,  20,  6, FALSE, {}, 0, 0, L"     MimeType =", 0 },
 					{ DI_EDIT,        21, 6,  64,  6, FALSE, {}, DIF_READONLY, 0, selected_app.mimetype.c_str()},
+
 					{ DI_TEXT,        5,  7,  0,  7, FALSE, {}, DIF_SEPARATOR, 0, L"", 0 },
+
 					{ DI_TEXT,        5,  9,  20,  9, FALSE, {}, 0, 0, L"Command to run:", 0 },
 					{ DI_EDIT,        21, 9,  64,  9, FALSE, {}, DIF_READONLY, 0, cmd.c_str() },
+
 					{ DI_TEXT,        5,  10,  0,  10, FALSE, {}, DIF_SEPARATOR, 0, L"", 0 },
 					{ DI_BUTTON,      0,  11,  0,  11, FALSE, {}, DIF_CENTERGROUP, 0, GetMsg(MOk), 0 },
 				};

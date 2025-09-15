@@ -24,18 +24,32 @@
 #  include <sys/stat.h>
 #  include <sys/wait.h>
 
-// Вспомогательная структура для сортировки найденных приложений
+// For sorting found applications
 struct RankedCandidate {
 	CandidateInfo info;
-	int rank; // Ранг соответствия (чем ниже, тем лучше)
+	int rank; // match rank (the lower the better)
 	bool is_default = false;
 
-	// Оператор для std::sort
+	// Operator for std::sort
 	bool operator<(const RankedCandidate& other) const {
-		if (is_default != other.is_default) return is_default; // true (приложение по умолчанию) идет первым
-		if (rank != other.rank) return rank < other.rank; // Сортировка по рангу
-		return info.name < other.info.name; // Вторичная сортировка по имени
+		if (is_default != other.is_default) return is_default; // true (default app) comes first
+		if (rank != other.rank) return rank < other.rank; // sort by rank
+		return info.name < other.info.name; // secondary sort by name
 	}
+};
+
+// For deduplication by executable file
+inline bool operator==(const CandidateInfo& a, const CandidateInfo& b)
+{
+	return a.exec == b.exec;
+}
+
+
+struct Token
+{
+	std::wstring text;
+	bool quoted;
+	bool single_quoted; // Added for single quotes support
 };
 
 

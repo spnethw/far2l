@@ -31,34 +31,9 @@ std::string LinuxAppProvider::Trim(std::string str) const
 std::string LinuxAppProvider::RunCommandAndCaptureOutput(const std::string& cmd) const
 {
 	std::string result;
-	result.reserve(1024);
-	FILE* pipe = popen(cmd.c_str(), "r");
-	if (!pipe) {
-		fprintf(stderr, "OpenWith: Failed to execute command\n");
-		return "";
-	}
-	struct PipeGuard {
-		FILE* p;
-		~PipeGuard() { if (p) pclose(p); }
-	} guard{pipe};
-	std::array<char, 256> buffer;
-	size_t total_size = 0;
-	while (fgets(buffer.data(), buffer.size(), pipe) != nullptr) {
-		result += buffer.data();
-		total_size += strlen(buffer.data());
-		if (total_size > 1024 * 1024) { // Limit output to 1MB
-			fprintf(stderr, "OpenWith: Command output too large\n");
-			return "";
-		}
-	}
-	int status = pclose(pipe);
-	guard.p = nullptr; // Prevent double close
-	if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-		fprintf(stderr, "OpenWith: Command execution failed\n");
-		return "";
-	}
-	return Trim(result);
+	return POpen(result, cmd.c_str()) ? Trim(result) : "";
 }
+
 
 std::string LinuxAppProvider::GetDefaultApp(const std::string& mime_type) const
 {
@@ -67,12 +42,14 @@ std::string LinuxAppProvider::GetDefaultApp(const std::string& mime_type) const
 	return RunCommandAndCaptureOutput(cmd);
 }
 
+
 bool LinuxAppProvider::IsValidApplicationsDir(const std::string& path)
 {
 	struct stat buffer;
 	if (stat(path.c_str(), &buffer) != 0) return false;
 	return S_ISDIR(buffer.st_mode);
 }
+
 
 std::vector<std::string> LinuxAppProvider::GetUserDirs() const
 {
@@ -90,6 +67,7 @@ std::vector<std::string> LinuxAppProvider::GetUserDirs() const
 	}
 	return dirs;
 }
+
 
 std::vector<std::string> LinuxAppProvider::GetSystemDirs() const
 {
@@ -115,6 +93,7 @@ std::vector<std::string> LinuxAppProvider::GetSystemDirs() const
 	return dirs;
 }
 
+
 std::vector<std::string> LinuxAppProvider::GetXDGDataDirs() const
 {
 	auto dirs = GetUserDirs();
@@ -123,7 +102,7 @@ std::vector<std::string> LinuxAppProvider::GetXDGDataDirs() const
 	return dirs;
 }
 
-// Функция для сбора и приоритизации MIME-типов
+
 std::vector<std::string> LinuxAppProvider::CollectAndPrioritizeMimeTypes(const std::wstring& pathname) const
 {
 	std::vector<std::string> mime_types;
@@ -138,24 +117,22 @@ std::vector<std::string> LinuxAppProvider::CollectAndPrioritizeMimeTypes(const s
 	std::string narrow_path = StrWide2MB(pathname);
 	std::string escaped_path = EscapePathForShell(narrow_path);
 
-	// 1. Приоритет №1: xdg-mime
+	// 1. Priority №1: xdg-mime
 	add_unique(RunCommandAndCaptureOutput("xdg-mime query filetype " + escaped_path + " 2>/dev/null"));
 
-	// 2. Приоритет №2: утилита file
+	// 2. Priority №2: file
 	add_unique(RunCommandAndCaptureOutput("file -b --mime-type " + escaped_path + " 2>/dev/null"));
 
-	// 3. Генерализация полученных типов
-	// Создаём копию, чтобы безопасно итерироваться и добавлять новые элементы
+	// 3. Generalize MIME types by stripping "+suffix"
 	std::vector<std::string> base_types = mime_types;
 	for (const auto& mime : base_types) {
-		// "image/vnd.djvu+multipage" -> "image/vnd.djvu"
 		size_t plus_pos = mime.find('+');
 		if (plus_pos != std::string::npos) {
 			add_unique(mime.substr(0, plus_pos));
 		}
 	}
 
-	// 4. Фолбэк по расширению файла
+	// 4. Fallback: map filename extension to a probable MIME type and add it if missing
 	size_t dot_pos = pathname.rfind(L'.');
 	if (dot_pos != std::wstring::npos) {
 		std::wstring ext = pathname.substr(dot_pos);
@@ -182,14 +159,12 @@ std::vector<std::string> LinuxAppProvider::CollectAndPrioritizeMimeTypes(const s
 		if (ext == L".gz") add_unique("application/gzip");
 	}
 
-	// 5. Добавляем общие фолбэки в конец списка
+	// 5. Fallbacks: add top-level wildcards and ensure "text/plain" for any "text/".
 	for (const auto& mime : base_types) {
-		// "image/jpeg" -> "image/*"
 		size_t slash_pos = mime.find('/');
 		if (slash_pos != std::string::npos) {
 			add_unique(mime.substr(0, slash_pos) + "/*");
 		}
-		// "text/html" -> "text/plain"
 		if (mime.rfind("text/", 0) == 0) {
 			add_unique("text/plain");
 		}
@@ -201,7 +176,7 @@ std::vector<std::string> LinuxAppProvider::CollectAndPrioritizeMimeTypes(const s
 	return mime_types;
 }
 
-// Функция для проверки соответствия MIME-типов и получения ранга
+
 std::optional<int> LinuxAppProvider::GetBestMimeMatchRank(const std::string& desktop_pathname, const std::vector<std::string>& prioritized_mimes) const
 {
 	std::ifstream file(desktop_pathname);
@@ -212,19 +187,25 @@ std::optional<int> LinuxAppProvider::GetBestMimeMatchRank(const std::string& des
 	while (std::getline(file, line)) {
 		line = Trim(line);
 		if (line.empty() || line[0] == '#') continue;
+
+		// Enter main Desktop Entry section; only keys inside this section are relevant
 		if (line == "[Desktop Entry]") {
 			in_main_section = true;
 			continue;
 		}
+
+		// Any other section ends the main section scope
 		if (line[0] == '[') {
 			in_main_section = false;
 			continue;
 		}
 
+		// Only process MimeType key inside the main section
 		if (in_main_section && line.rfind("MimeType=", 0) == 0) {
 			size_t eq_pos = line.find('=');
 			if (eq_pos == std::string::npos) continue;
 
+			// Extract and split semicolon-separated MIME list
 			std::string value = Trim(line.substr(eq_pos + 1));
 			std::stringstream ss(value);
 			std::string app_mime;
@@ -239,18 +220,20 @@ std::optional<int> LinuxAppProvider::GetBestMimeMatchRank(const std::string& des
 					const auto& target_mime = prioritized_mimes[i];
 
 					bool match = false;
-					// Проверка на wildcard (например, app_mime "image/*" должен соответствовать target_mime "image/jpeg")
+
+					// Support wildcard entries like "image/*": match top-level type prefix
 					size_t star_pos = app_mime.find("/*");
 					if (star_pos != std::string::npos && star_pos == app_mime.length() - 2) {
 						if (target_mime.rfind(app_mime.substr(0, star_pos + 1), 0) == 0) {
 							match = true;
 						}
-					} else { // Обычное сравнение
+					} else { // Exact match
 						if (app_mime == target_mime) {
 							match = true;
 						}
 					}
 
+					// Keep the best (lowest index) match among prioritized_mimes
 					if (match) {
 						if (best_rank == -1 || static_cast<int>(i) < best_rank) {
 							best_rank = static_cast<int>(i);
@@ -260,7 +243,7 @@ std::optional<int> LinuxAppProvider::GetBestMimeMatchRank(const std::string& des
 			}
 
 			if (best_rank != -1) {
-				// Возвращаем лучший (наименьший) найденный ранг
+				// Return the best (smallest) rank found for this desktop file
 				return best_rank;
 			}
 		}
@@ -275,9 +258,9 @@ std::vector<CandidateInfo> LinuxAppProvider::GetAppCandidates(const std::wstring
 	if (prioritized_mimes.empty()) return {};
 
 	std::vector<RankedCandidate> ranked_candidates;
-	std::unordered_set<std::wstring> seen_execs; // Для дедупликации по полю Exec
+	std::unordered_set<std::wstring> seen_execs; // for deduplication by Exec field
 
-	// Единый проход по всем .desktop файлам
+	// Single pass through all .desktop files
 	for (const auto& dir_path : GetXDGDataDirs()) {
 		DIR* dir = opendir(dir_path.c_str());
 		if (!dir) continue;
@@ -300,12 +283,12 @@ std::vector<CandidateInfo> LinuxAppProvider::GetAppCandidates(const std::wstring
 		closedir(dir);
 	}
 
-	// Определяем приложение по умолчанию
+	// Determine the default application
 	if (!prioritized_mimes.empty()) {
 		std::string default_app_desktop = GetDefaultApp(prioritized_mimes.front());
 		if (!default_app_desktop.empty()) {
 			for (auto& cand : ranked_candidates) {
-				// Имя файла desktop_file может быть полным путем, поэтому используем find
+				// The desktop_file name may be a full pathname, so use find
 				if (StrWide2MB(cand.info.desktop_file).find(default_app_desktop) != std::string::npos) {
 					cand.is_default = true;
 					break;
@@ -314,10 +297,10 @@ std::vector<CandidateInfo> LinuxAppProvider::GetAppCandidates(const std::wstring
 		}
 	}
 
-	// Финальная сортировка по всем критериям
+	// Final sorting by all criteria
 	std::sort(ranked_candidates.begin(), ranked_candidates.end());
 
-	// Преобразуем результат в итоговый формат
+	// Convert the result to the final format
 	std::vector<CandidateInfo> result;
 	result.reserve(ranked_candidates.size());
 	for (const auto& ranked : ranked_candidates) {
@@ -398,6 +381,7 @@ std::vector<Token> LinuxAppProvider::TokenizeDesktopExec(const std::wstring& str
 	return tokens;
 }
 
+
 std::wstring LinuxAppProvider::UndoEscapes(const Token& token)
 {
 	std::wstring result;
@@ -420,6 +404,7 @@ std::wstring LinuxAppProvider::UndoEscapes(const Token& token)
 
 	return result;
 }
+
 
 bool LinuxAppProvider::ExpandFieldCodes(const CandidateInfo& candidate,
 										const std::wstring& pathname,
@@ -445,7 +430,7 @@ bool LinuxAppProvider::ExpandFieldCodes(const CandidateInfo& candidate,
 				break;
 			case L'n': case L'd': case L'D': case L't': case L'T': case L'v': case L'm':
 			case L'k': case L'i':
-				// Эти коды не поддерживаются, но не должны вызывать ошибку
+				// These codes are not supported, but should not cause an error
 				break;
 			default:
 				return false;
@@ -503,6 +488,7 @@ std::string LinuxAppProvider::GetLocalizedValue(const std::unordered_map<std::st
 	auto it = values.find(key);
 	return (it != values.end()) ? it->second : "";
 }
+
 
 std::optional<CandidateInfo> LinuxAppProvider::ParseDesktopFile(const std::string& path) const
 {
@@ -600,6 +586,7 @@ std::optional<std::string> LinuxAppProvider::FindDesktopFileLocation(const std::
 	}
 	return std::nullopt;
 }
+
 
 std::wstring LinuxAppProvider::ConstructCommandLine(const CandidateInfo& candidate, const std::wstring& pathname)
 {
