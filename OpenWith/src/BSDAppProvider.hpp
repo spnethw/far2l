@@ -3,6 +3,7 @@
 #if defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
 
 #include "AppProvider.hpp"
+#include "common.hpp"
 #include <string>
 #include <vector>
 

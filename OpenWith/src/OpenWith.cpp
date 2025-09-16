@@ -108,6 +108,7 @@ private:
 		std::vector<Field> application_info = {
 			{ GetMsg(MDesktopFile), app.desktop_file.c_str() },
 			{ L"Name =", app.name.c_str() },
+			{ L"Exec =", app.exec.c_str() },
 			{ L"Terminal =", app.terminal ? L"true" : L"false" },
 			{ L"MimeType =", app.mimetype.c_str() },
 		};

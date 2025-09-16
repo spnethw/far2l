@@ -2,7 +2,7 @@
 
 #include "LinuxAppProvider.hpp"
 #include "WideMB.h"
-#include "src/common.hpp"
+#include "common.hpp"
 #include "utils.h"
 #include <dirent.h>
 #include <stdlib.h>

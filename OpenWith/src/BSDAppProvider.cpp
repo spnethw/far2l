@@ -1,6 +1,7 @@
 #if defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
 
 #include "BSDAppProvider.hpp"
+#include "common.hpp"
 #include <string>
 #include <vector>
 

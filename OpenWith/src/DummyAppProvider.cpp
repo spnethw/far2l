@@ -1,4 +1,5 @@
 #include "DummyAppProvider.hpp"
+#include "common.hpp"
 #include <string>
 #include <vector>
 

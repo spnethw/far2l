@@ -1,6 +1,7 @@
 #if defined(__APPLE__)
 
 #include "MacOSAppProvider.hpp"
+#include "common.hpp"
 #include <string>
 #include <vector>
 

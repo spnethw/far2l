@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AppProvider.hpp"
+#include "common.hpp"
 #include <string>
 #include <vector>
 

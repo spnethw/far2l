@@ -3,6 +3,7 @@
 #if defined(__APPLE__)
 
 #include "AppProvider.hpp"
+#include "common.hpp"
 #include <string>
 #include <vector>
 
