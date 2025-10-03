@@ -9,7 +9,7 @@ set(SOURCES
 
 option(OPENWITH_USE_GIO "Build with GLib/GIO support for application discovery" ON)
 
-if(OPENWITH_USE_GIO)
+if(OPENWITH_USE_GIO AND NOT APPLE)
     find_package(PkgConfig)
     if(PKG_CONFIG_FOUND)
         pkg_check_modules(GLIB_GIO glib-2.0 gio-2.0 gio-unix-2.0)
