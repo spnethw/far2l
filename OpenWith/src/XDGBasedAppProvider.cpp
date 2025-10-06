@@ -100,34 +100,104 @@ void XDGBasedAppProvider::SetPlatformSettings(const std::vector<ProviderSetting>
 }
 
 
-// Main orchestration method for finding and ranking aapplication candidates based on XDG standards
-std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::wstring& pathname)
+// Finds applications that can open all specified files.
+// It works by finding candidates for the first file, and then intersecting that
+// set with candidates for each subsequent file.
+std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vector<std::wstring>& pathnames)
 {
-	// 1. Prepare context: determine MIME types, find system paths, parse associations.
+	if (pathnames.empty()) {
+		return {};
+	}
+
+	// Step 1: One-time preparation. This data is constant for a single plugin invocation.
+	// This avoids re-reading and re-parsing the same system files for every input file.
 	_desktop_entry_cache.clear();
 	_last_candidates_source_info.clear();
-	auto prioritized_mimes = CollectAndPrioritizeMimeTypes(StrWide2MB(pathname));
 	auto desktop_paths = GetDesktopFileSearchPaths();
 	auto mimeapps_paths = GetMimeappsListSearchPaths();
 	auto associations = ParseMimeappsLists(mimeapps_paths);
 	std::string current_desktop_env = _filter_by_show_in ? GetEnv("XDG_CURRENT_DESKTOP") : "";
+
+	// Step 2: Get candidates for the first file to establish a baseline.
+	auto base_candidates = GetCandidatesForSingleFile(pathnames[0], desktop_paths, associations, current_desktop_env);
+
+	// If there's only one file, we are done.
+	if (pathnames.size() == 1) {
+		return base_candidates;
+	}
+
+	// Step 3: For multiple files, find the intersection of candidates.
+	// Use a set of candidate IDs for efficient lookup.
+	std::unordered_set<std::wstring> common_ids;
+	for (const auto& candidate : base_candidates) {
+		common_ids.insert(candidate.id);
+	}
+
+	// Iterate through the rest of the files, refining the common_ids set.
+	for (size_t i = 1; i < pathnames.size(); ++i) {
+		if (common_ids.empty()) {
+			break; // Optimization: no common apps left.
+		}
+
+		auto next_candidates = GetCandidatesForSingleFile(pathnames[i], desktop_paths, associations, current_desktop_env);
+		std::unordered_set<std::wstring> next_ids;
+		for (const auto& candidate : next_candidates) {
+			next_ids.insert(candidate.id);
+		}
+
+		// Perform set intersection: remove IDs from common_ids that are not in next_ids.
+		for (auto it = common_ids.begin(); it != common_ids.end(); ) {
+			if (next_ids.find(*it) == next_ids.end()) {
+				it = common_ids.erase(it);
+			} else {
+				++it;
+			}
+		}
+	}
+
+	// Step 4: Build the final result vector from the baseline candidates.
+	std::vector<CandidateInfo> result;
+	result.reserve(common_ids.size());
+	for (const auto& candidate : base_candidates) {
+		if (common_ids.count(candidate.id)) {
+			result.push_back(candidate);
+		}
+	}
+
+	// Source info is meaningless for multiple files with potentially different association sources.
+	_last_candidates_source_info.clear();
+
+	return result;
+}
+
+
+// Finds candidate applications for a single file using pre-fetched system configuration data.
+// This is the core logic that is called iteratively by GetAppCandidates.
+std::vector<CandidateInfo> XDGBasedAppProvider::GetCandidatesForSingleFile(
+	const std::wstring& pathname,
+	const std::vector<std::string>& desktop_paths,
+	const MimeAssociation& associations,
+	const std::string& current_desktop_env)
+{
+	// NOTE: This function MUST NOT clear any member caches like _desktop_entry_cache.
+
+	auto prioritized_mimes = CollectAndPrioritizeMimeTypes(StrWide2MB(pathname));
 	CandidateSearchContext context(prioritized_mimes, associations, desktop_paths, current_desktop_env);
 
-	// 2. Handle the global default app (from xdg-mime) separately and with the highest priority.
+	// Check for a global default app using 'xdg-mime query default'.
 	std::string global_default_app = GetDefaultApp(prioritized_mimes.empty() ? "" : prioritized_mimes[0]);
 	if (!global_default_app.empty()) {
 		const auto& mime_for_default = prioritized_mimes[0];
 		if (!IsAssociationRemoved(context.associations,mime_for_default,global_default_app)) {
-			// Rank is based on the highest possible specificity (index 0).
 			int rank = (prioritized_mimes.size() - 0) * Ranking::SPECIFICITY_MULTIPLIER + Ranking::SOURCE_RANK_GLOBAL_DEFAULT;
 			ValidateAndRegisterCandidate(context, global_default_app, rank,  "xdg-mime query default " + mime_for_default);
 		}
 	}
 
-	// 3. Find candidates using high-priority sources (mimeapps.list).
+	// Find candidates from mimeapps.list files.
 	FindCandidatesFromMimeLists(context);
 
-	// 4. Find candidates using mimeinfo.cache (if enabled and found) with fallback to full scan of all .desktop files.
+	// Find candidates using either mimeinfo.cache for speed, or a full scan as a fallback.
 	std::unordered_map<std::string, std::vector<MimeAssociation::AssociationSource>> mime_cache;
 	bool cache_file_found = false;
 	if (_use_mimeinfo_cache) {
@@ -145,7 +215,6 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::wstr
 		FindCandidatesByFullScan(context);
 	}
 
-	// 5. Sort all found candidates by their calculated rank and then by name.
 	std::vector<RankedCandidate> sorted_candidates;
 	sorted_candidates.reserve(context.unique_candidates.size());
 	for (const auto& [key, ranked_candidate] : context.unique_candidates) {
@@ -153,8 +222,7 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::wstr
 	}
 	std::sort(sorted_candidates.begin(), sorted_candidates.end());
 
-	// 6. Convert the ranked internal structs to the public CandidateInfo format
-	//    and populate the source info cache.
+	// Convert ranked candidates to the final format.
 	std::vector<CandidateInfo> result;
 	result.reserve(sorted_candidates.size());
 	for (const auto& ranked_candidate : sorted_candidates) {
@@ -167,63 +235,129 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::wstr
 }
 
 
-std::wstring XDGBasedAppProvider::ConstructCommandLine(const CandidateInfo& candidate, const std::wstring& pathname)
+// Constructs command lines according to the Exec= key in the .desktop file.
+// It handles field codes for multi-file (%F, %U) and single-file (%f, %u) apps,
+// generating one or multiple command lines respectively.
+std::vector<std::wstring> XDGBasedAppProvider::ConstructCommandLine(const CandidateInfo& candidate, const std::vector<std::wstring>& pathnames)
 {
-	std::string desktop_file_name = StrWide2MB(candidate.id);
+	if (pathnames.empty()) {
+		return {};
+	}
 
+	std::string desktop_file_name = StrWide2MB(candidate.id);
 	auto it = _desktop_entry_cache.find(desktop_file_name);
 	if (it == _desktop_entry_cache.end() || !it->second.has_value()) {
-		return L"";
+		return {};
 	}
 	const DesktopEntry& desktop_entry = it->second.value();
 
 	std::string exec_mb = desktop_entry.exec;
-	if (exec_mb.empty()) return L"";
+	if (exec_mb.empty()) {
+		return {};
+	}
 
 	std::vector<std::string> tokens = TokenizeExecString(exec_mb);
 	if (tokens.empty()) {
-		return L"";
+		return {};
 	}
 
-	std::vector<std::string> args;
-	args.reserve(tokens.size());
-	bool has_field_code = false;
-
-	for (const std::string& t : tokens) {
-		if (t.find('%') != std::string::npos) {
-			has_field_code = true;
-			break;
+	bool has_multi_file_code = false;
+	bool has_single_file_code = false;
+	for (const auto& token : tokens) {
+		if (token.find('%') != std::string::npos) {
+			if (token.find('F') != std::string::npos || token.find('U') != std::string::npos) {
+				has_multi_file_code = true;
+			}
+			if (token.find('f') != std::string::npos || token.find('u') != std::string::npos) {
+				has_single_file_code = true;
+			}
 		}
 	}
 
-	std::string pathname_mb = StrWide2MB(pathname);
+	// According to the spec, if an app supports multi-file codes, single-file codes should be ignored.
+	// If no file codes are present, paths are appended, implying multi-file support.
+	bool use_multi_file_logic = has_multi_file_code || (!has_multi_file_code && !has_single_file_code);
 
-	for (const std::string& token : tokens) {
-		std::vector<std::string> expanded;
-		if (!ExpandFieldCodes(desktop_entry, pathname_mb, token, expanded)) {
-			return L""; // error in field code (e.g. %)
+	if (use_multi_file_logic) {
+		// Case 1: App supports multiple files. Generate ONE command line.
+		std::vector<std::string> final_args;
+		final_args.reserve(tokens.size() + pathnames.size());
+
+		// Use the first file as a context for expanding non-list field codes like %c or a standalone %f.
+		std::string first_pathname_mb = StrWide2MB(pathnames[0]);
+
+		for (const std::string& token : tokens) {
+			// A single token can contain multiple codes, but only one list code (%F or %U).
+			if (token.find("%F") != std::string::npos) {
+				for (const auto& wpathname : pathnames) {
+					final_args.push_back(StrWide2MB(wpathname));
+				}
+			} else if (token.find("%U") != std::string::npos) {
+				for (const auto& wpathname : pathnames) {
+					final_args.push_back(PathToUri(StrWide2MB(wpathname)));
+				}
+			} else {
+				// Expand other codes like %f, %u, %c using the first file as context.
+				std::vector<std::string> expanded;
+				if (!ExpandFieldCodes(desktop_entry, first_pathname_mb, token, expanded)) {
+					return {}; // Invalid field code.
+				}
+				final_args.insert(final_args.end(), expanded.begin(), expanded.end());
+			}
 		}
-		for (auto& a : expanded) {
-			args.push_back(std::move(a));
+
+		// If no file codes were present at all, append all files at the end.
+		if (!has_multi_file_code && !has_single_file_code) {
+			for (const auto& wpathname : pathnames) {
+				final_args.push_back(StrWide2MB(wpathname));
+			}
 		}
-	}
 
-	// According to the spec, if no field codes are present, the file path must be appended.
-	if (!has_field_code && !args.empty()) {
-		args.push_back(pathname_mb);
-	}
+		if (final_args.empty()) {
+			return {};
+		}
 
-	if (args.empty()) {
-		return L"";
-	}
+		std::string cmd;
+		for (size_t i = 0; i < final_args.size(); ++i) {
+			if (i > 0) cmd.push_back(' ');
+			cmd += EscapeArg(final_args[i]);
+		}
+		return { StrMB2Wide(cmd) };
 
-	// Build the final command line with proper shell escaping for each argument.
-	std::string cmd;
-	for (size_t i = 0; i < args.size(); ++i) {
-		if (i) cmd.push_back(' ');
-		cmd += EscapeArg(args[i]);
+	} else {
+		// Case 2: App only supports single files (%f, %u). Generate MULTIPLE command lines.
+		std::vector<std::wstring> final_commands;
+		final_commands.reserve(pathnames.size());
+
+		for (const auto& wpathname : pathnames) {
+			std::vector<std::string> current_args;
+			current_args.reserve(tokens.size());
+			std::string pathname_mb = StrWide2MB(wpathname);
+
+			for (const std::string& token : tokens) {
+				std::vector<std::string> expanded;
+				// Expand all codes using the current file as context.
+				if (!ExpandFieldCodes(desktop_entry, pathname_mb, token, expanded)) {
+					// Skip this file on error, but don't fail the whole operation.
+					current_args.clear();
+					break;
+				}
+				current_args.insert(current_args.end(), expanded.begin(), expanded.end());
+			}
+
+			if (current_args.empty()) {
+				continue;
+			}
+
+			std::string cmd;
+			for (size_t i = 0; i < current_args.size(); ++i) {
+				if (i > 0) cmd.push_back(' ');
+				cmd += EscapeArg(current_args[i]);
+			}
+			final_commands.push_back(StrMB2Wide(cmd));
+		}
+		return final_commands;
 	}
-	return StrMB2Wide(cmd);
 }
 
 
@@ -267,34 +401,44 @@ std::vector<Field> XDGBasedAppProvider::GetCandidateDetails(const CandidateInfo&
 }
 
 
-std::wstring XDGBasedAppProvider::GetMimeType(const std::wstring& pathname)
+// Collects unique MIME types for a list of files.
+// It uses `xdg-mime`, `file`, and an internal extension map, then stores the
+// unique results in a set before returning.
+std::vector<std::wstring> XDGBasedAppProvider::GetMimeTypes(const std::vector<std::wstring>& pathnames)
 {
-	std::vector<std::string> mime_types;
-	std::unordered_set<std::string> seen;
+	// Use a set to automatically handle uniqueness of MIME types.
+	std::unordered_set<std::string> unique_mimes;
 
-	// Helper to add a MIME type only if it's valid and not already present.
-	auto add_unique = [&](std::string mime) {
-		mime = Trim(mime);
-		if (!mime.empty() && mime.find('/') != std::string::npos && seen.insert(mime).second) {
-			mime_types.push_back(std::move(mime));
-		}
-	};
+	for (const auto& pathname : pathnames) {
+		std::string path_mb = StrWide2MB(pathname);
 
-	std::string path_mb = StrWide2MB(pathname);
+		// Helper to add a non-empty MIME type to the set.
+		auto add_unique = [&](std::string mime) {
+			mime = Trim(mime);
+			if (!mime.empty() && mime.find('/') != std::string::npos) {
+				unique_mimes.insert(std::move(mime));
+			}
+		};
 
-	// Determine MIME type using different methods in order of preference.
-	add_unique(MimeTypeFromXdgMimeTool(path_mb));
-	add_unique(MimeTypeFromFileTool(path_mb));
-	add_unique(MimeTypeByExtension(path_mb));
-
-	std::string result;
-	for (auto& m : mime_types) { result += m; result += ';'; }
-	if (result.empty()) {
-		result = "(none)";
+		// Determine MIME type using different methods in order of preference.
+		add_unique(MimeTypeFromXdgMimeTool(path_mb));
+		add_unique(MimeTypeFromFileTool(path_mb));
+		add_unique(MimeTypeByExtension(path_mb));
 	}
-	return StrMB2Wide(result);
-}
 
+	std::vector<std::wstring> result;
+	if (unique_mimes.empty() && !pathnames.empty()) {
+		// If no specific MIME type was found for any file, add a generic fallback.
+		result.push_back(L"application/octet-stream");
+	} else {
+		result.reserve(unique_mimes.size());
+		for (const auto& mime : unique_mimes) {
+			result.push_back(StrMB2Wide(mime));
+		}
+	}
+
+	return result;
+}
 
 
 // ******************** Searching and ranking candidates logic ********************
@@ -483,6 +627,8 @@ void XDGBasedAppProvider::AddOrUpdateCandidate(CandidateSearchContext& context, 
 }
 
 
+// Checks if an application association for a given MIME type is explicitly
+// removed in the [Removed Associations] section of mimeapps.list.
 bool XDGBasedAppProvider::IsAssociationRemoved(const MimeAssociation& associations, const std::string& mime_type, const std::string& app_desktop_file)
 {
 	// 1. Check for an exact match (e.g., "image/jpeg")
@@ -656,9 +802,9 @@ std::string XDGBasedAppProvider::MimeTypeByExtension(const std::string& pathname
 	// This is not comprehensive but covers many common cases if other tools fail.
 	static const std::unordered_map<std::string, std::string> s_ext_to_type_map = {
 
-		// Shell / scripts / source code
+	// Shell / scripts / source code
 
-		{".sh",    "application/x-shellscript"},
+	{".sh",    "application/x-shellscript"},
 		{".bash",  "application/x-shellscript"},
 		{".csh",   "application/x-csh"},
 		{".zsh",   "application/x-shellscript"},
@@ -821,23 +967,23 @@ std::string XDGBasedAppProvider::MimeTypeByExtension(const std::string& pathname
 		// Mail / office miscellany
 
 		{".msg",   "application/vnd.ms-outlook"}
-	};
+};
 
 
-	std::string result;
+std::string result;
 
-	if (_use_extension_based_fallback) {
-		auto dot_pos = pathname.rfind('.');
-		if (dot_pos != std::string::npos) {
-			std::string ext = pathname.substr(dot_pos);
-			std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
-			auto it = s_ext_to_type_map.find(ext);
-			if (it != s_ext_to_type_map.end()) {
-				result = it->second;
-			}
+if (_use_extension_based_fallback) {
+	auto dot_pos = pathname.rfind('.');
+	if (dot_pos != std::string::npos) {
+		std::string ext = pathname.substr(dot_pos);
+		std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
+		auto it = s_ext_to_type_map.find(ext);
+		if (it != s_ext_to_type_map.end()) {
+			result = it->second;
 		}
 	}
-	return result;
+}
+return result;
 }
 
 
@@ -1175,6 +1321,8 @@ std::string XDGBasedAppProvider::UnescapeGeneralString(const std::string& raw_st
 }
 
 
+// Tokenizes the Exec= string into a vector of arguments, handling quotes and escapes
+// as defined by the Desktop Entry Specification.
 std::vector<std::string> XDGBasedAppProvider::TokenizeExecString(const std::string& exec_str)
 {
 	// Pass 1: Handle general GKeyFile string escapes.
@@ -1444,6 +1592,7 @@ std::string XDGBasedAppProvider::GetDefaultApp(const std::string& mime_type)
 
 
 // Checks if an executable exists and is runnable.
+// If the path contains a slash, it's checked directly. Otherwise, it's searched in $PATH.
 bool XDGBasedAppProvider::CheckExecutable(const std::string& path)
 {
 	if (path.empty()) {

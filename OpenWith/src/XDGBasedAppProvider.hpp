@@ -37,9 +37,9 @@ class XDGBasedAppProvider : public AppProvider
 public:
 
 	explicit XDGBasedAppProvider(TMsgGetter msg_getter);
-	std::vector<CandidateInfo> GetAppCandidates(const std::wstring& pathname) override;
-	std::wstring ConstructCommandLine(const CandidateInfo& candidate, const std::wstring& pathname) override;
-	std::wstring GetMimeType(const std::wstring& pathname) override;
+	std::vector<CandidateInfo> GetAppCandidates(const std::vector<std::wstring>& pathnames) override;
+	std::vector<std::wstring> ConstructCommandLine(const CandidateInfo& candidate, const std::vector<std::wstring>& pathnames) override;
+	std::vector<std::wstring> GetMimeTypes(const std::vector<std::wstring>& pathnames) override;
 	std::vector<Field> GetCandidateDetails(const CandidateInfo& candidate) override;
 
 	std::vector<ProviderSetting> GetPlatformSettings() override;
@@ -97,7 +97,7 @@ private:
 			std::string source_path;
 		};
 
-		// MIME type -> default application (.desktop file
+		// MIME type -> default application (.desktop file)
 		std::unordered_map<std::string, AssociationSource> defaults;
 		// MIME type -> list of additionally associated applications
 		std::unordered_map<std::string, std::vector<AssociationSource>> added;
@@ -105,7 +105,8 @@ private:
 		std::unordered_map<std::string, std::unordered_set<std::string>> removed;
 	};
 
-	// A key for the unique_candidates map
+	// A key for the unique_candidates map to distinguish between different applications
+	// that might have the same name but different Exec commands.
 	struct AppUniqueKey
 	{
 		std::string_view name;
@@ -116,7 +117,7 @@ private:
 		}
 	};
 
-	// Custom hash function for AppUniqueKey
+	// Custom hash function for AppUniqueKey.
 	struct AppUniqueKeyHash
 	{
 		size_t operator()(const AppUniqueKey& k) const {
@@ -147,6 +148,7 @@ private:
 	};
 
 	// Searching and ranking candidates logic
+	std::vector<CandidateInfo> GetCandidatesForSingleFile(const std::wstring& pathname, const std::vector<std::string>& desktop_paths, const MimeAssociation& associations, const std::string& current_desktop_env);
 	void FindCandidatesFromMimeLists(CandidateSearchContext& context);
 	void FindCandidatesFromCache(CandidateSearchContext& context, const std::unordered_map<std::string, std::vector<MimeAssociation::AssociationSource>>& mime_cache);
 	void FindCandidatesByFullScan(CandidateSearchContext& context);

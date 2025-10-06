@@ -28,8 +28,8 @@ private:
 
 	// return true if exit by button "Launch", false otherwise
 	static bool ShowDetailsDialogImpl(const std::vector<Field>& file_info,
-										const std::vector<Field>& application_info,
-										const Field& launch_command)
+									  const std::vector<Field>& application_info,
+									  const Field& launch_command)
 	{
 		constexpr int MIN_DIALOG_WIDTH = 40;
 		constexpr int DESIRED_DIALOG_WIDTH = 90;
@@ -43,7 +43,7 @@ private:
 		auto max_in = [](const std::vector<Field>& v) -> size_t {
 			if (v.empty()) return 0;
 			return std::max_element(v.begin(), v.end(),
-				[](const Field& x, const Field& y){ return x.label.size() < y.label.size(); })->label.size();
+									[](const Field& x, const Field& y){ return x.label.size() < y.label.size(); })->label.size();
 		};
 
 		auto max_di_text_length = static_cast<int>(std::max({
@@ -98,7 +98,7 @@ private:
 		di.push_back({ DI_BUTTON, 0,  cur_line,  0,  cur_line, TRUE, {}, DIF_CENTERGROUP, 0, GetMsg(MLaunch), 0 });
 
 		HANDLE dlg = s_Info.DialogInit(s_Info.ModuleNumber, -1, -1, dialog_width, dialog_height, L"InformationDialog",
-										di.data(), static_cast<int>(di.size()), 0, 0, nullptr, 0);
+									   di.data(), static_cast<int>(di.size()), 0, 0, nullptr, 0);
 		if (dlg != INVALID_HANDLE_VALUE) {
 			int exitCode = s_Info.DialogRun(dlg);
 			s_Info.DialogFree(dlg);
@@ -108,59 +108,146 @@ private:
 	}
 
 
-	// A wrapper function that gathers all necessary details and calls the dialog implementation.
-	// return true if exit by button "Launch", false otherwise
+	// Shows the details dialog with file and application information.
+	// For a single file, it shows the full path. For multiple files, it shows a count.
+	// It also removes ambiguous information (like association source) for multi-file selections.
 	static bool ShowDetailsDialog(AppProvider* provider, const CandidateInfo& app,
-									const std::wstring& pathname, const std::wstring& cmd)
+								  const std::vector<std::wstring>& pathnames,
+								  const std::vector<std::wstring>& cmds)
 	{
-		std::vector<Field> file_info = {
-			{ GetMsg(MPathname), pathname },
-			{ GetMsg(MMimeType), provider->GetMimeType(pathname) }
+		// Helper lambda to join a vector of wstrings into a single wstring.
+		auto join_strings = [](const std::vector<std::wstring>& vec, const std::wstring& delimiter) -> std::wstring {
+			if (vec.empty()) return L"";
+			std::wstring result;
+			for (size_t i = 0; i < vec.size(); ++i) {
+				if (i > 0) result += delimiter;
+				result += vec[i];
+			}
+			return result;
 		};
 
-		std::vector<Field> application_info = provider->GetCandidateDetails(app);
+		std::vector<Field> file_info;
+		if (pathnames.size() == 1) {
+			// For a single file, show its full path.
+			file_info.push_back({ GetMsg(MPathname), pathnames[0] });
+		} else {
+			// For multiple files, show a summary count.
+			std::wstring count_msg = std::wstring(GetMsg(MFilesSelected)) + L" " + std::to_wstring(pathnames.size());
+			file_info.push_back({ GetMsg(MPathname), count_msg });
+		}
 
-		Field launch_command { GetMsg(MLaunchCommand), cmd.c_str() };
+		// Get unique MIME types for all files and join them for display.
+		std::vector<std::wstring> unique_mimes = provider->GetMimeTypes(pathnames);
+		file_info.push_back({ GetMsg(MMimeType), join_strings(unique_mimes, L"; ") });
+
+		std::wstring all_cmds = join_strings(cmds, L"; ");
+
+		std::vector<Field> application_info = provider->GetCandidateDetails(app);
+		if (pathnames.size() > 1) {
+			// For multiple files, "Source" is ambiguous and should be removed.
+			const wchar_t* source_msg = GetMsg(MSource);
+			application_info.erase(
+				std::remove_if(application_info.begin(), application_info.end(),
+							   [source_msg](const Field& f){ return f.label == source_msg; }),
+				application_info.end()
+				);
+		}
+
+		Field launch_command { GetMsg(MLaunchCommand), all_cmds.c_str() };
 
 		return ShowDetailsDialogImpl(file_info, application_info, launch_command);
 	}
 
 
-	static void LaunchApplication(const CandidateInfo& app, const std::wstring& cmd)
+
+	// Executes one or more command lines to launch the application.
+	// If multiple commands are provided, it forces asynchronous execution to avoid blocking the UI.
+	static void LaunchApplication(const CandidateInfo& app, const std::vector<std::wstring>& cmds)
 	{
+		if (cmds.empty()) return;
+
+		// If we have multiple commands to run, force asynchronous execution to avoid blocking.
+		bool force_no_wait = cmds.size() > 1;
+
 		unsigned int flags = 0;
-		// Determine execution flags based on the app's terminal requirement and global plugin settings.
 		if (app.terminal) {
-			// If the app requires a terminal, decide whether to use far2l's external terminal feature.
 			flags = s_UseExternalTerminal ? EF_EXTERNALTERM : 0;
 		} else {
-			// For GUI apps, decide whether to wait for completion or run in the background.
-			flags = s_NoWaitForCommandCompletion ? EF_NOWAIT : 0;
+			flags = (s_NoWaitForCommandCompletion || force_no_wait) ? EF_NOWAIT : 0;
 		}
-		if (s_FSF.Execute(cmd.c_str(), flags) == -1) {
-			ShowError(GetMsg(MError), { GetMsg(MCannotExecute) });
+
+		for (const auto& cmd : cmds) {
+			if (s_FSF.Execute(cmd.c_str(), flags) == -1) {
+				ShowError(GetMsg(MError), { GetMsg(MCannotExecute), cmd.c_str() });
+				break; // Stop on the first error.
+			}
 		}
 	}
 
 
+	// A simple wrapper for ProcessFiles to handle single-file cases.
 	static void ProcessFile(const std::wstring &pathname)
 	{
+		ProcessFiles({pathname});
+	}
+
+
+	// The main logic handler for both single and multiple files.
+	// It gets candidate applications, displays a menu, and handles user actions.
+	static void ProcessFiles(const std::vector<std::wstring>& pathnames)
+	{
+		if (pathnames.empty()) {
+			return;
+		}
+
 		auto provider = AppProvider::CreateAppProvider(&OpenWithPlugin::GetMsg);
-		auto candidates = provider->GetAppCandidates(pathname);
+		auto candidates = provider->GetAppCandidates(pathnames);
+
+		// For multiple files, filter out terminal-based apps if the internal console is used,
+		// as we cannot launch multiple instances of it.
+		if (pathnames.size() > 1 && !s_UseExternalTerminal) {
+			candidates.erase(
+				std::remove_if(candidates.begin(), candidates.end(),
+							   [](const CandidateInfo& c){ return c.terminal; }),
+				candidates.end());
+		}
 
 		int BreakCode = -1;
 		const int BreakKeys[] = {VK_F3, VK_F9, 0};
 		int active_idx = 0;
 
+		// A local helper lambda to join strings, needed for the error message.
+		auto join_strings = [](const std::vector<std::wstring>& vec, const std::wstring& delimiter) -> std::wstring {
+			if (vec.empty()) return L"";
+			std::wstring result;
+			for (size_t i = 0; i < vec.size(); ++i) {
+				if (i > 0) result += delimiter;
+				result += vec[i];
+			}
+			return result;
+		};
+
 		while(true) {
 			if (candidates.empty()) {
-				ShowError(GetMsg(MError), { GetMsg(MNoAppsFound) , provider->GetMimeType(pathname) });
+				std::vector<std::wstring> error_lines = { GetMsg(MNoAppsFound) };
+
+				auto unique_mimes = provider->GetMimeTypes(pathnames);
+
+				if (pathnames.size() == 1) {
+					// For a single file, show its list of MIME types.
+					if (!unique_mimes.empty()) {
+						error_lines.push_back(join_strings(unique_mimes, L"; "));
+					}
+				} else {
+					// For multiple files, show a more informative count of unique MIME types found.
+					std::wstring count_msg = std::wstring(GetMsg(MNumberOfMimeTypesFound)) + L" " + std::to_wstring(unique_mimes.size());
+					error_lines.push_back(count_msg);
+				}
+
+				ShowError(GetMsg(MError), error_lines);
 				break;
 			}
 
-			// Declare menu_items inside the loop. This is critical for memory safety.
-			// It ensures that the pointers in `menu_items[i].Text` are always valid,
-			// as they won't outlive the `candidates` vector they point to.
 			std::vector<FarMenuItem> menu_items(candidates.size());
 			for (size_t i = 0; i < candidates.size(); ++i) {
 				menu_items[i].Text = candidates[i].name.c_str();
@@ -172,38 +259,41 @@ private:
 										   GetMsg(MChooseApplication), L"F3 F9 Ctrl+Alt+F", L"Contents", BreakKeys, &BreakCode, menu_items.data(), menu_items.size());
 
 			if (selected_idx == -1) {
-				break; // User cancelled the menu (e.g., with Esc).
+				break;
 			}
 
 			menu_items[active_idx].Selected = false;
 			active_idx = selected_idx;
+			const auto& selected_app = candidates[selected_idx];
 
 			if (BreakCode == 0) { // F3 for Details
-				const auto& selected_app = candidates[selected_idx];
-				std::wstring cmd = provider->ConstructCommandLine(selected_app, pathname);
-				if (ShowDetailsDialog(provider.get(), selected_app, pathname, cmd)) {
-					LaunchApplication(selected_app, cmd);
+				std::vector<std::wstring> cmds = provider->ConstructCommandLine(selected_app, pathnames);
+				if (ShowDetailsDialog(provider.get(), selected_app, pathnames, cmds)) {
+					LaunchApplication(selected_app, cmds);
 					break;
 				}
 			} else if (BreakCode == 1) { // F9 for Options
 				const auto configure_result = ConfigureImpl();
-				if (configure_result.settings_saved) {
-					// Optimization: The expensive candidate list regeneration is performed
-					// ONLY if a relevant setting was actually changed.
-					if (configure_result.refresh_needed) {
-						provider->LoadPlatformSettings();
-						candidates = provider->GetAppCandidates(pathname);
-						active_idx = 0; // Reset selection to the top of the new list
+				// If settings affecting the app list were changed, refresh the list.
+				if (configure_result.settings_saved && configure_result.refresh_needed) {
+					provider->LoadPlatformSettings();
+					candidates = provider->GetAppCandidates(pathnames);
+					if (pathnames.size() > 1 && !s_UseExternalTerminal) {
+						candidates.erase(
+							std::remove_if(candidates.begin(), candidates.end(),
+										   [](const CandidateInfo& c){ return c.terminal; }),
+							candidates.end());
 					}
+					active_idx = 0;
 				}
 			} else { // Enter to launch
-				const auto& selected_app = candidates[selected_idx];
-				std::wstring cmd = provider->ConstructCommandLine(selected_app, pathname);
-				LaunchApplication(selected_app, cmd);
+				std::vector<std::wstring> cmds = provider->ConstructCommandLine(selected_app, pathnames);
+				LaunchApplication(selected_app, cmds);
 				break;
 			}
 		}
 	}
+
 
 
 	static void LoadOptions()
@@ -273,7 +363,8 @@ public:
 	}
 
 
-	// Standard far2l plugin entry point called when the user invokes the plugin.
+	// Main plugin entry point, called when the user activates the plugin from the menu.
+	// It collects selected file paths from the active panel and initiates processing.
 	static HANDLE OpenPlugin(int openFrom, INT_PTR item)
 	{
 		if (openFrom != OPEN_PLUGINSMENU) {
@@ -281,53 +372,62 @@ public:
 		}
 
 		PanelInfo pi = {};
-
 		if (!s_Info.Control(PANEL_ACTIVE, FCTL_GETPANELINFO, 0, (LONG_PTR)&pi)) {
 			return INVALID_HANDLE_VALUE;
 		}
 
-		if (pi.PanelType != PTYPE_FILEPANEL || pi.ItemsNumber <= 0 || pi.CurrentItem < 0 || pi.CurrentItem >= pi.ItemsNumber) {
-			return INVALID_HANDLE_VALUE;
-		}
-		
-		// To get a panel item, we must first query its required size.
-		int itemSize = s_Info.Control(PANEL_ACTIVE, FCTL_GETPANELITEM, pi.CurrentItem, 0);
-		if (itemSize <= 0) {
+		if (pi.PanelType != PTYPE_FILEPANEL || pi.ItemsNumber <= 0) {
 			return INVALID_HANDLE_VALUE;
 		}
 
-		auto item_buf = std::make_unique<unsigned char[]>(itemSize);
-		PluginPanelItem *pi_item = reinterpret_cast<PluginPanelItem *>(item_buf.get());
+		std::vector<std::wstring> selected_pathnames;
 
-		// Then, we retrieve the actual item data into our allocated buffer.
-		if (!s_Info.Control(PANEL_ACTIVE, FCTL_GETPANELITEM, pi.CurrentItem, (LONG_PTR)pi_item)) {
-			return INVALID_HANDLE_VALUE;
-		}
-
-		if (!pi_item->FindData.lpwszFileName) {
-			return INVALID_HANDLE_VALUE;
-		}
-
-		// Similar to panel items, we first query the size needed for the panel's directory path.
+		// First, get the panel's directory path.
 		int dir_size = s_Info.Control(PANEL_ACTIVE, FCTL_GETPANELDIR, 0, 0);
 		if (dir_size <= 0) {
 			return INVALID_HANDLE_VALUE;
 		}
-
 		auto dir_buf = std::make_unique<wchar_t[]>(dir_size);
-		// And then retrieve the path string.
 		if (!s_Info.Control(PANEL_ACTIVE, FCTL_GETPANELDIR, dir_size, (LONG_PTR)dir_buf.get())) {
 			return INVALID_HANDLE_VALUE;
 		}
-
-		// Concatenate directory and filename to form a full, unambiguous path.
-		std::wstring pathname(dir_buf.get());
-		if (!pathname.empty() && pathname.back() != L'/') {
-			pathname += L'/';
+		std::wstring base_path(dir_buf.get());
+		if (!base_path.empty() && base_path.back() != L'/') {
+			base_path += L'/';
 		}
-		pathname += pi_item->FindData.lpwszFileName;
-		ProcessFile(pathname);
-		return INVALID_HANDLE_VALUE; // We don't create a plugin panel, so return INVALID_HANDLE_VALUE.
+
+		// If files are selected, iterate through them.
+		if (pi.SelectedItemsNumber > 0) {
+			selected_pathnames.reserve(pi.SelectedItemsNumber);
+			for (size_t i = 0; i < pi.SelectedItemsNumber; ++i) {
+				int itemSize = s_Info.Control(PANEL_ACTIVE, FCTL_GETSELECTEDPANELITEM, i, 0);
+				if (itemSize <= 0) continue;
+
+				auto item_buf = std::make_unique<unsigned char[]>(itemSize);
+				PluginPanelItem* pi_item = reinterpret_cast<PluginPanelItem*>(item_buf.get());
+
+				if (s_Info.Control(PANEL_ACTIVE, FCTL_GETSELECTEDPANELITEM, i, (LONG_PTR)pi_item) && pi_item->FindData.lpwszFileName) {
+					selected_pathnames.push_back(base_path + pi_item->FindData.lpwszFileName);
+				}
+			}
+		}
+		// Otherwise, use the current file under the cursor.
+		else if (pi.CurrentItem >= 0 && pi.CurrentItem < pi.ItemsNumber) {
+			int itemSize = s_Info.Control(PANEL_ACTIVE, FCTL_GETPANELITEM, pi.CurrentItem, 0);
+			if (itemSize > 0) {
+				auto item_buf = std::make_unique<unsigned char[]>(itemSize);
+				PluginPanelItem* pi_item = reinterpret_cast<PluginPanelItem*>(item_buf.get());
+				if (s_Info.Control(PANEL_ACTIVE, FCTL_GETPANELITEM, pi.CurrentItem, (LONG_PTR)pi_item) && pi_item->FindData.lpwszFileName) {
+					selected_pathnames.push_back(base_path + pi_item->FindData.lpwszFileName);
+				}
+			}
+		}
+
+		if (!selected_pathnames.empty()) {
+			ProcessFiles(selected_pathnames);
+		}
+
+		return INVALID_HANDLE_VALUE;
 	}
 
 
@@ -341,7 +441,7 @@ public:
 
 
 	// The core implementation of the configuration logic.
-	// It's a helper function that returns a detailed result, allowing for optimization.
+	// It returns a detailed result, allowing the caller to know if the application list needs to be refreshed.
 	static ConfigureResult ConfigureImpl()
 	{
 		LoadOptions();

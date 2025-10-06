@@ -24,9 +24,14 @@ public:
 	explicit AppProvider(TMsgGetter msg_getter) : m_GetMsg(std::move(msg_getter)) {}
 	virtual ~AppProvider() = default;
 
-	virtual std::vector<CandidateInfo> GetAppCandidates(const std::wstring& pathname) = 0;
-	virtual std::wstring GetMimeType(const std::wstring& pathname) = 0;
-	virtual std::wstring ConstructCommandLine(const CandidateInfo& candidate, const std::wstring& pathname) = 0;
+	// MODIFIED: Now accepts a vector of pathnames to find common applications.
+	virtual std::vector<CandidateInfo> GetAppCandidates(const std::vector<std::wstring>& pathnames) = 0;
+
+	// MODIFIED: Accepts multiple pathnames and returns a vector of unique MIME types for them.
+	virtual std::vector<std::wstring> GetMimeTypes(const std::vector<std::wstring>& pathnames) = 0;
+
+	// MODIFIED: Now accepts multiple pathnames and returns one or more command lines.
+	virtual std::vector<std::wstring> ConstructCommandLine(const CandidateInfo& candidate, const std::vector<std::wstring>& pathnames) = 0;
 
 	virtual std::vector<Field> GetCandidateDetails(const CandidateInfo& candidate) = 0;
 
