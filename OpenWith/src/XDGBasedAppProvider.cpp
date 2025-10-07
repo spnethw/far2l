@@ -109,6 +109,8 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 		return {};
 	}
 
+	AliasCacheManager cache_manager(*this);
+
 	// Step 1: One-time preparation. This data is constant for a single plugin invocation.
 	// This avoids re-reading and re-parsing the same system files for every input file.
 	_desktop_entry_cache.clear();
@@ -676,9 +678,9 @@ std::vector<std::string> XDGBasedAppProvider::CollectAndPrioritizeMimeTypes(cons
 			add_unique(MimeTypeByExtension(pathname));
 		}
 
-		if (_load_mimetype_aliases) {
+		if (_operation_scoped_aliases) {
 			// Load all alias definitions from XDG paths into a forward map (alias -> canonical).
-			auto alias_to_canonical_map = LoadMimeAliases();
+			const auto& alias_to_canonical_map = *_operation_scoped_aliases;
 
 			// Create a reverse map (canonical -> list_of_aliases) for reverse lookups.
 			std::unordered_map<std::string, std::vector<std::string>> canonical_to_aliases_map;

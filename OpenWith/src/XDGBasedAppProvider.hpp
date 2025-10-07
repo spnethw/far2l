@@ -225,6 +225,20 @@ private:
 
 	// A pre-calculated lookup map for efficient updates in SetPlatformSettings.
 	std::map<std::wstring, bool XDGBasedAppProvider::*> _key_to_member_map;
+
+	struct AliasCacheManager {
+		XDGBasedAppProvider& provider;
+		AliasCacheManager(XDGBasedAppProvider& p) : provider(p) {
+			if (provider._load_mimetype_aliases) {
+				provider._operation_scoped_aliases = provider.LoadMimeAliases();
+			}
+		}
+		~AliasCacheManager() {
+			provider._operation_scoped_aliases.reset();
+		}
+	};
+
+	std::optional<std::unordered_map<std::string, std::string>> _operation_scoped_aliases;
 };
 
 #endif

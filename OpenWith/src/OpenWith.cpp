@@ -322,7 +322,7 @@ namespace OpenWith {
 			file_info.push_back({ GetMsg(MPathname), pathnames[0] });
 		} else {
 			// For multiple files, show a summary count.
-			std::wstring count_msg = std::wstring(GetMsg(MFilesSelected)) + L" " + std::to_wstring(pathnames.size());
+			std::wstring count_msg = std::wstring(GetMsg(MFilesSelected)) + std::to_wstring(pathnames.size());
 			file_info.push_back({ GetMsg(MPathname), count_msg });
 		}
 
