@@ -32,7 +32,6 @@ enum LanguageID
 	MFor,
 	MIn,
 	MFilesSelected,
-	MNumberOfMimeTypesFound,
 	MAndMore,
 	MAppName,
 	MFullPath,
