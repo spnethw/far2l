@@ -185,6 +185,12 @@ std::vector<Field> MacOSAppProvider::GetCandidateDetails(const CandidateInfo& ca
 
     NSDictionary *infoDict = [bundle infoDictionary];
 
+    NSString *appName = [infoDict objectForKey:@"CFBundleDisplayName"] ?: [infoDict objectForKey:@"CFBundleName"];
+
+    if (appName) {
+        details.push_back({m_GetMsg(MAppName), StrMB2Wide([appName UTF8String])});
+    }
+
     details.push_back({m_GetMsg(MFullPath), candidate.id});
 
     NSString *execName = [infoDict objectForKey:@"CFBundleExecutable"];

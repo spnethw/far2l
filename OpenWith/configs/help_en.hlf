@@ -6,7 +6,7 @@ $^#OpenWith plugin#
 $^#Version 1.0#
 $^#Copyright (C) 2025 spnethw#
 $^#Contents#
- The #OpenWith# plugin provides a context-aware menu to open the currently selected file with an appropriate application. It intelligently detects the file type and queries the operating system for a list of registered applications that can handle it. The plugin is cross-platform and uses native OS mechanisms to provide accurate and relevant application choices: on Linux/BSD, it adheres to XDG standards for MIME types and application discovery, while on macOS, it integrates with the Launch Services framework.
+ The #OpenWith# plugin provides a context-aware menu to open the currently selected file(s) with an appropriate application. It intelligently detects the file type and queries the operating system for a list of registered applications that can handle it. If multiple files are selected, the plugin finds common applications that are registered to handle all of them by intersecting the candidate lists for each file. The plugin is cross-platform and uses native OS mechanisms to provide accurate and relevant application choices: on Linux/BSD, it adheres to XDG standards for MIME types and application discovery, while on macOS, it integrates with the Launch Services framework.
 
  After invoking the plugin on a file, a menu is displayed with a list of suitable applications. The user can then select an application to launch, or press #F3# to view detailed information about the file and the selected application.
 
@@ -28,10 +28,10 @@ $^#Configuration Dialog#
  #1. GENERAL SETTINGS#
 
  #-# Use external terminal for console apps
-   If checked, applications that require a terminal (e.g., vim or mc) will be launched in a new external terminal window. If unchecked, they will run inside far2l's integrated terminal.
+   If checked, applications that require a terminal (e.g., vim or mc) will be launched in a new external terminal window. If unchecked, they will run inside far2l's integrated terminal. Note: when multiple files are selected, this option being unchecked will cause all terminal-based applications to be hidden from the list. This is because far2l's integrated terminal cannot manage multiple concurrent application instances.
 
  #-# Don't wait for command completion
-   If checked, GUI applications will be launched asynchronously, immediately returning control to far2l. If unchecked, far2l will wait for the launched application to close. This setting does not affect terminal applications.
+   If checked, GUI applications will be launched asynchronously, immediately returning control to far2l. If unchecked, far2l will wait for the launched application to close. This setting does not affect terminal applications. It may also be ignored when multiple files are opened with an application that does not support receiving them in a single command; in this case, an asynchronous launch is forced to prevent the UI from blocking.
 
 
  #2. PLATFORM-SPECIFIC SETTINGS#
@@ -79,7 +79,7 @@ $^#Information Dialog (F3)#
  #1. COMMON FIELDS#
 
  #-# Filepath
-   The full, absolute path to the selected file.
+   The full, absolute path to the selected file. If multiple files are selected, this field will instead show a count of the selected files.
 
  #-# MIME type
    The MIME type of the file as determined by the plugin.
@@ -98,7 +98,7 @@ $^#Information Dialog (F3)#
    The full path to the .desktop file (an INI-style text file) that defines this application.
 
  #-# Source
-   This field indicates the origin of the association, explaining why the application was suggested for the file. It clarifies whether the match came from a high-priority system default (via xdg-mime), a user preference in a mimeapps.list file, an indexed lookup in mimeinfo.cache, or a comprehensive fallback scan of all .desktop files. This information is useful for troubleshooting application associations.
+   This field indicates the origin of the association, explaining why the application was suggested for the file. It clarifies whether the match came from a high-priority system default (via xdg-mime), a user preference in a mimeapps.list file, an indexed lookup in mimeinfo.cache, or a comprehensive fallback scan of all .desktop files. This information is useful for troubleshooting application associations. Note: this field is not displayed when multiple files are selected, as the association source can be different for each file.
 
  #-# Name
    The human-readable application name, intended for display in menus.
@@ -124,19 +124,19 @@ $^#Information Dialog (F3)#
 
  #2.2. macOS Application Details#
 
- #-# Full path
-   The full path to the application bundle (e.g., `/Applications/TextEdit.app`).
-
  #-# Name
    The application's display name from its bundle information.
 
- #-# Executable file
+ #-# Location
+   The full path to the application bundle (e.g., `/Applications/TextEdit.app`).
+
+ #-# Executable
    The name of the main executable file inside the application bundle.
 
  #-# Version
    The user-visible version string of the application (e.g., "1.14").
 
- #-# Bundle version
+ #-# Build Version
    The internal build or bundle version (e.g., "329").
 
    ~Contents~@Contents@
