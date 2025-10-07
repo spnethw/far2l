@@ -145,6 +145,9 @@ namespace OpenWith {
 
 		auto provider = AppProvider::CreateAppProvider(&OpenWithPlugin::GetMsg);
 		provider->LoadPlatformSettings();
+
+		const bool old_use_external_terminal = s_UseExternalTerminal;
+
 		// Store the state of platform-specific settings *before* showing the dialog.
 		// This is crucial for detecting changes later.
 		std::vector<ProviderSetting> old_platform_settings = provider->GetPlatformSettings();
@@ -174,7 +177,7 @@ namespace OpenWith {
 
 		HANDLE dlg = s_Info.DialogInit(s_Info.ModuleNumber, -1, -1, dialog_width, dialog_height, L"ConfigurationDialog", di.data(), di.size(), 0, 0, nullptr, 0);
 		if (dlg == INVALID_HANDLE_VALUE) {
-			return {}; // Return a default (all false) result on dialog initialization failure.
+			return {};
 		}
 
 		int exitCode = s_Info.DialogRun(dlg);
@@ -183,31 +186,30 @@ namespace OpenWith {
 		// The index of the 'OK' button is determined by its position in the 'di' vector.
 		if (exitCode == (int)di.size() - 2) { // OK was clicked
 			result.settings_saved = true;
-
 			// Save platform-independent settings
 			s_UseExternalTerminal = (s_Info.SendDlgMessage(dlg, DM_GETCHECK, 1, 0) == BSTATE_CHECKED);
 			s_NoWaitForCommandCompletion = (s_Info.SendDlgMessage(dlg, DM_GETCHECK, 2, 0) == BSTATE_CHECKED);
 			SaveOptions();
 
+			bool platform_settings_changed = false;
 			if (!old_platform_settings.empty()) {
 				std::vector<ProviderSetting> new_settings;
 				int first_platform_item_idx = 4; // Index of the first platform-specific checkbox
-				bool list_needs_refresh = false;
 
 				for (size_t i = 0; i < old_platform_settings.size(); ++i) {
 					bool new_value = (s_Info.SendDlgMessage(dlg, DM_GETCHECK, first_platform_item_idx + i, 0) == BSTATE_CHECKED);
 					// If any platform-specific setting has changed, the candidate list must be regenerated.
 					if (old_platform_settings[i].value != new_value) {
-						list_needs_refresh = true;
+						platform_settings_changed = true;
 					}
 					new_settings.push_back({ old_platform_settings[i].internal_key, old_platform_settings[i].display_name, new_value });
 				}
 				provider->SetPlatformSettings(new_settings);
 				provider->SavePlatformSettings();
+			}
 
-				if (list_needs_refresh) {
-					result.refresh_needed = true;
-				}
+			if (platform_settings_changed || (old_use_external_terminal != s_UseExternalTerminal)) {
+				result.refresh_needed = true;
 			}
 		}
 
@@ -375,13 +377,6 @@ namespace OpenWith {
 	}
 
 
-	// A simple wrapper for ProcessFiles to handle single-file cases.
-	void OpenWithPlugin::ProcessFile(const std::wstring &pathname)
-	{
-		ProcessFiles({pathname});
-	}
-
-
 	// The main logic handler for both single and multiple files.
 	// It gets candidate applications, displays a menu, and handles user actions.
 	void OpenWithPlugin::ProcessFiles(const std::vector<std::wstring>& pathnames)
@@ -391,16 +386,26 @@ namespace OpenWith {
 		}
 
 		auto provider = AppProvider::CreateAppProvider(&OpenWithPlugin::GetMsg);
-		auto candidates = provider->GetAppCandidates(pathnames);
+		std::vector<CandidateInfo> candidates;
 
-		// For multiple files, filter out terminal-based apps if the internal console is used,
-		// as we cannot launch multiple instances of it.
-		if (pathnames.size() > 1 && !s_UseExternalTerminal) {
-			candidates.erase(
-				std::remove_if(candidates.begin(), candidates.end(),
-							   [](const CandidateInfo& c){ return c.terminal; }),
-				candidates.end());
-		}
+		// This lambda encapsulates the logic for fetching and filtering application candidates.
+		auto update_candidates = [&]() {
+			// Fetch the raw list of candidates from the platform-specific provider.
+			candidates = provider->GetAppCandidates(pathnames);
+
+			// When multiple files are selected and the internal far2l console is used,
+			// we must filter out terminal-based applications because the internal console
+			// cannot handle multiple concurrent instances.
+			if (pathnames.size() > 1 && !s_UseExternalTerminal) {
+				candidates.erase(
+					std::remove_if(candidates.begin(), candidates.end(),
+								   [](const CandidateInfo& c){ return c.terminal; }),
+					candidates.end());
+			}
+		};
+
+		// Perform the initial fetch and filtering of application candidates.
+		update_candidates();
 
 		int BreakCode = -1;
 		const int BreakKeys[] = {VK_F3, VK_F9, 0};
@@ -457,7 +462,7 @@ namespace OpenWith {
 										   GetMsg(MChooseApplication), L"F3 F9 Ctrl+Alt+F", L"Contents", BreakKeys, &BreakCode, menu_items.data(), menu_items.size());
 
 			if (selected_idx == -1) {
-				break;
+				break; // User cancelled the menu (e.g., with Esc).
 			}
 
 			menu_items[active_idx].Selected = false;
@@ -472,16 +477,19 @@ namespace OpenWith {
 				}
 			} else if (BreakCode == 1) { // F9 for Options
 				const auto configure_result = ConfigureImpl();
-				// If settings affecting the app list were changed, refresh the list.
+				// Check if settings were saved AND if a refresh is required. A refresh is needed
+				// if any setting that affects the candidate list (e.g., s_UseExternalTerminal
+				// or any platform-specific option) has been changed.
 				if (configure_result.settings_saved && configure_result.refresh_needed) {
+					// The provider needs to reload its own settings from the config file,
+					// as they might have been changed in the configuration dialog.
 					provider->LoadPlatformSettings();
-					candidates = provider->GetAppCandidates(pathnames);
-					if (pathnames.size() > 1 && !s_UseExternalTerminal) {
-						candidates.erase(
-							std::remove_if(candidates.begin(), candidates.end(),
-										   [](const CandidateInfo& c){ return c.terminal; }),
-							candidates.end());
-					}
+
+					// Re-run the candidate fetch and filter logic to update the menu.
+					update_candidates();
+
+					// Reset the active menu item to the first one, as the list may have
+					// changed in size or order, preventing out-of-bounds access.
 					active_idx = 0;
 				}
 			} else { // Enter to launch

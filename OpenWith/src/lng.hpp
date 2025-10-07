@@ -33,5 +33,10 @@ enum LanguageID
 	MIn,
 	MFilesSelected,
 	MNumberOfMimeTypesFound,
-	MAndMore
+	MAndMore,
+	MPathname,
+	MAppName,
+	MExecutableFile,
+	MVersion,
+	MBundleVersion
 };

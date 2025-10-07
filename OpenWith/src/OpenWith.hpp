@@ -38,7 +38,6 @@ private:
 	static bool ShowDetailsDialogImpl(const std::vector<Field>& file_info, const std::vector<Field>& application_info, const Field& launch_command);
 	static bool ShowDetailsDialog(AppProvider* provider, const CandidateInfo& app, const std::vector<std::wstring>& pathnames, const std::vector<std::wstring>& cmds);
 	static void LaunchApplication(const CandidateInfo& app, const std::vector<std::wstring>& cmds);
-	static void ProcessFile(const std::wstring &pathname);
 	static void ProcessFiles(const std::vector<std::wstring>& pathnames);
 	static void LoadOptions();
 	static void SaveOptions();

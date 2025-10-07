@@ -226,6 +226,7 @@ private:
 	// A pre-calculated lookup map for efficient updates in SetPlatformSettings.
 	std::map<std::wstring, bool XDGBasedAppProvider::*> _key_to_member_map;
 
+	// RAII helper to manage the lifecycle of the MIME alias cache.
 	struct AliasCacheManager {
 		XDGBasedAppProvider& provider;
 		AliasCacheManager(XDGBasedAppProvider& p) : provider(p) {
@@ -238,6 +239,7 @@ private:
 		}
 	};
 
+	// A cache for MIME type aliases, scoped to a single GetAppCandidates call.
 	std::optional<std::unordered_map<std::string, std::string>> _operation_scoped_aliases;
 };
 

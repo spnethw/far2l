@@ -276,7 +276,7 @@ std::vector<std::wstring> XDGBasedAppProvider::ConstructCommandLine(const Candid
 		}
 	}
 
-	// According to the spec, if an app supports multi-file codes, single-file codes should be ignored.
+	// If an app supports multi-file codes, single-file codes should be ignored.
 	// If no file codes are present, paths are appended, implying multi-file support.
 	bool use_multi_file_logic = has_multi_file_code || (!has_multi_file_code && !has_single_file_code);
 
@@ -327,6 +327,7 @@ std::vector<std::wstring> XDGBasedAppProvider::ConstructCommandLine(const Candid
 		return { StrMB2Wide(cmd) };
 
 	} else {
+
 		// Case 2: App only supports single files (%f, %u). Generate MULTIPLE command lines.
 		std::vector<std::wstring> final_commands;
 		final_commands.reserve(pathnames.size());
@@ -404,33 +405,31 @@ std::vector<Field> XDGBasedAppProvider::GetCandidateDetails(const CandidateInfo&
 
 
 // Collects unique MIME types for a list of files.
-// It uses `xdg-mime`, `file`, and an internal extension map, then stores the
-// unique results in a set before returning.
+// It uses `xdg-mime`, `file`, and an internal extension map
 std::vector<std::wstring> XDGBasedAppProvider::GetMimeTypes(const std::vector<std::wstring>& pathnames)
 {
-	// Use a set to automatically handle uniqueness of MIME types.
-	std::unordered_set<std::string> unique_mimes;
+	std::vector<std::string> ordered_unique_mimes;
+	std::unordered_set<std::string> seen_mimes;
+
+	auto add_unique = [&](std::string mime) {
+		mime = Trim(mime);
+		if (!mime.empty() && mime.find('/') != std::string::npos) {
+			if (seen_mimes.insert(mime).second) {
+				ordered_unique_mimes.push_back(std::move(mime));
+			}
+		}
+	};
 
 	for (const auto& pathname : pathnames) {
 		std::string path_mb = StrWide2MB(pathname);
-
-		// Helper to add a non-empty MIME type to the set.
-		auto add_unique = [&](std::string mime) {
-			mime = Trim(mime);
-			if (!mime.empty() && mime.find('/') != std::string::npos) {
-				unique_mimes.insert(std::move(mime));
-			}
-		};
-
-		// Determine MIME type using different methods in order of preference.
 		add_unique(MimeTypeFromXdgMimeTool(path_mb));
 		add_unique(MimeTypeFromFileTool(path_mb));
 		add_unique(MimeTypeByExtension(path_mb));
 	}
 
 	std::vector<std::wstring> result;
-	result.reserve(unique_mimes.size());
-	for (const auto& mime : unique_mimes) {
+	result.reserve(ordered_unique_mimes.size());
+	for (const auto& mime : ordered_unique_mimes) {
 		result.push_back(StrMB2Wide(mime));
 	}
 
