@@ -185,7 +185,7 @@ std::vector<Field> MacOSAppProvider::GetCandidateDetails(const CandidateInfo& ca
 
     NSDictionary *infoDict = [bundle infoDictionary];
 
-    details.push_back({m_GetMsg(MPathname), candidate.id});
+    details.push_back({m_GetMsg(MFullPath), candidate.id});
 
     NSString *execName = [infoDict objectForKey:@"CFBundleExecutable"];
     if (execName) {

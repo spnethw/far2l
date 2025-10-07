@@ -34,7 +34,7 @@ enum LanguageID
 	MFilesSelected,
 	MNumberOfMimeTypesFound,
 	MAndMore,
-	MPathname,
+	MFullPath,
 	MAppName,
 	MExecutableFile,
 	MVersion,
