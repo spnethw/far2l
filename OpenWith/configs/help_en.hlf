@@ -33,6 +33,9 @@ $^#Configuration Dialog#
  #-# Don't wait for command completion
    If checked, GUI applications will be launched asynchronously, immediately returning control to far2l. If unchecked, far2l will wait for the launched application to close. This setting does not affect terminal applications. It may also be ignored when multiple files are opened with an application that does not support receiving them in a single command; in this case, an asynchronous launch is forced to prevent the UI from blocking.
 
+ #-# Clear selection if command executed
+   When this option is enabled the selection on the panel is cleared after exiting the menu if any menu command has been executed.
+
 
  #2. PLATFORM-SPECIFIC SETTINGS#
 

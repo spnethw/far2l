@@ -38,5 +38,6 @@ enum LanguageID
 	MFullPath,
 	MExecutableFile,
 	MVersion,
-	MBundleVersion
+	MBundleVersion,
+	MClearSelection
 };

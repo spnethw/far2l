@@ -77,85 +77,134 @@ static std::wstring EscapeForShell(const std::wstring& arg) {
     return out;
 }
 
-// Finds applications that can open all specified files by intersecting candidate sets.
+
+// Finds application candidates that can open all specified files.
 std::vector<CandidateInfo> MacOSAppProvider::GetAppCandidates(const std::vector<std::wstring>& pathnames) {
+    // Return immediately if the input vector is empty.
     if (pathnames.empty()) {
         return {};
     }
 
-    // A map to store detailed info for each unique application, keyed by its path.
+    // This vector will hold the final, ordered list of candidate application metadata.
+    std::vector<MacCandidateTempInfo> ordered_candidates;
+    // This map stores definitive info for every unique app encountered, used for lookups.
     std::map<std::wstring, MacCandidateTempInfo> all_apps_info;
-    // A set to hold the IDs of applications that can open ALL files processed so far.
-    std::set<std::wstring> common_app_ids;
 
-    // --- Step 1: Process the first file to establish the initial set of candidates. ---
-    NSString *firstPath = [NSString stringWithUTF8String:StrWide2MB(pathnames[0]).c_str()];
-    NSURL *firstURL = [NSURL fileURLWithPath:firstPath];
-    if (firstURL) {
-        // Ask Launch Services for all apps that can open this URL.
-        NSArray<NSURL *> *apps = [[NSWorkspace sharedWorkspace] URLsForApplicationsToOpenURL:firstURL];
-        for (NSURL *appURL in apps) {
-            MacCandidateTempInfo temp_info = AppBundleToTempInfo(appURL);
-            common_app_ids.insert(temp_info.id);
-            all_apps_info[temp_info.id] = temp_info;
-        }
-    }
+    // --- Part 1: Candidate Discovery ---
+    // This section populates 'ordered_candidates' and 'all_apps_info'. The logic differs
+    // depending on whether one or multiple files are being processed.
 
-    // --- Step 2: Intersect the initial set with candidates from the remaining files. ---
-    for (size_t i = 1; i < pathnames.size(); ++i) {
-        if (common_app_ids.empty()) {
-            break; // Optimization: if no common apps remain, we can stop early.
-        }
+    if (pathnames.size() == 1) {
+        // Handle the single-file case to prioritize the default application.
+        NSString *path = [NSString stringWithUTF8String:StrWide2MB(pathnames[0]).c_str()];
+        NSURL *fileURL = [NSURL fileURLWithPath:path];
+        if (!fileURL) return {};
 
-        std::set<std::wstring> next_app_ids;
-        NSString *nsPath = [NSString stringWithUTF8String:StrWide2MB(pathnames[i]).c_str()];
-        NSURL *fileURL = [NSURL fileURLWithPath:nsPath];
-        if (fileURL) {
-            NSArray<NSURL *> *apps = [[NSWorkspace sharedWorkspace] URLsForApplicationsToOpenURL:fileURL];
-            for (NSURL *appURL in apps) {
-                MacCandidateTempInfo temp_info = AppBundleToTempInfo(appURL);
-                next_app_ids.insert(temp_info.id);
-                // Store app info if we haven't seen this app before.
-                if (all_apps_info.find(temp_info.id) == all_apps_info.end()) {
-                    all_apps_info[temp_info.id] = temp_info;
-                }
+        // 1a. Get the default application for the given URL.
+        NSURL *defaultAppURL = [[NSWorkspace sharedWorkspace] URLForApplicationToOpenURL:fileURL];
+        if (defaultAppURL) {
+            MacCandidateTempInfo info = AppBundleToTempInfo(defaultAppURL);
+            if (all_apps_info.find(info.id) == all_apps_info.end()) {
+                ordered_candidates.push_back(info); // Add default app first.
+                all_apps_info[info.id] = info;
             }
         }
-        
-        // Perform set intersection to find apps common to both sets.
-        std::set<std::wstring> intersection;
-        std::set_intersection(common_app_ids.begin(), common_app_ids.end(),
-                              next_app_ids.begin(), next_app_ids.end(),
-                              std::inserter(intersection, intersection.begin()));
-        common_app_ids = std::move(intersection);
-    }
-    
-    // --- Step 3: Build the final result, handling name collisions by adding version info. ---
-    std::vector<CandidateInfo> result;
-    result.reserve(common_app_ids.size());
-    
-    // Count occurrences of each application name to detect duplicates.
-    std::unordered_map<std::wstring, int> name_counts;
-    for (const auto& app_id : common_app_ids) {
-        name_counts[all_apps_info[app_id].name]++;
+
+        // 1b. Get all other applications capable of opening the file.
+        NSArray<NSURL *> *allAppURLs = [[NSWorkspace sharedWorkspace] URLsForApplicationsToOpenURL:fileURL];
+        for (NSURL *appURL in allAppURLs) {
+            // Skip the default app since it has already been added.
+            if (defaultAppURL && [appURL isEqual:defaultAppURL]) {
+                continue;
+            }
+            MacCandidateTempInfo info = AppBundleToTempInfo(appURL);
+            if (all_apps_info.find(info.id) == all_apps_info.end()) {
+                ordered_candidates.push_back(info);
+                all_apps_info[info.id] = info;
+            }
+        }
+    } else {
+        // Handle the multi-file case by finding the intersection of compatible applications.
+        std::set<std::wstring> common_app_ids;
+
+        // 2a. Process the first file to establish the initial candidate set.
+        NSString *firstPath = [NSString stringWithUTF8String:StrWide2MB(pathnames[0]).c_str()];
+        NSURL *firstURL = [NSURL fileURLWithPath:firstPath];
+        if (firstURL) {
+            NSArray<NSURL *> *apps = [[NSWorkspace sharedWorkspace] URLsForApplicationsToOpenURL:firstURL];
+            for (NSURL *appURL in apps) {
+                MacCandidateTempInfo temp_info = AppBundleToTempInfo(appURL);
+                common_app_ids.insert(temp_info.id);
+                all_apps_info[temp_info.id] = temp_info;
+            }
+        }
+
+        // 2b. Intersect the current set with candidates from the remaining files.
+        for (size_t i = 1; i < pathnames.size(); ++i) {
+            // Optimization: stop early if no common apps remain.
+            if (common_app_ids.empty()) break;
+
+            std::set<std::wstring> next_app_ids;
+            NSString *nsPath = [NSString stringWithUTF8String:StrWide2MB(pathnames[i]).c_str()];
+            NSURL *fileURL = [NSURL fileURLWithPath:nsPath];
+            if (fileURL) {
+                NSArray<NSURL *> *apps = [[NSWorkspace sharedWorkspace] URLsForApplicationsToOpenURL:fileURL];
+                for (NSURL *appURL in apps) {
+                    MacCandidateTempInfo temp_info = AppBundleToTempInfo(appURL);
+                    next_app_ids.insert(temp_info.id);
+                    // Ensure all_apps_info contains metadata for every app we encounter.
+                    if (all_apps_info.find(temp_info.id) == all_apps_info.end()) {
+                        all_apps_info[temp_info.id] = temp_info;
+                    }
+                }
+            }
+
+            std::set<std::wstring> intersection;
+            std::set_intersection(common_app_ids.begin(), common_app_ids.end(),
+                                  next_app_ids.begin(), next_app_ids.end(),
+                                  std::inserter(intersection, intersection.begin()));
+            common_app_ids = std::move(intersection);
+        }
+
+        // 2c. Populate 'ordered_candidates' from the final set of common application IDs.
+        for (const auto& app_id : common_app_ids) {
+            ordered_candidates.push_back(all_apps_info[app_id]);
+        }
     }
 
-    for (const auto& app_id : common_app_ids) {
-        const auto& temp_info = all_apps_info[app_id];
+    // --- Part 2: Final List Generation ---
+    // This common code path processes the 'ordered_candidates' vector.
+    // It handles name disambiguation and converts metadata to the final CandidateInfo format.
+
+    std::vector<CandidateInfo> result;
+    if (ordered_candidates.empty()) {
+        return result;
+    }
+    result.reserve(ordered_candidates.size());
+
+    // Count name occurrences to identify duplicates.
+    std::unordered_map<std::wstring, int> name_counts;
+    for (const auto& temp_info : ordered_candidates) {
+        name_counts[temp_info.name]++;
+    }
+
+    // Build the final list.
+    for (const auto& temp_info : ordered_candidates) {
         CandidateInfo final_c;
         final_c.id = temp_info.id;
-        final_c.terminal = false; // GUI apps are the norm on macOS.
+        final_c.terminal = false;
         final_c.name = temp_info.name;
-        
+
         // If an app name is duplicated, append its version string to make it unique in the UI.
         if (name_counts[temp_info.name] > 1 && !temp_info.info.empty()) {
             final_c.name += L" (" + temp_info.info + L")";
         }
         result.push_back(final_c);
     }
-    
+
     return result;
 }
+
 
 // Constructs a single command line using the 'open' utility, which natively handles multiple files.
 std::vector<std::wstring> MacOSAppProvider::ConstructCommandLine(const CandidateInfo& candidate, const std::vector<std::wstring>& pathnames) {

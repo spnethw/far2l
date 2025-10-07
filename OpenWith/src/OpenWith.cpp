@@ -157,6 +157,7 @@ namespace OpenWith {
 
 		di.push_back({ DI_CHECKBOX, 5, ++y, 0, 0, TRUE, { s_UseExternalTerminal }, 0, 0, GetMsg(MUseExternalTerminal), 0 });
 		di.push_back({ DI_CHECKBOX, 5, ++y, 0, 0, 0, { s_NoWaitForCommandCompletion },  0, 0, GetMsg(MNoWaitForCommandCompletion), 0});
+		di.push_back({ DI_CHECKBOX, 5, ++y, 0, 0, 0, { s_ClearSelection },  0, 0, GetMsg(MClearSelection), 0});
 
 		if (!old_platform_settings.empty()) {
 			di.push_back({ DI_TEXT, 5, ++y, 0, 0, FALSE, {}, DIF_SEPARATOR, 0, L"", 0 });
@@ -189,12 +190,13 @@ namespace OpenWith {
 			// Save platform-independent settings
 			s_UseExternalTerminal = (s_Info.SendDlgMessage(dlg, DM_GETCHECK, 1, 0) == BSTATE_CHECKED);
 			s_NoWaitForCommandCompletion = (s_Info.SendDlgMessage(dlg, DM_GETCHECK, 2, 0) == BSTATE_CHECKED);
+			s_ClearSelection = (s_Info.SendDlgMessage(dlg, DM_GETCHECK, 3, 0) == BSTATE_CHECKED);
 			SaveOptions();
 
 			bool platform_settings_changed = false;
 			if (!old_platform_settings.empty()) {
 				std::vector<ProviderSetting> new_settings;
-				int first_platform_item_idx = 4; // Index of the first platform-specific checkbox
+				int first_platform_item_idx = 5; // Index of the first platform-specific checkbox
 
 				for (size_t i = 0; i < old_platform_settings.size(); ++i) {
 					bool new_value = (s_Info.SendDlgMessage(dlg, DM_GETCHECK, first_platform_item_idx + i, 0) == BSTATE_CHECKED);
@@ -374,6 +376,10 @@ namespace OpenWith {
 				break; // Stop on the first error.
 			}
 		}
+
+		if (s_ClearSelection) {
+			s_Info.Control(PANEL_ACTIVE, FCTL_UPDATEPANEL, 0, 0);
+		}
 	}
 
 
@@ -506,6 +512,7 @@ namespace OpenWith {
 		KeyFileReadSection kfh(INI_LOCATION, INI_SECTION);
 		s_UseExternalTerminal = kfh.GetInt("UseExternalTerminal", 0) != 0;
 		s_NoWaitForCommandCompletion = kfh.GetInt("NoWaitForCommandCompletion", 1) != 0;
+		s_ClearSelection = kfh.GetInt("ClearSelection", 0) != 0;
 	}
 
 
@@ -514,6 +521,7 @@ namespace OpenWith {
 		KeyFileHelper kfh(INI_LOCATION);
 		kfh.SetInt(INI_SECTION, "UseExternalTerminal", s_UseExternalTerminal);
 		kfh.SetInt(INI_SECTION, "NoWaitForCommandCompletion", s_NoWaitForCommandCompletion);
+		kfh.SetInt(INI_SECTION, "ClearSelection", s_ClearSelection);
 		if (!kfh.Save()) {
 			ShowError(GetMsg(MError), { GetMsg(MSaveConfigError) });
 		}
@@ -545,6 +553,7 @@ namespace OpenWith {
 	FarStandardFunctions OpenWithPlugin::s_FSF = {};
 	bool OpenWithPlugin::s_UseExternalTerminal = false;
 	bool OpenWithPlugin::s_NoWaitForCommandCompletion = true;
+	bool OpenWithPlugin::s_ClearSelection = false;
 
 
 	// Plugin entry points
