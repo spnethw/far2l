@@ -10,14 +10,9 @@ class DummyAppProvider : public AppProvider
 public:
 	explicit DummyAppProvider(TMsgGetter msg_getter);
 
-	// MODIFIED: Signature updated to match the base class.
 	std::vector<CandidateInfo> GetAppCandidates(const std::vector<std::wstring>& pathnames) override;
-
 	std::vector<std::wstring> GetMimeTypes(const std::vector<std::wstring>& pathnames) override;
-
-	// MODIFIED: Signature updated to match the base class.
 	std::vector<std::wstring> ConstructCommandLine(const CandidateInfo& candidate, const std::vector<std::wstring>& pathnames) override;
-
 	std::vector<Field> GetCandidateDetails(const CandidateInfo& candidate) override;
 
 	std::vector<ProviderSetting> GetPlatformSettings() override;

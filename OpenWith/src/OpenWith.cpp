@@ -1,3 +1,4 @@
+#include "OpenWith.hpp"
 #include "AppProvider.hpp"
 #include "farplug-wide.h"
 #include "KeyFileHelper.h"
@@ -17,17 +18,206 @@
 
 namespace OpenWith {
 
+	// ****************************** Public API ******************************
 
-class OpenWithPlugin
-{
-private:
-	static PluginStartupInfo s_Info;
-	static FarStandardFunctions s_FSF;
-	static bool s_UseExternalTerminal;
-	static bool s_NoWaitForCommandCompletion;
+
+	// Standard far2l plugin entry point for initialization.
+	void OpenWithPlugin::SetStartupInfo(const PluginStartupInfo *info)
+	{
+		s_Info = *info;
+		s_FSF = *info->FSF;
+		s_Info.FSF = &s_FSF;
+		LoadOptions();
+	}
+
+
+	// Standard far2l plugin entry point to provide information about the plugin.
+	void OpenWithPlugin::GetPluginInfo(PluginInfo *info)
+	{
+		info->StructSize = sizeof(*info);
+		info->Flags = 0;
+		static const wchar_t *menuStr[1];
+		menuStr[0] = GetMsg(MPluginTitle);
+		info->PluginMenuStrings = menuStr;
+		info->PluginMenuStringsNumber = ARRAYSIZE(menuStr);
+		static const wchar_t *configStr[1];
+		configStr[0] = GetMsg(MPluginTitle);
+		info->PluginConfigStrings = configStr;
+		info->PluginConfigStringsNumber = ARRAYSIZE(configStr);
+		info->CommandPrefix = nullptr;
+	}
+
+
+	// The public Configure function called by far2l.
+	int OpenWithPlugin::Configure(int itemNumber)
+	{
+		return ConfigureImpl().settings_saved;
+	}
+
+
+	// Main plugin entry point, called when the user activates the plugin from the menu.
+	// It collects selected file paths from the active panel and initiates processing.
+	HANDLE OpenWithPlugin::OpenPlugin(int openFrom, INT_PTR item)
+	{
+		if (openFrom != OPEN_PLUGINSMENU) {
+			return INVALID_HANDLE_VALUE;
+		}
+
+		PanelInfo pi = {};
+		if (!s_Info.Control(PANEL_ACTIVE, FCTL_GETPANELINFO, 0, (LONG_PTR)&pi)) {
+			return INVALID_HANDLE_VALUE;
+		}
+
+		if (pi.PanelType != PTYPE_FILEPANEL || pi.ItemsNumber <= 0) {
+			return INVALID_HANDLE_VALUE;
+		}
+
+		std::vector<std::wstring> selected_pathnames;
+
+		// First, get the panel's directory path.
+		int dir_size = s_Info.Control(PANEL_ACTIVE, FCTL_GETPANELDIR, 0, 0);
+		if (dir_size <= 0) {
+			return INVALID_HANDLE_VALUE;
+		}
+		auto dir_buf = std::make_unique<wchar_t[]>(dir_size);
+		if (!s_Info.Control(PANEL_ACTIVE, FCTL_GETPANELDIR, dir_size, (LONG_PTR)dir_buf.get())) {
+			return INVALID_HANDLE_VALUE;
+		}
+		std::wstring base_path(dir_buf.get());
+		if (!base_path.empty() && base_path.back() != L'/') {
+			base_path += L'/';
+		}
+
+		// If files are selected, iterate through them.
+		if (pi.SelectedItemsNumber > 0) {
+			selected_pathnames.reserve(pi.SelectedItemsNumber);
+			for (size_t i = 0; i < pi.SelectedItemsNumber; ++i) {
+				int itemSize = s_Info.Control(PANEL_ACTIVE, FCTL_GETSELECTEDPANELITEM, i, 0);
+				if (itemSize <= 0) continue;
+
+				auto item_buf = std::make_unique<unsigned char[]>(itemSize);
+				PluginPanelItem* pi_item = reinterpret_cast<PluginPanelItem*>(item_buf.get());
+
+				if (s_Info.Control(PANEL_ACTIVE, FCTL_GETSELECTEDPANELITEM, i, (LONG_PTR)pi_item) && pi_item->FindData.lpwszFileName) {
+					selected_pathnames.push_back(base_path + pi_item->FindData.lpwszFileName);
+				}
+			}
+		}
+		// Otherwise, use the current file under the cursor.
+		else if (pi.CurrentItem >= 0 && pi.CurrentItem < pi.ItemsNumber) {
+			int itemSize = s_Info.Control(PANEL_ACTIVE, FCTL_GETPANELITEM, pi.CurrentItem, 0);
+			if (itemSize > 0) {
+				auto item_buf = std::make_unique<unsigned char[]>(itemSize);
+				PluginPanelItem* pi_item = reinterpret_cast<PluginPanelItem*>(item_buf.get());
+				if (s_Info.Control(PANEL_ACTIVE, FCTL_GETPANELITEM, pi.CurrentItem, (LONG_PTR)pi_item) && pi_item->FindData.lpwszFileName) {
+					selected_pathnames.push_back(base_path + pi_item->FindData.lpwszFileName);
+				}
+			}
+		}
+
+		if (!selected_pathnames.empty()) {
+			ProcessFiles(selected_pathnames);
+		}
+
+		return INVALID_HANDLE_VALUE;
+	}
+
+
+	void OpenWithPlugin::Exit()
+	{
+	}
+
+
+	const wchar_t* OpenWithPlugin::GetMsg(int MsgId)
+	{
+		return s_Info.GetMsg(s_Info.ModuleNumber, MsgId);
+	}
+
+
+	// ****************************** Private implementation ******************************
+
+
+	// The core implementation of the configuration logic.
+	// It returns a detailed result, allowing the caller to know if the application list needs to be refreshed.
+	OpenWithPlugin::ConfigureResult OpenWithPlugin::ConfigureImpl()
+	{
+		LoadOptions();
+
+		auto provider = AppProvider::CreateAppProvider(&OpenWithPlugin::GetMsg);
+		provider->LoadPlatformSettings();
+		// Store the state of platform-specific settings *before* showing the dialog.
+		// This is crucial for detecting changes later.
+		std::vector<ProviderSetting> old_platform_settings = provider->GetPlatformSettings();
+
+		std::vector<FarDialogItem> di;
+		int y = 1;
+
+		di.push_back({ DI_CHECKBOX, 5, ++y, 0, 0, TRUE, { s_UseExternalTerminal }, 0, 0, GetMsg(MUseExternalTerminal), 0 });
+		di.push_back({ DI_CHECKBOX, 5, ++y, 0, 0, 0, { s_NoWaitForCommandCompletion },  0, 0, GetMsg(MNoWaitForCommandCompletion), 0});
+
+		if (!old_platform_settings.empty()) {
+			di.push_back({ DI_TEXT, 5, ++y, 0, 0, FALSE, {}, DIF_SEPARATOR, 0, L"", 0 });
+			for (const auto& setting : old_platform_settings) {
+				di.push_back({ DI_CHECKBOX, 5, ++y, 0, 0, FALSE, { setting.value }, 0, 0, setting.display_name.c_str(), 0 });
+			}
+		}
+
+		di.push_back({ DI_TEXT, 5, ++y, 0, 0, FALSE, {}, DIF_SEPARATOR, 0, L"", 0 });
+		y++;
+		di.push_back({ DI_BUTTON, 0, y, 0, 0, FALSE, {}, DIF_CENTERGROUP, 0, GetMsg(MOk), 0 });
+		di.back().DefaultButton = TRUE;
+		di.push_back({ DI_BUTTON, 0, y, 0, 0, FALSE, {}, DIF_CENTERGROUP, 0, GetMsg(MCancel), 0 });
+
+		int dialog_height = y + 3;
+		int dialog_width = 70;
+		di.insert(di.begin(), { DI_DOUBLEBOX, 3, 1, dialog_width - 4, dialog_height - 2, FALSE, {}, 0, 0, GetMsg(MConfigTitle), 0 });
+
+		HANDLE dlg = s_Info.DialogInit(s_Info.ModuleNumber, -1, -1, dialog_width, dialog_height, L"ConfigurationDialog", di.data(), di.size(), 0, 0, nullptr, 0);
+		if (dlg == INVALID_HANDLE_VALUE) {
+			return {}; // Return a default (all false) result on dialog initialization failure.
+		}
+
+		int exitCode = s_Info.DialogRun(dlg);
+		ConfigureResult result;
+
+		// The index of the 'OK' button is determined by its position in the 'di' vector.
+		if (exitCode == (int)di.size() - 2) { // OK was clicked
+			result.settings_saved = true;
+
+			// Save platform-independent settings
+			s_UseExternalTerminal = (s_Info.SendDlgMessage(dlg, DM_GETCHECK, 1, 0) == BSTATE_CHECKED);
+			s_NoWaitForCommandCompletion = (s_Info.SendDlgMessage(dlg, DM_GETCHECK, 2, 0) == BSTATE_CHECKED);
+			SaveOptions();
+
+			if (!old_platform_settings.empty()) {
+				std::vector<ProviderSetting> new_settings;
+				int first_platform_item_idx = 4; // Index of the first platform-specific checkbox
+				bool list_needs_refresh = false;
+
+				for (size_t i = 0; i < old_platform_settings.size(); ++i) {
+					bool new_value = (s_Info.SendDlgMessage(dlg, DM_GETCHECK, first_platform_item_idx + i, 0) == BSTATE_CHECKED);
+					// If any platform-specific setting has changed, the candidate list must be regenerated.
+					if (old_platform_settings[i].value != new_value) {
+						list_needs_refresh = true;
+					}
+					new_settings.push_back({ old_platform_settings[i].internal_key, old_platform_settings[i].display_name, new_value });
+				}
+				provider->SetPlatformSettings(new_settings);
+				provider->SavePlatformSettings();
+
+				if (list_needs_refresh) {
+					result.refresh_needed = true;
+				}
+			}
+		}
+
+		s_Info.DialogFree(dlg);
+		return result;
+	}
+
 
 	// return true if exit by button "Launch", false otherwise
-	static bool ShowDetailsDialogImpl(const std::vector<Field>& file_info,
+	bool OpenWithPlugin::ShowDetailsDialogImpl(const std::vector<Field>& file_info,
 									  const std::vector<Field>& application_info,
 									  const Field& launch_command)
 	{
@@ -111,7 +301,7 @@ private:
 	// Shows the details dialog with file and application information.
 	// For a single file, it shows the full path. For multiple files, it shows a count.
 	// It also removes ambiguous information (like association source) for multi-file selections.
-	static bool ShowDetailsDialog(AppProvider* provider, const CandidateInfo& app,
+	bool OpenWithPlugin::ShowDetailsDialog(AppProvider* provider, const CandidateInfo& app,
 								  const std::vector<std::wstring>& pathnames,
 								  const std::vector<std::wstring>& cmds)
 	{
@@ -162,7 +352,7 @@ private:
 
 	// Executes one or more command lines to launch the application.
 	// If multiple commands are provided, it forces asynchronous execution to avoid blocking the UI.
-	static void LaunchApplication(const CandidateInfo& app, const std::vector<std::wstring>& cmds)
+	void OpenWithPlugin::LaunchApplication(const CandidateInfo& app, const std::vector<std::wstring>& cmds)
 	{
 		if (cmds.empty()) return;
 
@@ -186,7 +376,7 @@ private:
 
 
 	// A simple wrapper for ProcessFiles to handle single-file cases.
-	static void ProcessFile(const std::wstring &pathname)
+	void OpenWithPlugin::ProcessFile(const std::wstring &pathname)
 	{
 		ProcessFiles({pathname});
 	}
@@ -194,7 +384,7 @@ private:
 
 	// The main logic handler for both single and multiple files.
 	// It gets candidate applications, displays a menu, and handles user actions.
-	static void ProcessFiles(const std::vector<std::wstring>& pathnames)
+	void OpenWithPlugin::ProcessFiles(const std::vector<std::wstring>& pathnames)
 	{
 		if (pathnames.empty()) {
 			return;
@@ -230,19 +420,27 @@ private:
 		while(true) {
 			if (candidates.empty()) {
 				std::vector<std::wstring> error_lines = { GetMsg(MNoAppsFound) };
-
 				auto unique_mimes = provider->GetMimeTypes(pathnames);
 
-				if (pathnames.size() == 1) {
-					// For a single file, show its list of MIME types.
-					if (!unique_mimes.empty()) {
-						error_lines.push_back(join_strings(unique_mimes, L"; "));
+				auto generate_mime_info_string = [&]() -> std::wstring {
+					if (unique_mimes.empty()) {
+						return L"(none)";
 					}
-				} else {
-					// For multiple files, show a more informative count of unique MIME types found.
-					std::wstring count_msg = std::wstring(GetMsg(MNumberOfMimeTypesFound)) + L" " + std::to_wstring(unique_mimes.size());
-					error_lines.push_back(count_msg);
-				}
+					if (pathnames.size() == 1) {
+						return join_strings(unique_mimes, L"; ");
+					}
+					const size_t mime_count = unique_mimes.size();
+					const size_t count_to_show = std::min<size_t>(mime_count, 3);
+					std::vector<std::wstring> head(unique_mimes.begin(), unique_mimes.begin() + count_to_show);
+					std::wstring result = join_strings(head, L"; ");
+					if (mime_count > count_to_show) {
+						size_t remaining_count = mime_count - count_to_show;
+						result += std::wstring(GetMsg(MAndMore)) + L"(" + std::to_wstring(remaining_count) + L")";
+					}
+					return result;
+				};
+
+				error_lines.push_back(generate_mime_info_string());
 
 				ShowError(GetMsg(MError), error_lines);
 				break;
@@ -295,8 +493,7 @@ private:
 	}
 
 
-
-	static void LoadOptions()
+	void OpenWithPlugin::LoadOptions()
 	{
 		KeyFileReadSection kfh(INI_LOCATION, INI_SECTION);
 		s_UseExternalTerminal = kfh.GetInt("UseExternalTerminal", 0) != 0;
@@ -304,7 +501,7 @@ private:
 	}
 
 
-	static void SaveOptions()
+	void OpenWithPlugin::SaveOptions()
 	{
 		KeyFileHelper kfh(INI_LOCATION);
 		kfh.SetInt(INI_SECTION, "UseExternalTerminal", s_UseExternalTerminal);
@@ -315,7 +512,7 @@ private:
 	}
 
 
-	static void ShowError(const wchar_t *title, const std::vector<std::wstring>& text)
+	void OpenWithPlugin::ShowError(const wchar_t *title, const std::vector<std::wstring>& text)
 	{
 		std::vector<const wchar_t*> items;
 		items.reserve(text.size() + 2);
@@ -326,7 +523,7 @@ private:
 	}
 
 
-	static int GetScreenWidth()
+	int OpenWithPlugin::GetScreenWidth()
 	{
 		CONSOLE_SCREEN_BUFFER_INFO ConsoleScreenBufferInfo;
 		if (WINPORT(GetConsoleScreenBufferInfo)(NULL, &ConsoleScreenBufferInfo))
@@ -335,246 +532,43 @@ private:
 	}
 
 
-public:
-	// Standard far2l plugin entry point for initialization.
-	static void SetStartupInfo(const PluginStartupInfo *info)
+	// Static member initialization.
+	PluginStartupInfo OpenWithPlugin::s_Info = {};
+	FarStandardFunctions OpenWithPlugin::s_FSF = {};
+	bool OpenWithPlugin::s_UseExternalTerminal = false;
+	bool OpenWithPlugin::s_NoWaitForCommandCompletion = true;
+
+
+	// Plugin entry points
+
+	SHAREDSYMBOL void WINAPI SetStartupInfoW(const PluginStartupInfo *info)
 	{
-		s_Info = *info;
-		s_FSF = *info->FSF;
-		s_Info.FSF = &s_FSF;
-		LoadOptions();
+		OpenWith::OpenWithPlugin::SetStartupInfo(info);
 	}
 
-
-	// Standard far2l plugin entry point to provide information about the plugin.
-	static void GetPluginInfo(PluginInfo *info)
+	SHAREDSYMBOL void WINAPI GetPluginInfoW(PluginInfo *info)
 	{
-		info->StructSize = sizeof(*info);
-		info->Flags = 0;
-		static const wchar_t *menuStr[1];
-		menuStr[0] = GetMsg(MPluginTitle);
-		info->PluginMenuStrings = menuStr;
-		info->PluginMenuStringsNumber = ARRAYSIZE(menuStr);
-		static const wchar_t *configStr[1];
-		configStr[0] = GetMsg(MPluginTitle);
-		info->PluginConfigStrings = configStr;
-		info->PluginConfigStringsNumber = ARRAYSIZE(configStr);
-		info->CommandPrefix = nullptr;
+		OpenWith::OpenWithPlugin::GetPluginInfo(info);
 	}
 
-
-	// Main plugin entry point, called when the user activates the plugin from the menu.
-	// It collects selected file paths from the active panel and initiates processing.
-	static HANDLE OpenPlugin(int openFrom, INT_PTR item)
+	SHAREDSYMBOL HANDLE WINAPI OpenPluginW(int openFrom, INT_PTR item)
 	{
-		if (openFrom != OPEN_PLUGINSMENU) {
-			return INVALID_HANDLE_VALUE;
-		}
-
-		PanelInfo pi = {};
-		if (!s_Info.Control(PANEL_ACTIVE, FCTL_GETPANELINFO, 0, (LONG_PTR)&pi)) {
-			return INVALID_HANDLE_VALUE;
-		}
-
-		if (pi.PanelType != PTYPE_FILEPANEL || pi.ItemsNumber <= 0) {
-			return INVALID_HANDLE_VALUE;
-		}
-
-		std::vector<std::wstring> selected_pathnames;
-
-		// First, get the panel's directory path.
-		int dir_size = s_Info.Control(PANEL_ACTIVE, FCTL_GETPANELDIR, 0, 0);
-		if (dir_size <= 0) {
-			return INVALID_HANDLE_VALUE;
-		}
-		auto dir_buf = std::make_unique<wchar_t[]>(dir_size);
-		if (!s_Info.Control(PANEL_ACTIVE, FCTL_GETPANELDIR, dir_size, (LONG_PTR)dir_buf.get())) {
-			return INVALID_HANDLE_VALUE;
-		}
-		std::wstring base_path(dir_buf.get());
-		if (!base_path.empty() && base_path.back() != L'/') {
-			base_path += L'/';
-		}
-
-		// If files are selected, iterate through them.
-		if (pi.SelectedItemsNumber > 0) {
-			selected_pathnames.reserve(pi.SelectedItemsNumber);
-			for (size_t i = 0; i < pi.SelectedItemsNumber; ++i) {
-				int itemSize = s_Info.Control(PANEL_ACTIVE, FCTL_GETSELECTEDPANELITEM, i, 0);
-				if (itemSize <= 0) continue;
-
-				auto item_buf = std::make_unique<unsigned char[]>(itemSize);
-				PluginPanelItem* pi_item = reinterpret_cast<PluginPanelItem*>(item_buf.get());
-
-				if (s_Info.Control(PANEL_ACTIVE, FCTL_GETSELECTEDPANELITEM, i, (LONG_PTR)pi_item) && pi_item->FindData.lpwszFileName) {
-					selected_pathnames.push_back(base_path + pi_item->FindData.lpwszFileName);
-				}
-			}
-		}
-		// Otherwise, use the current file under the cursor.
-		else if (pi.CurrentItem >= 0 && pi.CurrentItem < pi.ItemsNumber) {
-			int itemSize = s_Info.Control(PANEL_ACTIVE, FCTL_GETPANELITEM, pi.CurrentItem, 0);
-			if (itemSize > 0) {
-				auto item_buf = std::make_unique<unsigned char[]>(itemSize);
-				PluginPanelItem* pi_item = reinterpret_cast<PluginPanelItem*>(item_buf.get());
-				if (s_Info.Control(PANEL_ACTIVE, FCTL_GETPANELITEM, pi.CurrentItem, (LONG_PTR)pi_item) && pi_item->FindData.lpwszFileName) {
-					selected_pathnames.push_back(base_path + pi_item->FindData.lpwszFileName);
-				}
-			}
-		}
-
-		if (!selected_pathnames.empty()) {
-			ProcessFiles(selected_pathnames);
-		}
-
-		return INVALID_HANDLE_VALUE;
+		return OpenWith::OpenWithPlugin::OpenPlugin(openFrom, item);
 	}
 
-
-	// A structure to hold detailed results from the configuration dialog.
-	// This allows communicating more than just a simple success/failure status.
-	struct ConfigureResult
+	SHAREDSYMBOL int WINAPI ConfigureW(int itemNumber)
 	{
-		bool settings_saved = false;  // True if the user clicked "Ok" and settings were saved.
-		bool refresh_needed = false; // True if a setting affecting the candidate list was changed.
-	};
-
-
-	// The core implementation of the configuration logic.
-	// It returns a detailed result, allowing the caller to know if the application list needs to be refreshed.
-	static ConfigureResult ConfigureImpl()
-	{
-		LoadOptions();
-
-		auto provider = AppProvider::CreateAppProvider(&OpenWithPlugin::GetMsg);
-		provider->LoadPlatformSettings();
-		// Store the state of platform-specific settings *before* showing the dialog.
-		// This is crucial for detecting changes later.
-		std::vector<ProviderSetting> old_platform_settings = provider->GetPlatformSettings();
-
-		std::vector<FarDialogItem> di;
-		int y = 1;
-
-		di.push_back({ DI_CHECKBOX, 5, ++y, 0, 0, TRUE, { s_UseExternalTerminal }, 0, 0, GetMsg(MUseExternalTerminal), 0 });
-		di.push_back({ DI_CHECKBOX, 5, ++y, 0, 0, 0, { s_NoWaitForCommandCompletion },  0, 0, GetMsg(MNoWaitForCommandCompletion), 0});
-
-		if (!old_platform_settings.empty()) {
-			di.push_back({ DI_TEXT, 5, ++y, 0, 0, FALSE, {}, DIF_SEPARATOR, 0, L"", 0 });
-			for (const auto& setting : old_platform_settings) {
-				di.push_back({ DI_CHECKBOX, 5, ++y, 0, 0, FALSE, { setting.value }, 0, 0, setting.display_name.c_str(), 0 });
-			}
-		}
-
-		di.push_back({ DI_TEXT, 5, ++y, 0, 0, FALSE, {}, DIF_SEPARATOR, 0, L"", 0 });
-		y++;
-		di.push_back({ DI_BUTTON, 0, y, 0, 0, FALSE, {}, DIF_CENTERGROUP, 0, GetMsg(MOk), 0 });
-		di.back().DefaultButton = TRUE;
-		di.push_back({ DI_BUTTON, 0, y, 0, 0, FALSE, {}, DIF_CENTERGROUP, 0, GetMsg(MCancel), 0 });
-
-		int dialog_height = y + 3;
-		int dialog_width = 70;
-		di.insert(di.begin(), { DI_DOUBLEBOX, 3, 1, dialog_width - 4, dialog_height - 2, FALSE, {}, 0, 0, GetMsg(MConfigTitle), 0 });
-
-		HANDLE dlg = s_Info.DialogInit(s_Info.ModuleNumber, -1, -1, dialog_width, dialog_height, L"ConfigurationDialog", di.data(), di.size(), 0, 0, nullptr, 0);
-		if (dlg == INVALID_HANDLE_VALUE) {
-			return {}; // Return a default (all false) result on dialog initialization failure.
-		}
-
-		int exitCode = s_Info.DialogRun(dlg);
-		ConfigureResult result;
-
-		// The index of the 'OK' button is determined by its position in the 'di' vector.
-		if (exitCode == (int)di.size() - 2) { // OK was clicked
-			result.settings_saved = true;
-
-			// Save platform-independent settings
-			s_UseExternalTerminal = (s_Info.SendDlgMessage(dlg, DM_GETCHECK, 1, 0) == BSTATE_CHECKED);
-			s_NoWaitForCommandCompletion = (s_Info.SendDlgMessage(dlg, DM_GETCHECK, 2, 0) == BSTATE_CHECKED);
-			SaveOptions();
-
-			if (!old_platform_settings.empty()) {
-				std::vector<ProviderSetting> new_settings;
-				int first_platform_item_idx = 4; // Index of the first platform-specific checkbox
-				bool list_needs_refresh = false;
-
-				for (size_t i = 0; i < old_platform_settings.size(); ++i) {
-					bool new_value = (s_Info.SendDlgMessage(dlg, DM_GETCHECK, first_platform_item_idx + i, 0) == BSTATE_CHECKED);
-					// If any platform-specific setting has changed, the candidate list must be regenerated.
-					if (old_platform_settings[i].value != new_value) {
-						list_needs_refresh = true;
-					}
-					new_settings.push_back({ old_platform_settings[i].internal_key, old_platform_settings[i].display_name, new_value });
-				}
-				provider->SetPlatformSettings(new_settings);
-				provider->SavePlatformSettings();
-
-				if (list_needs_refresh) {
-					result.refresh_needed = true;
-				}
-			}
-		}
-
-		s_Info.DialogFree(dlg);
-		return result;
+		return OpenWith::OpenWithPlugin::Configure(itemNumber);
 	}
 
-
-	// The public Configure function called by far2l.
-	// It acts as a simple wrapper around the core implementation, returning only
-	// the TRUE/FALSE value required by the API.
-	static int Configure(int itemNumber)
+	SHAREDSYMBOL void WINAPI ExitFARW()
 	{
-		return ConfigureImpl().settings_saved;
+		OpenWith::OpenWithPlugin::Exit();
 	}
 
-
-
-
-	static void Exit() {}
-
-
-	static const wchar_t* GetMsg(int MsgId)
+	SHAREDSYMBOL int WINAPI GetMinFarVersionW()
 	{
-		return s_Info.GetMsg(s_Info.ModuleNumber, MsgId);
+		return FARMANAGERVERSION;
 	}
-};
-
-// Static member initialization.
-PluginStartupInfo OpenWithPlugin::s_Info = {};
-FarStandardFunctions OpenWithPlugin::s_FSF = {};
-bool OpenWithPlugin::s_UseExternalTerminal = false;
-bool OpenWithPlugin::s_NoWaitForCommandCompletion = true;
-
-// Plugin entry points
-
-SHAREDSYMBOL void WINAPI SetStartupInfoW(const PluginStartupInfo *info)
-{
-	OpenWith::OpenWithPlugin::SetStartupInfo(info);
-}
-
-SHAREDSYMBOL void WINAPI GetPluginInfoW(PluginInfo *info)
-{
-	OpenWith::OpenWithPlugin::GetPluginInfo(info);
-}
-
-SHAREDSYMBOL HANDLE WINAPI OpenPluginW(int openFrom, INT_PTR item)
-{
-	return OpenWith::OpenWithPlugin::OpenPlugin(openFrom, item);
-}
-
-SHAREDSYMBOL int WINAPI ConfigureW(int itemNumber)
-{
-	return OpenWith::OpenWithPlugin::Configure(itemNumber);
-}
-
-SHAREDSYMBOL void WINAPI ExitFARW()
-{
-	OpenWith::OpenWithPlugin::Exit();
-}
-
-SHAREDSYMBOL int WINAPI GetMinFarVersionW()
-{
-	return FARMANAGERVERSION;
-}
 
 } // namespace OpenWith

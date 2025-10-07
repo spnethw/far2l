@@ -32,5 +32,6 @@ enum LanguageID
 	MFor,
 	MIn,
 	MFilesSelected,
-	MNumberOfMimeTypesFound
+	MNumberOfMimeTypesFound,
+	MAndMore
 };

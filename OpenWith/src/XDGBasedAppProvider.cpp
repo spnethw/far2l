@@ -427,14 +427,9 @@ std::vector<std::wstring> XDGBasedAppProvider::GetMimeTypes(const std::vector<st
 	}
 
 	std::vector<std::wstring> result;
-	if (unique_mimes.empty() && !pathnames.empty()) {
-		// If no specific MIME type was found for any file, add a generic fallback.
-		result.push_back(L"application/octet-stream");
-	} else {
-		result.reserve(unique_mimes.size());
-		for (const auto& mime : unique_mimes) {
-			result.push_back(StrMB2Wide(mime));
-		}
+	result.reserve(unique_mimes.size());
+	for (const auto& mime : unique_mimes) {
+		result.push_back(StrMB2Wide(mime));
 	}
 
 	return result;
@@ -804,7 +799,7 @@ std::string XDGBasedAppProvider::MimeTypeByExtension(const std::string& pathname
 
 	// Shell / scripts / source code
 
-	{".sh",    "application/x-shellscript"},
+		{".sh",    "application/x-shellscript"},
 		{".bash",  "application/x-shellscript"},
 		{".csh",   "application/x-csh"},
 		{".zsh",   "application/x-shellscript"},
@@ -967,23 +962,24 @@ std::string XDGBasedAppProvider::MimeTypeByExtension(const std::string& pathname
 		// Mail / office miscellany
 
 		{".msg",   "application/vnd.ms-outlook"}
-};
+	};
 
 
-std::string result;
+	std::string result;
 
-if (_use_extension_based_fallback) {
-	auto dot_pos = pathname.rfind('.');
-	if (dot_pos != std::string::npos) {
-		std::string ext = pathname.substr(dot_pos);
-		std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
-		auto it = s_ext_to_type_map.find(ext);
-		if (it != s_ext_to_type_map.end()) {
-			result = it->second;
+	if (_use_extension_based_fallback) {
+		auto dot_pos = pathname.rfind('.');
+		if (dot_pos != std::string::npos) {
+			std::string ext = pathname.substr(dot_pos);
+			std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
+			auto it = s_ext_to_type_map.find(ext);
+			if (it != s_ext_to_type_map.end()) {
+				result = it->second;
+			}
 		}
 	}
-}
-return result;
+
+	return result;
 }
 
 
