@@ -79,125 +79,152 @@ static std::wstring EscapeForShell(const std::wstring& arg) {
 
 
 // Finds application candidates that can open all specified files.
+// The logic uses a scoring system to rank candidates. The default application for a file type
+// receives a higher score, ensuring it appears first in the list.
+// To optimize performance when handling many files, this function caches the application lists
+// based on the file's Uniform Type Identifier (UTI).
 std::vector<CandidateInfo> MacOSAppProvider::GetAppCandidates(const std::vector<std::wstring>& pathnames) {
     // Return immediately if the input vector is empty.
     if (pathnames.empty()) {
         return {};
     }
 
-    // This vector will hold the final, ordered list of candidate application metadata.
-    std::vector<MacCandidateTempInfo> ordered_candidates;
-    // This map stores definitive info for every unique app encountered, used for lookups.
-    std::map<std::wstring, MacCandidateTempInfo> all_apps_info;
+    // --- Part 1: Candidate Discovery and Scoring with Caching ---
 
-    // --- Part 1: Candidate Discovery ---
-    // This section populates 'ordered_candidates' and 'all_apps_info'. The logic differs
-    // depending on whether one or multiple files are being processed.
+    // A map to store definitive metadata for every unique app encountered.
+    // Key: application ID (full path), Value: application metadata.
+    std::unordered_map<std::wstring, MacCandidateTempInfo> all_apps_info;
 
-    if (pathnames.size() == 1) {
-        // Handle the single-file case to prioritize the default application.
-        NSString *path = [NSString stringWithUTF8String:StrWide2MB(pathnames[0]).c_str()];
+    // A map to accumulate scores for each candidate application.
+    std::unordered_map<std::wstring, int> app_scores;
+
+    // A map to count how many of the selected files each application can open.
+    std::unordered_map<std::wstring, int> app_occurrence_count;
+
+    // Define scores for ranking. A default app gets a significantly higher score.
+    constexpr int DEFAULT_APP_SCORE = 10;
+    constexpr int OTHER_APP_SCORE   = 1;
+
+    // A cache to store the list of applications for a given Uniform Type Identifier (UTI).
+    // This dramatically speeds up processing when many files of the same type are selected.
+    struct AppListCacheEntry {
+        NSURL* default_app;
+        NSArray<NSURL *>* all_apps;
+    };
+    
+    // Custom hash and equality functors are required for using NSString* as a key in std::unordered_map.
+    struct NSStringHash {
+        std::size_t operator()(NSString* const& s) const { return [s hash]; }
+    };
+    struct NSStringEqual {
+        bool operator()(NSString* const& lhs, NSString* const& rhs) const { return [lhs isEqual:rhs]; }
+    };
+    std::unordered_map<NSString*, AppListCacheEntry, NSStringHash, NSStringEqual> uti_cache;
+
+
+    // Iterate through each selected file to find and score compatible applications.
+    for (const auto& pathname : pathnames) {
+        NSString *path = [NSString stringWithUTF8String:StrWide2MB(pathname).c_str()];
         NSURL *fileURL = [NSURL fileURLWithPath:path];
-        if (!fileURL) return {};
+        if (!fileURL) continue;
 
-        // 1a. Get the default application for the given URL.
-        NSURL *defaultAppURL = [[NSWorkspace sharedWorkspace] URLForApplicationToOpenURL:fileURL];
+        // Determine the file's UTI to use it as a cache key.
+        NSString *uti = nil;
+        NSError *error = nil;
+        [fileURL getResourceValue:&uti forKey:NSURLTypeIdentifierKey error:&error];
+        if (error || !uti) continue;
+
+        NSURL* defaultAppURL;
+        NSArray<NSURL *>* allAppURLs;
+
+        // Check if the application list for this UTI is already in our cache.
+        auto cache_it = uti_cache.find(uti);
+        if (cache_it != uti_cache.end()) {
+            // Cache hit: Use the stored application lists.
+            defaultAppURL = cache_it->second.default_app;
+            allAppURLs = cache_it->second.all_apps;
+        } else {
+            // Cache miss: Query the system for the application lists.
+            defaultAppURL = [[NSWorkspace sharedWorkspace] URLForApplicationToOpenURL:fileURL];
+            allAppURLs = [[NSWorkspace sharedWorkspace] URLsForApplicationsToOpenURL:fileURL];
+            // Store the results in the cache for subsequent files of the same type.
+            uti_cache[uti] = {defaultAppURL, allAppURLs};
+        }
+
+        // A temporary set to ensure we process each application only once per file.
+        std::unordered_set<std::wstring> processed_apps_for_this_file;
+
+        // Process the default application.
         if (defaultAppURL) {
             MacCandidateTempInfo info = AppBundleToTempInfo(defaultAppURL);
-            if (all_apps_info.find(info.id) == all_apps_info.end()) {
-                ordered_candidates.push_back(info); // Add default app first.
-                all_apps_info[info.id] = info;
-            }
+            all_apps_info.try_emplace(info.id, info);
+            app_scores[info.id] += DEFAULT_APP_SCORE;
+            processed_apps_for_this_file.insert(info.id);
+            app_occurrence_count[info.id]++;
         }
 
-        // 1b. Get all other applications capable of opening the file.
-        NSArray<NSURL *> *allAppURLs = [[NSWorkspace sharedWorkspace] URLsForApplicationsToOpenURL:fileURL];
+        // Process all other compatible applications.
         for (NSURL *appURL in allAppURLs) {
-            // Skip the default app since it has already been added.
-            if (defaultAppURL && [appURL isEqual:defaultAppURL]) {
+            MacCandidateTempInfo info = AppBundleToTempInfo(appURL);
+            if (processed_apps_for_this_file.count(info.id)) {
                 continue;
             }
-            MacCandidateTempInfo info = AppBundleToTempInfo(appURL);
-            if (all_apps_info.find(info.id) == all_apps_info.end()) {
-                ordered_candidates.push_back(info);
-                all_apps_info[info.id] = info;
-            }
-        }
-    } else {
-        // Handle the multi-file case by finding the intersection of compatible applications.
-        std::set<std::wstring> common_app_ids;
-
-        // 2a. Process the first file to establish the initial candidate set.
-        NSString *firstPath = [NSString stringWithUTF8String:StrWide2MB(pathnames[0]).c_str()];
-        NSURL *firstURL = [NSURL fileURLWithPath:firstPath];
-        if (firstURL) {
-            NSArray<NSURL *> *apps = [[NSWorkspace sharedWorkspace] URLsForApplicationsToOpenURL:firstURL];
-            for (NSURL *appURL in apps) {
-                MacCandidateTempInfo temp_info = AppBundleToTempInfo(appURL);
-                common_app_ids.insert(temp_info.id);
-                all_apps_info[temp_info.id] = temp_info;
-            }
-        }
-
-        // 2b. Intersect the current set with candidates from the remaining files.
-        for (size_t i = 1; i < pathnames.size(); ++i) {
-            // Optimization: stop early if no common apps remain.
-            if (common_app_ids.empty()) break;
-
-            std::set<std::wstring> next_app_ids;
-            NSString *nsPath = [NSString stringWithUTF8String:StrWide2MB(pathnames[i]).c_str()];
-            NSURL *fileURL = [NSURL fileURLWithPath:nsPath];
-            if (fileURL) {
-                NSArray<NSURL *> *apps = [[NSWorkspace sharedWorkspace] URLsForApplicationsToOpenURL:fileURL];
-                for (NSURL *appURL in apps) {
-                    MacCandidateTempInfo temp_info = AppBundleToTempInfo(appURL);
-                    next_app_ids.insert(temp_info.id);
-                    // Ensure all_apps_info contains metadata for every app we encounter.
-                    if (all_apps_info.find(temp_info.id) == all_apps_info.end()) {
-                        all_apps_info[temp_info.id] = temp_info;
-                    }
-                }
-            }
-
-            std::set<std::wstring> intersection;
-            std::set_intersection(common_app_ids.begin(), common_app_ids.end(),
-                                  next_app_ids.begin(), next_app_ids.end(),
-                                  std::inserter(intersection, intersection.begin()));
-            common_app_ids = std::move(intersection);
-        }
-
-        // 2c. Populate 'ordered_candidates' from the final set of common application IDs.
-        for (const auto& app_id : common_app_ids) {
-            ordered_candidates.push_back(all_apps_info[app_id]);
+            all_apps_info.try_emplace(info.id, info);
+            app_scores[info.id] += OTHER_APP_SCORE;
+            processed_apps_for_this_file.insert(info.id);
+            app_occurrence_count[info.id]++;
         }
     }
 
-    // --- Part 2: Final List Generation ---
-    // This common code path processes the 'ordered_candidates' vector.
-    // It handles name disambiguation and converts metadata to the final CandidateInfo format.
+    // --- Part 2: Filtering and Sorting ---
+
+    // A temporary structure to hold candidates that can open all files, along with their final score.
+    struct RankedCandidate {
+        MacCandidateTempInfo info;
+        int score;
+        bool operator<(const RankedCandidate& other) const {
+            if (score != other.score) return score > other.score;
+            return info.name < other.name;
+        }
+    };
+
+    std::vector<RankedCandidate> finalists;
+    const size_t num_files = pathnames.size();
+
+    // Filter the list, keeping only applications that can open every selected file.
+    for (const auto& [app_id, count] : app_occurrence_count) {
+        if (count == num_files) {
+            finalists.push_back({ all_apps_info.at(app_id), app_scores.at(app_id) });
+        }
+    }
+    
+    // Sort the finalists based on their score in descending order.
+    std::sort(finalists.begin(), finalists.end());
+
+    // --- Part 3: Final List Generation ---
 
     std::vector<CandidateInfo> result;
-    if (ordered_candidates.empty()) {
+    if (finalists.empty()) {
         return result;
     }
-    result.reserve(ordered_candidates.size());
+    result.reserve(finalists.size());
 
-    // Count name occurrences to identify duplicates.
+    // Count name occurrences to identify duplicates that need disambiguation.
     std::unordered_map<std::wstring, int> name_counts;
-    for (const auto& temp_info : ordered_candidates) {
-        name_counts[temp_info.name]++;
+    for (const auto& candidate : finalists) {
+        name_counts[candidate.info.name]++;
     }
 
-    // Build the final list.
-    for (const auto& temp_info : ordered_candidates) {
+    // Build the final list in the correct format.
+    for (const auto& candidate : finalists) {
         CandidateInfo final_c;
-        final_c.id = temp_info.id;
+        final_c.id = candidate.info.id;
         final_c.terminal = false;
-        final_c.name = temp_info.name;
+        final_c.name = candidate.info.name;
 
         // If an app name is duplicated, append its version string to make it unique in the UI.
-        if (name_counts[temp_info.name] > 1 && !temp_info.info.empty()) {
-            final_c.name += L" (" + temp_info.info + L")";
+        if (name_counts[candidate.info.name] > 1 && !candidate.info.info.empty()) {
+            final_c.name += L" (" + candidate.info.info + L")";
         }
         result.push_back(final_c);
     }
