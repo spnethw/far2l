@@ -101,18 +101,15 @@ void XDGBasedAppProvider::SetPlatformSettings(const std::vector<ProviderSetting>
 
 
 // Finds applications that can open all specified files.
-// It works by finding candidates for the first file, and then intersecting that
-// set with candidates for each subsequent file.
 std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vector<std::wstring>& pathnames)
 {
+	// Handle edge case of no input files.
 	if (pathnames.empty()) {
 		return {};
 	}
 
+	// Perform one-time setup to avoid redundant I/O and parsing in the loop.
 	AliasCacheManager cache_manager(*this);
-
-	// Step 1: One-time preparation. This data is constant for a single plugin invocation.
-	// This avoids re-reading and re-parsing the same system files for every input file.
 	_desktop_entry_cache.clear();
 	_last_candidates_source_info.clear();
 	auto desktop_paths = GetDesktopFileSearchPaths();
@@ -120,62 +117,104 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 	auto associations = ParseMimeappsLists(mimeapps_paths);
 	std::string current_desktop_env = _filter_by_show_in ? GetEnv("XDG_CURRENT_DESKTOP") : "";
 
-	// Step 2: Get candidates for the first file to establish a baseline.
-	auto base_candidates = GetCandidatesForSingleFile(pathnames[0], desktop_paths, associations, current_desktop_env);
-
-	// If there's only one file, we are done.
+	// The single-file case is handled separately as its logic is simpler
+	// and it requires preserving the specific source info for the details dialog.
 	if (pathnames.size() == 1) {
-		return base_candidates;
+		auto ranked_candidates = GetCandidatesForSingleFile(pathnames[0], desktop_paths, associations, current_desktop_env);
+		std::vector<CandidateInfo> result;
+		result.reserve(ranked_candidates.size());
+		for (const auto& ranked_candidate : ranked_candidates) {
+			CandidateInfo ci = ConvertDesktopEntryToCandidateInfo(*ranked_candidate.entry);
+			_last_candidates_source_info[ci.id] = ranked_candidate.source_info;
+			result.push_back(ci);
+		}
+		return result;
 	}
 
-	// Step 3: For multiple files, find the intersection of candidates.
-	// Use a set of candidate IDs for efficient lookup.
-	std::unordered_set<std::wstring> common_ids;
-	for (const auto& candidate : base_candidates) {
-		common_ids.insert(candidate.id);
+
+	// --- Iterative Filtering Logic for Multiple Files ---
+
+	// Step 1: Establish a baseline set of candidates from the first file.
+	auto candidates_for_first_file = GetCandidatesForSingleFile(pathnames[0], desktop_paths, associations, current_desktop_env);
+
+	// If no application can open the very first file, then no common application exists.
+	if (candidates_for_first_file.empty()) {
+		return {};
 	}
 
-	// Iterate through the rest of the files, refining the common_ids set.
+	// Step 2: Convert the baseline into a hash map for efficient lookups and modifications.
+	// The key (AppUniqueKey) identifies a logical application, while the value (RankedCandidate) holds its data.
+	std::unordered_map<AppUniqueKey, RankedCandidate, AppUniqueKeyHash> final_candidates;
+	final_candidates.reserve(candidates_for_first_file.size());
+	for (const auto& candidate : candidates_for_first_file) {
+		if (candidate.entry) {
+			final_candidates.try_emplace(AppUniqueKey{candidate.entry->name, candidate.entry->exec}, candidate);
+		}
+	}
+
+	// Step 3: Iteratively intersect the master candidate list with candidates from each subsequent file.
 	for (size_t i = 1; i < pathnames.size(); ++i) {
-		if (common_ids.empty()) {
-			break; // Optimization: no common apps left.
+		auto candidates_for_current_file = GetCandidatesForSingleFile(pathnames[i], desktop_paths, associations, current_desktop_env);
+
+		// For efficient intersection, create a lookup map of candidates for the current file.
+		// We store a pointer to the candidate to access its rank.
+		std::unordered_map<AppUniqueKey, const RankedCandidate*, AppUniqueKeyHash> current_file_candidates_map;
+		current_file_candidates_map.reserve(candidates_for_current_file.size());
+		for (const auto& candidate : candidates_for_current_file) {
+			if (candidate.entry) {
+				current_file_candidates_map.try_emplace(AppUniqueKey{candidate.entry->name, candidate.entry->exec}, &candidate);
+			}
 		}
 
-		auto next_candidates = GetCandidatesForSingleFile(pathnames[i], desktop_paths, associations, current_desktop_env);
-		std::unordered_set<std::wstring> next_ids;
-		for (const auto& candidate : next_candidates) {
-			next_ids.insert(candidate.id);
-		}
+		// Iterate through our master list (`final_candidates`) and remove any app that cannot handle the current file.
+		for (auto it = final_candidates.begin(); it != final_candidates.end(); ) {
+			auto find_it = current_file_candidates_map.find(it->first);
 
-		// Perform set intersection: remove IDs from common_ids that are not in next_ids.
-		for (auto it = common_ids.begin(); it != common_ids.end(); ) {
-			if (next_ids.find(*it) == next_ids.end()) {
-				it = common_ids.erase(it);
+			if (find_it == current_file_candidates_map.end()) {
+				// This app is not in the list for the current file, so remove it from the master list.
+				it = final_candidates.erase(it);
 			} else {
+				// The app is a valid candidate so far. Now, check if this file provides a better rank.
+				const RankedCandidate* current_candidate_ptr = find_it->second;
+				if (current_candidate_ptr->rank > it->second.rank) {
+					// Update the master entry with the higher rank to ensure the best association is preserved.
+					it->second.rank = current_candidate_ptr->rank;
+				}
 				++it;
 			}
 		}
-	}
 
-	// Step 4: Build the final result vector from the baseline candidates.
-	std::vector<CandidateInfo> result;
-	result.reserve(common_ids.size());
-	for (const auto& candidate : base_candidates) {
-		if (common_ids.count(candidate.id)) {
-			result.push_back(candidate);
+		// Early exit optimization: if at any point the common set becomes empty, we can stop processing.
+		if (final_candidates.empty()) {
+			return {};
 		}
 	}
 
-	// Source info is meaningless for multiple files with potentially different association sources.
-	_last_candidates_source_info.clear();
+	// Step 4: Convert the final filtered map into a vector for sorting.
+	std::vector<RankedCandidate> finalists;
+	finalists.reserve(final_candidates.size());
+	for (const auto& pair : final_candidates) {
+		finalists.push_back(pair.second);
+	}
 
+	// Sort the finalists based on their score (desc) and name (asc for stability).
+	std::sort(finalists.begin(), finalists.end());
+
+	// Step 5: Build the final list in the format required by the UI.
+	std::vector<CandidateInfo> result;
+	result.reserve(finalists.size());
+	for (const auto& finalist : finalists) {
+		result.push_back(ConvertDesktopEntryToCandidateInfo(*finalist.entry));
+	}
+
+	// Source info is ambiguous for multiple files and was already cleared at the beginning.
 	return result;
 }
 
 
 // Finds candidate applications for a single file using pre-fetched system configuration data.
 // This is the core logic that is called iteratively by GetAppCandidates.
-std::vector<CandidateInfo> XDGBasedAppProvider::GetCandidatesForSingleFile(
+std::vector<XDGBasedAppProvider::RankedCandidate> XDGBasedAppProvider::GetCandidatesForSingleFile(
 	const std::wstring& pathname,
 	const std::vector<std::string>& desktop_paths,
 	const MimeAssociation& associations,
@@ -188,6 +227,7 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetCandidatesForSingleFile(
 
 	// Check for a global default app using 'xdg-mime query default'.
 	std::string global_default_app = GetDefaultApp(prioritized_mimes.empty() ? "" : prioritized_mimes[0]);
+
 	if (!global_default_app.empty()) {
 		const auto& mime_for_default = prioritized_mimes[0];
 		if (!IsAssociationRemoved(context.associations,mime_for_default,global_default_app)) {
@@ -224,16 +264,7 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetCandidatesForSingleFile(
 	}
 	std::sort(sorted_candidates.begin(), sorted_candidates.end());
 
-	// Convert ranked candidates to the final format.
-	std::vector<CandidateInfo> result;
-	result.reserve(sorted_candidates.size());
-	for (const auto& ranked_candidate : sorted_candidates) {
-		CandidateInfo ci = ConvertDesktopEntryToCandidateInfo(*ranked_candidate.entry);
-		_last_candidates_source_info[ci.id] = ranked_candidate.source_info;
-		result.push_back(ci);
-	}
-
-	return result;
+	return sorted_candidates;
 }
 
 

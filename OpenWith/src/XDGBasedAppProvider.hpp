@@ -148,7 +148,9 @@ private:
 	};
 
 	// Searching and ranking candidates logic
-	std::vector<CandidateInfo> GetCandidatesForSingleFile(const std::wstring& pathname, const std::vector<std::string>& desktop_paths, const MimeAssociation& associations, const std::string& current_desktop_env);
+
+
+	std::vector<RankedCandidate> GetCandidatesForSingleFile(const std::wstring& pathname, const std::vector<std::string>& desktop_paths, const MimeAssociation& associations, const std::string& current_desktop_env);
 	void FindCandidatesFromMimeLists(CandidateSearchContext& context);
 	void FindCandidatesFromCache(CandidateSearchContext& context, const std::unordered_map<std::string, std::vector<MimeAssociation::AssociationSource>>& mime_cache);
 	void FindCandidatesByFullScan(CandidateSearchContext& context);
