@@ -184,7 +184,7 @@ std::vector<CandidateInfo> MacOSAppProvider::GetAppCandidates(const std::vector<
         int score;
         bool operator<(const RankedCandidate& other) const {
             if (score != other.score) return score > other.score;
-            return info.name < other.name;
+            return info.name < other.info.name;
         }
     };
 
