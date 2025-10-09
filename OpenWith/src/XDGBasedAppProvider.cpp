@@ -179,6 +179,7 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 				if (current_candidate_ptr->rank > it->second.rank) {
 					// Update the master entry with the higher rank to ensure the best association is preserved.
 					it->second.rank = current_candidate_ptr->rank;
+					// it->second.source_info = current_candidate_ptr->source_info;
 				}
 				++it;
 			}
