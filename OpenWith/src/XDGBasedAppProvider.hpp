@@ -11,6 +11,7 @@
 #include <unordered_set>
 #include <vector>
 #include <map>
+#include <tuple>
 
 
 // Represents the parsed data from a .desktop file, according to the XDG specification.
@@ -48,6 +49,36 @@ public:
 	void SavePlatformSettings() override;
 
 private:
+
+	// Represents the "raw" MIME profile of a file, derived from all available
+	// detection tools before any expansion (like parent lookups or alias resolution).
+	// This struct is used as a key to group files of the identical type.
+	struct RawMimeSet
+	{
+		std::string xdg_mime;  // Result from xdg-mime query filetype
+		std::string file_mime; // Result from file --mime-type
+		std::string ext_mime;  // Result from internal extension fallback map
+		bool is_dir = false;      // True if the path is a directory
+		bool is_readable_file = false; // True if the path is a readable file/symlink
+
+		// operator< is required for std::map keys
+		bool operator<(const RawMimeSet& other) const
+		{
+			// std::tie creates a tuple of references and compares them lexicographically
+			return std::tie(xdg_mime, file_mime, ext_mime, is_dir, is_readable_file) <
+				   std::tie(other.xdg_mime, other.file_mime, other.ext_mime, other.is_dir, other.is_readable_file);
+		}
+
+		// operator== is required for the optimization in GetAppCandidates
+		bool operator==(const RawMimeSet& other) const
+		{
+			return xdg_mime == other.xdg_mime &&
+				   file_mime == other.file_mime &&
+				   ext_mime == other.ext_mime &&
+				   is_dir == other.is_dir &&
+				   is_readable_file == other.is_readable_file;
+		}
+	};
 
 	// Constants for the tiered ranking system.
 	struct Ranking
@@ -149,18 +180,21 @@ private:
 
 	// Searching and ranking candidates logic
 
+	RawMimeSet GetRawMimeSet(const std::string& pathname_mb);
+	std::vector<RankedCandidate> FindCandidatesForMimeList(const std::vector<std::string>& prioritized_mimes, const std::vector<std::string>& desktop_paths, const MimeAssociation& associations, const std::string& current_desktop_env, const std::unordered_map<std::string, std::vector<MimeAssociation::AssociationSource>>& mime_cache, const std::unordered_map<std::string, std::vector<const DesktopEntry*>>& mime_index);
 
-	std::vector<RankedCandidate> GetCandidatesForSingleFile(const std::wstring& pathname, const std::vector<std::string>& desktop_paths, const MimeAssociation& associations, const std::string& current_desktop_env);
 	void FindCandidatesFromMimeLists(CandidateSearchContext& context);
 	void FindCandidatesFromCache(CandidateSearchContext& context, const std::unordered_map<std::string, std::vector<MimeAssociation::AssociationSource>>& mime_cache);
-	void FindCandidatesByFullScan(CandidateSearchContext& context);
+	void FindCandidatesByFullScan(CandidateSearchContext& context, const std::unordered_map<std::string, std::vector<const DesktopEntry*>>& mime_index);
 	void ValidateAndRegisterCandidate(CandidateSearchContext& context, const std::string& app_desktop_file, int rank, const std::string& source_info);
 	void AddOrUpdateCandidate(CandidateSearchContext& context, const DesktopEntry& entry, int rank, const std::string& source_info);
 	static bool IsAssociationRemoved(const MimeAssociation& associations, const std::string& mime_type, const std::string& app_desktop_file);
 	void SortFinalCandidates(std::vector<RankedCandidate>& candidates) const;
 
 	// MIME types detection
-	std::vector<std::string> CollectAndPrioritizeMimeTypes(const std::string& pathname);
+	void ParseAllMimeinfoCacheFiles(const std::vector<std::string>& search_paths, std::unordered_map<std::string, std::vector<MimeAssociation::AssociationSource>>& mime_cache);
+	void BuildReverseMimeIndex(const std::vector<std::string>& search_paths, std::unordered_map<std::string, std::vector<const DesktopEntry*>>& index);
+	std::vector<std::string> ExpandAndPrioritizeMimeTypes(const RawMimeSet& raw_set, const std::optional<std::unordered_map<std::string, std::vector<std::string>>>& canonical_to_aliases_map);
 	std::string MimeTypeFromXdgMimeTool(const std::string& escaped_pathname);
 	std::string MimeTypeFromFileTool(const std::string& escaped_pathname);
 	std::string MimeTypeByExtension(const std::string& escaped_pathname);
