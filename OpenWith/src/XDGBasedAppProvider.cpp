@@ -158,7 +158,7 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 
 	// Holds the K unique RawMimeSet profiles found across all N files.
 	// Used in Step 3 to iterate K times.
-	std::set<RawMimeSet> unique_profiles;
+	std::unordered_set<RawMimeSet, RawMimeSet::Hash> unique_profiles;
 
 
 	for (const auto& w_pathname : pathnames) {
@@ -179,7 +179,7 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 	// This cache holds the expensive results.
 	// Key: The unique RawMimeSet profile.
 	// Value: The list of candidates for that profile.
-	std::map<RawMimeSet, std::vector<RankedCandidate>> candidate_cache;
+	std::unordered_map<RawMimeSet, std::vector<RankedCandidate>, RawMimeSet::Hash> candidate_cache;
 
 	for (const auto& raw_set : unique_profiles) {
 		// We call K times, using the pre-calculated profile.

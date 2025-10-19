@@ -61,14 +61,6 @@ private:
 		bool is_dir = false;      // True if the path is a directory
 		bool is_readable_file = false; // True if the path is a readable file/symlink
 
-		// operator< is required for std::map keys
-		bool operator<(const RawMimeSet& other) const
-		{
-			// std::tie creates a tuple of references and compares them lexicographically
-			return std::tie(xdg_mime, file_mime, ext_mime, is_dir, is_readable_file) <
-				   std::tie(other.xdg_mime, other.file_mime, other.ext_mime, other.is_dir, other.is_readable_file);
-		}
-
 		// operator== is required for the optimization in GetAppCandidates
 		bool operator==(const RawMimeSet& other) const
 		{
@@ -78,6 +70,26 @@ private:
 				   is_dir == other.is_dir &&
 				   is_readable_file == other.is_readable_file;
 		}
+
+		struct Hash
+		{
+			std::size_t operator()(const RawMimeSet& s) const noexcept
+			{
+				std::size_t h1 = std::hash<std::string>{}(s.xdg_mime);
+				std::size_t h2 = std::hash<std::string>{}(s.file_mime);
+				std::size_t h3 = std::hash<std::string>{}(s.ext_mime);
+				std::size_t h4 = std::hash<bool>{}(s.is_dir);
+				std::size_t h5 = std::hash<bool>{}(s.is_readable_file);
+
+				std::size_t seed = h1;
+				seed ^= h2 + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+				seed ^= h3 + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+				seed ^= h4 + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+				seed ^= h5 + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+				return seed;
+			}
+		};
+
 	};
 
 	// Constants for the tiered ranking system.
