@@ -175,7 +175,7 @@ private:
 	// MIME types detection
 	void ParseAllMimeinfoCacheFiles(const std::vector<std::string>& search_paths, std::unordered_map<std::string, std::vector<MimeAssociation::AssociationSource>>& mime_cache);
 	void BuildReverseMimeIndex(const std::vector<std::string>& search_paths, std::unordered_map<std::string, std::vector<const DesktopEntry*>>& index);
-	std::vector<std::string> ExpandAndPrioritizeMimeTypes(const RawMimeSet& raw_set, const std::optional<std::unordered_map<std::string, std::vector<std::string>>>& canonical_to_aliases_map);
+	std::vector<std::string> ExpandAndPrioritizeMimeTypes(const RawMimeSet& raw_set);
 	std::string MimeTypeFromXdgMimeTool(const std::string& escaped_pathname);
 	std::string MimeTypeFromFileTool(const std::string& escaped_pathname);
 	std::string MimeTypeByExtension(const std::string& escaped_pathname);
@@ -184,7 +184,7 @@ private:
 	static std::unordered_map<std::string, std::string> LoadMimeSubclasses();
 
 	// Parsing XDG files and data
-	/*static*/ const std::optional<DesktopEntry>& GetCachedDesktopEntry(const std::string& desktop_file);
+	const std::optional<DesktopEntry>& GetCachedDesktopEntry(const std::string& desktop_file);
 	static std::optional<DesktopEntry> ParseDesktopFile(const std::string& path);
 	static void ParseMimeappsList(const std::string& path, MimeAssociation& associations);
 	static MimeAssociation ParseMimeappsLists(const std::vector<std::string>& paths);

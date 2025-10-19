@@ -128,7 +128,7 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 		RawMimeSet raw_set = GetRawMimeSet(StrWide2MB(pathnames[0]));
 
 		// Expand the profile into a prioritized list, passing the pre-built alias map.
-		auto prioritized_mimes = ExpandAndPrioritizeMimeTypes(raw_set, _op_canonical_to_aliases_map);
+		auto prioritized_mimes = ExpandAndPrioritizeMimeTypes(raw_set);
 
 		// Find candidates using the new simplified function signature.
 		// It will use the _op_... caches populated by the OperationContext.
@@ -186,7 +186,7 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 
 		// 1. Expand the raw profile into a full list of prioritized MIME types,
 		// passing the pre-built alias map.
-		auto prioritized_mimes = ExpandAndPrioritizeMimeTypes(raw_set, _op_canonical_to_aliases_map);
+		auto prioritized_mimes = ExpandAndPrioritizeMimeTypes(raw_set);
 
 		// 2. Find candidates using that list and the pre-built caches/indexes.
 		// The simplified signature uses the state stored in 'this'.
@@ -800,25 +800,25 @@ void XDGBasedAppProvider::SortFinalCandidates(std::vector<RankedCandidate>& cand
 
 
 // Gathers the "raw" MIME types from all enabled detection methods for a single file.
-XDGBasedAppProvider::RawMimeSet XDGBasedAppProvider::GetRawMimeSet(const std::string& pathname_mb)
+XDGBasedAppProvider::RawMimeSet XDGBasedAppProvider::GetRawMimeSet(const std::string& pathname)
 {
 	RawMimeSet raw_set;
 
-	raw_set.is_readable_file = IsReadableFile(pathname_mb);
+	raw_set.is_readable_file = IsReadableFile(pathname);
 
 	if (!raw_set.is_readable_file) {
-		raw_set.is_dir = IsValidDir(pathname_mb);
+		raw_set.is_dir = IsValidDir(pathname);
 	}
 
 	// Only run detection tools if the path is a file or directory
 	if (raw_set.is_dir || raw_set.is_readable_file)
 	{
-		raw_set.xdg_mime = MimeTypeFromXdgMimeTool(pathname_mb);
-		raw_set.file_mime = MimeTypeFromFileTool(pathname_mb);
+		raw_set.xdg_mime = MimeTypeFromXdgMimeTool(pathname);
+		raw_set.file_mime = MimeTypeFromFileTool(pathname);
 
 		// Extension fallback only makes sense for files
 		if (raw_set.is_readable_file) {
-			raw_set.ext_mime = MimeTypeByExtension(pathname_mb);
+			raw_set.ext_mime = MimeTypeByExtension(pathname);
 		}
 	}
 
@@ -879,7 +879,7 @@ void XDGBasedAppProvider::BuildReverseMimeIndex(const std::vector<std::string>& 
 
 
 // Expands and prioritizes MIME types for a file using multiple detection methods.
-std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const RawMimeSet& raw_set, const std::optional<std::unordered_map<std::string, std::vector<std::string>>>& canonical_to_aliases_map)
+std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const RawMimeSet& raw_set)
 {
 	std::vector<std::string> mime_types;
 	std::unordered_set<std::string> seen;
@@ -920,9 +920,9 @@ std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const
 					}
 
 					// --- Smart reverse lookup (canonical -> alias) using the pre-built map ---
-					if (canonical_to_aliases_map.has_value()) {
-						auto it_aliases = canonical_to_aliases_map->find(current_mime);
-						if (it_aliases != canonical_to_aliases_map->end()) {
+					if (_op_canonical_to_aliases_map.has_value()) {
+						auto it_aliases = _op_canonical_to_aliases_map->find(current_mime);
+						if (it_aliases != _op_canonical_to_aliases_map->end()) {
 							size_t canonical_slash_pos = current_mime.find('/');
 							if (canonical_slash_pos != std::string::npos) {
 								std::string_view canonical_major_type(current_mime.data(), canonical_slash_pos);
