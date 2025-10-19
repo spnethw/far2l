@@ -158,36 +158,17 @@ private:
 		}
 	};
 
-	// A "parameter object" that bundles all the state needed for a single app search operation.
-	// This avoids passing many individual arguments between internal helper functions.
-	struct CandidateSearchContext
-	{
-		// Stores unique candidates to avoid duplicates in the final list.
-		// The key distinguishes different applications that might have the same name.
-		std::unordered_map<AppUniqueKey, RankedCandidate, AppUniqueKeyHash> unique_candidates;
-		const std::vector<std::string>& prioritized_mimes;
-		const MimeAssociation& associations;
-		const std::vector<std::string>& desktop_paths;
-		const std::string& current_desktop_env;
-
-		CandidateSearchContext(
-			const std::vector<std::string>& mimes,
-			const MimeAssociation& assocs,
-			const std::vector<std::string>& paths,
-			const std::string& env)
-			: prioritized_mimes(mimes), associations(assocs), desktop_paths(paths), current_desktop_env(env) {}
-	};
-
 	// Searching and ranking candidates logic
 
 	RawMimeSet GetRawMimeSet(const std::string& pathname_mb);
-	std::vector<RankedCandidate> FindCandidatesForMimeList(const std::vector<std::string>& prioritized_mimes, const std::vector<std::string>& desktop_paths, const MimeAssociation& associations, const std::string& current_desktop_env, const std::unordered_map<std::string, std::vector<MimeAssociation::AssociationSource>>& mime_cache, const std::unordered_map<std::string, std::vector<const DesktopEntry*>>& mime_index);
+	std::vector<RankedCandidate> FindCandidatesForMimeList(const std::vector<std::string>& prioritized_mimes);
 
-	void FindCandidatesFromMimeLists(CandidateSearchContext& context);
-	void FindCandidatesFromCache(CandidateSearchContext& context, const std::unordered_map<std::string, std::vector<MimeAssociation::AssociationSource>>& mime_cache);
-	void FindCandidatesByFullScan(CandidateSearchContext& context, const std::unordered_map<std::string, std::vector<const DesktopEntry*>>& mime_index);
-	void ValidateAndRegisterCandidate(CandidateSearchContext& context, const std::string& app_desktop_file, int rank, const std::string& source_info);
-	void AddOrUpdateCandidate(CandidateSearchContext& context, const DesktopEntry& entry, int rank, const std::string& source_info);
+	void FindCandidatesFromMimeLists(const std::vector<std::string>& prioritized_mimes, std::unordered_map<AppUniqueKey, RankedCandidate, AppUniqueKeyHash>& unique_candidates);
+	void FindCandidatesFromCache(const std::vector<std::string>& prioritized_mimes, std::unordered_map<AppUniqueKey, RankedCandidate, AppUniqueKeyHash>& unique_candidates);
+	void FindCandidatesByFullScan(const std::vector<std::string>& prioritized_mimes, std::unordered_map<AppUniqueKey, RankedCandidate, AppUniqueKeyHash>& unique_candidates);
+	void RegisterCandidate(std::unordered_map<AppUniqueKey, RankedCandidate, AppUniqueKeyHash>& unique_candidates, const DesktopEntry& entry, int rank, const std::string& source_info);
+	void ValidateAndRegisterCandidate(std::unordered_map<AppUniqueKey, RankedCandidate, AppUniqueKeyHash>& unique_candidates, const std::string& app_desktop_file, int rank, const std::string& source_info);
+	void AddOrUpdateCandidate(std::unordered_map<AppUniqueKey, RankedCandidate, AppUniqueKeyHash>& unique_candidates, const DesktopEntry& entry, int rank, const std::string& source_info);
 	static bool IsAssociationRemoved(const MimeAssociation& associations, const std::string& mime_type, const std::string& app_desktop_file);
 	void SortFinalCandidates(std::vector<RankedCandidate>& candidates) const;
 
@@ -203,7 +184,7 @@ private:
 	static std::unordered_map<std::string, std::string> LoadMimeSubclasses();
 
 	// Parsing XDG files and data
-	static const std::optional<DesktopEntry>& GetCachedDesktopEntry(const std::string& desktop_file, const std::vector<std::string>& search_paths, std::map<std::string, std::optional<DesktopEntry>>& cache);
+	/*static*/ const std::optional<DesktopEntry>& GetCachedDesktopEntry(const std::string& desktop_file);
 	static std::optional<DesktopEntry> ParseDesktopFile(const std::string& path);
 	static void ParseMimeappsList(const std::string& path, MimeAssociation& associations);
 	static MimeAssociation ParseMimeappsLists(const std::vector<std::string>& paths);
@@ -270,28 +251,32 @@ private:
 	// A pre-calculated lookup map for efficient updates in SetPlatformSettings.
 	std::map<std::wstring, bool XDGBasedAppProvider::*> _key_to_member_map;
 
-	// RAII helper to manage the lifecycle of operation-scoped MIME caches.
-	struct XdgMimeCacheManager {
+
+	// These fields are managed by the OperationContext RAII helper.
+	// They are populated once at the start of GetAppCandidates and cleared at the end.
+
+	std::optional<std::unordered_map<std::string, std::string>> _op_aliases;
+	std::optional<std::unordered_map<std::string, std::string>> _op_subclasses;
+	std::optional<std::unordered_map<std::string, std::vector<std::string>>> _op_canonical_to_aliases_map;
+
+	std::optional<MimeAssociation> _op_associations;
+	std::optional<std::vector<std::string>> _op_desktop_paths;
+	std::optional<std::string> _op_current_desktop_env;
+
+	// One of the following two caches will be populated based on settings.
+	std::optional<std::unordered_map<std::string, std::vector<MimeAssociation::AssociationSource>>> _op_mime_cache;
+	std::optional<std::unordered_map<std::string, std::vector<const DesktopEntry*>>> _op_mime_index;
+
+
+	// RAII helper to manage the lifecycle of the operation-scoped state.
+	struct OperationContext
+	{
 		XDGBasedAppProvider& provider;
-		XdgMimeCacheManager(XDGBasedAppProvider& p) : provider(p) {
-			if (provider._load_mimetype_aliases) {
-				provider._operation_scoped_aliases = provider.LoadMimeAliases();
-			}
-			if (provider._load_mimetype_subclasses) {
-				provider._operation_scoped_subclasses = provider.LoadMimeSubclasses();
-			}
-		}
-		~XdgMimeCacheManager() {
-			provider._operation_scoped_aliases.reset();
-			provider._operation_scoped_subclasses.reset();
-		}
+		OperationContext(XDGBasedAppProvider& p);
+		~OperationContext();
 	};
+	friend struct OperationContext;
 
-	// A cache for MIME type aliases, scoped to a single GetAppCandidates call.
-	std::optional<std::unordered_map<std::string, std::string>> _operation_scoped_aliases;
-
-	// A cache for the MIME subclass hierarchy, scoped to a single GetAppCandidates call.
-	std::optional<std::unordered_map<std::string, std::string>> _operation_scoped_subclasses;
 };
 
 #endif
