@@ -50,18 +50,16 @@ public:
 
 private:
 
-	// Represents the "raw" MIME profile of a file, derived from all available
-	// detection tools before any expansion (like parent lookups or alias resolution).
+	// Represents the "raw" MIME profile of a file, derived from all available detection tools before any expansion
 	// This struct is used as a key to group files of the identical type.
 	struct RawMimeSet
 	{
-		std::string xdg_mime;  // Result from xdg-mime query filetype
-		std::string file_mime; // Result from file --mime-type
-		std::string ext_mime;  // Result from internal extension fallback map
-		bool is_dir = false;      // True if the path is a directory
-		bool is_readable_file = false; // True if the path is a readable file/symlink
+		std::string xdg_mime;  // result from xdg-mime query filetype
+		std::string file_mime; // result from file --mime-type
+		std::string ext_mime;  // result from internal extension fallback map
+		bool is_dir = false;
+		bool is_readable_file = false;
 
-		// operator== is required for the optimization in GetAppCandidates
 		bool operator==(const RawMimeSet& other) const
 		{
 			return xdg_mime == other.xdg_mime &&
@@ -91,6 +89,7 @@ private:
 		};
 
 	};
+
 
 	// Constants for the tiered ranking system.
 	struct Ranking

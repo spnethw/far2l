@@ -129,9 +129,6 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 
 		// Expand the profile into a prioritized list, passing the pre-built alias map.
 		auto prioritized_mimes = ExpandAndPrioritizeMimeTypes(raw_set);
-
-		// Find candidates using the new simplified function signature.
-		// It will use the _op_... caches populated by the OperationContext.
 		auto ranked_candidates = FindCandidatesForMimeList(prioritized_mimes);
 
 		std::vector<CandidateInfo> result;
@@ -146,7 +143,7 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 	}
 
 
-	// --- Refactored Caching Logic for Multiple Files ---
+	// --- Logic for Multiple Files ---
 
 	// Step 2: Group N files into K unique "MIME profiles".
 	// This is the "slow" part with N external calls.
@@ -687,7 +684,6 @@ void XDGBasedAppProvider::ValidateAndRegisterCandidate(std::unordered_map<AppUni
 	if (app_desktop_file.empty()) return;
 
 	// Retrieve the full DesktopEntry, either from cache or by parsing it.
-	// Uses the new simplified signature for GetCachedDesktopEntry.
 	const auto& entry_opt = GetCachedDesktopEntry(app_desktop_file);
 	if (!entry_opt) {
 		return;
@@ -826,9 +822,7 @@ XDGBasedAppProvider::RawMimeSet XDGBasedAppProvider::GetRawMimeSet(const std::st
 }
 
 
-// NEW HELPER FUNCTION
-// (Optimization A) Parses all mimeinfo.cache files found in the XDG search paths
-// into a single map, avoiding repeated file I/O.
+// Parses all mimeinfo.cache files found in the XDG search paths into a single map, avoiding repeated file I/O.
 void XDGBasedAppProvider::ParseAllMimeinfoCacheFiles(const std::vector<std::string>& search_paths, std::unordered_map<std::string, std::vector<MimeAssociation::AssociationSource>>& mime_cache)
 {
 	for (const auto& dir : search_paths) {
@@ -855,7 +849,6 @@ void XDGBasedAppProvider::BuildReverseMimeIndex(const std::vector<std::string>& 
 				continue;
 			}
 
-			// Get the DesktopEntry using the new simplified signature.
 			// This will use the operation-scoped desktop paths and the class-level desktop entry cache.
 			const auto& desktop_entry_opt = GetCachedDesktopEntry(filename);
 			if (!desktop_entry_opt.has_value()) {
@@ -878,7 +871,7 @@ void XDGBasedAppProvider::BuildReverseMimeIndex(const std::vector<std::string>& 
 }
 
 
-// Expands and prioritizes MIME types for a file using multiple detection methods.
+// Expands and prioritizes MIME types for a file using multiple methods.
 std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const RawMimeSet& raw_set)
 {
 	std::vector<std::string> mime_types;
@@ -894,17 +887,17 @@ std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const
 
 	// Use the pre-calculated boolean flags from the RawMimeSet
 	if (raw_set.is_dir || raw_set.is_readable_file) {
+
 		// --- Step 1: Initial, most specific MIME type detection ---
 		// Use the pre-detected types from the RawMimeSet
 		add_unique(raw_set.xdg_mime);
 		add_unique(raw_set.file_mime);
-		add_unique(raw_set.ext_mime); // This will be empty if it was a directory
+		add_unique(raw_set.ext_mime); // this will be empty if it was a directory
 
 		// --- Step 2: Iteratively expand the MIME type list with parents and aliases ---
 		// Access the operation-scoped alias and subclass maps
-		if (_op_subclasses || _op_aliases)
-		{
-			// (Optimization C) The reverse alias map is now pre-built and passed in.
+		if (_op_subclasses || _op_aliases) {
+			// The reverse alias map is now pre-built and passed in.
 			// The loop iterates over the vector as it grows.
 			for (size_t i = 0; i < mime_types.size(); ++i) {
 				const std::string current_mime = mime_types[i];
@@ -920,17 +913,24 @@ std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const
 					}
 
 					// --- Smart reverse lookup (canonical -> alias) using the pre-built map ---
+					// Find aliases for the current canonical MIME type, but filter them to avoid incorrect associations (e.g., image/* -> text/*).
+
 					if (_op_canonical_to_aliases_map.has_value()) {
 						auto it_aliases = _op_canonical_to_aliases_map->find(current_mime);
 						if (it_aliases != _op_canonical_to_aliases_map->end()) {
 							size_t canonical_slash_pos = current_mime.find('/');
+							// Proceed only if the canonical MIME type has a valid format (e.g., "type/subtype").
 							if (canonical_slash_pos != std::string::npos) {
+								// Use string_view to avoid memory allocations from substr().
 								std::string_view canonical_major_type(current_mime.data(), canonical_slash_pos);
 
 								for (const auto& alias : it_aliases->second) {
 									size_t alias_slash_pos = alias.find('/');
 									if (alias_slash_pos != std::string::npos) {
 										std::string_view alias_major_type(alias.data(), alias_slash_pos);
+										// Add the alias ONLY if its major type matches the canonical one.
+										// This prevents adding, for example, "text/ico" for "image/vnd.microsoft.icon",
+										// but allows adding "image/x-icon".
 										if (alias_major_type == canonical_major_type) {
 											add_unique(alias);
 										}
@@ -942,7 +942,7 @@ std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const
 				}
 
 				// Expansion B: Add parent from subclass hierarchy.
-				if (_op_subclasses) { // Use the operation-scoped field
+				if (_op_subclasses) {
 					auto it = _op_subclasses->find(current_mime);
 					if (it != _op_subclasses->end()) {
 						add_unique(it->second);
@@ -953,6 +953,8 @@ std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const
 
 		if (_resolve_structured_suffixes) {
 			// --- Step 3: Add base types for structured syntaxes (e.g., +xml, +zip) ---
+			// This is a reliable fallback that works even if the subclass hierarchy is incomplete in the system's MIME database.
+
 			static const std::map<std::string, std::string> suffix_to_base_mime = {
 				{"xml", "application/xml"},
 				{"zip", "application/zip"},
@@ -977,9 +979,11 @@ std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const
 			// --- Step 4: Add generic fallback MIME types ---
 			auto obtained_types_before_fallback = mime_types;
 			for (const auto& mime : obtained_types_before_fallback) {
+				// text/plain is a safe fallback for any text/* type.
 				if (mime.rfind("text/", 0) == 0) {
 					add_unique("text/plain");
 				}
+				// Add wildcard for the major type (e.g., image/jpeg -> image/*)
 				size_t slash_pos = mime.find('/');
 				if (slash_pos != std::string::npos) {
 					add_unique(mime.substr(0, slash_pos) + "/*");
