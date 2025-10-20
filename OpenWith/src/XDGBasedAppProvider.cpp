@@ -49,14 +49,12 @@ XDGBasedAppProvider::XDGBasedAppProvider(TMsgGetter msg_getter) : AppProvider(st
 		{ "SortAlphabetically", MSortAlphabetically, &XDGBasedAppProvider::_sort_alphabetically, false }
 	};
 
-	// Pre-calculate the lookup map for SetPlatformSettings.
 	for (const auto& def : _platform_settings_definitions) {
 		_key_to_member_map[StrMB2Wide(def.key)] = def.member_variable;
 	}
 }
 
 
-// Loads all settings from the INI file based on their definitions.
 void XDGBasedAppProvider::LoadPlatformSettings()
 {
 	KeyFileReadSection key_file_reader(INI_LOCATION_LINUX, INI_SECTION_LINUX);
@@ -66,7 +64,6 @@ void XDGBasedAppProvider::LoadPlatformSettings()
 }
 
 
-// Saves all settings to the INI file based on their definitions.
 void XDGBasedAppProvider::SavePlatformSettings()
 {
 	KeyFileHelper key_file_helper(INI_LOCATION_LINUX);
@@ -77,7 +74,6 @@ void XDGBasedAppProvider::SavePlatformSettings()
 }
 
 
-// Constructs a vector of UI-ready ProviderSetting objects from current values.
 std::vector<ProviderSetting> XDGBasedAppProvider::GetPlatformSettings()
 {
 	std::vector<ProviderSetting> settings;
@@ -93,8 +89,6 @@ std::vector<ProviderSetting> XDGBasedAppProvider::GetPlatformSettings()
 }
 
 
-// Updates internal setting values from a vector of ProviderSetting objects
-// using the pre-calculated lookup map for O(log N) performance.
 void XDGBasedAppProvider::SetPlatformSettings(const std::vector<ProviderSetting>& settings)
 {
 	for (const auto& s : settings) {
@@ -109,28 +103,21 @@ void XDGBasedAppProvider::SetPlatformSettings(const std::vector<ProviderSetting>
 // Finds applications that can open all specified files.
 std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vector<std::wstring>& pathnames)
 {
-	// Handle edge case of no input files.
 	if (pathnames.empty()) {
 		return {};
 	}
 
-	// --- Step 1: Initialize all operation-scoped state ---
-	// This RAII object populates all _op_... fields (caches, paths, associations)
-	// and clears them when GetAppCandidates exits.
+	// Initialize all operation-scoped state
 	_desktop_entry_cache.clear();
 	_last_candidates_source_info.clear();
 	OperationContext op_context(*this);
 
-
-	// --- Step 1a: Handle the simple single-file case ---
+	// --- Case 1: Handle the simple single-file ---
 	if (pathnames.size() == 1) {
-		// Get the raw MIME profile for the single file.
-		RawMimeSet raw_set = GetRawMimeSet(StrWide2MB(pathnames[0]));
 
-		// Expand the profile into a prioritized list, using the pre-built _op_... maps.
-		auto prioritized_mimes = ExpandAndPrioritizeMimeTypes(raw_set);
-		// Find candidates for this list, using the pre-built _op_... caches/indexes.
-		auto ranked_candidates = ResolveCandidatesForMimeProfile(prioritized_mimes);
+		RawMimeSet raw_mime_set = GetRawMimeSet(StrWide2MB(pathnames[0]));
+		auto prioritized_mimes = ExpandAndPrioritizeMimeTypes(raw_mime_set);
+		auto ranked_candidates = ResolveCandidatesForExpandedMimeProfile(prioritized_mimes);
 
 		std::vector<CandidateInfo> result;
 		result.reserve(ranked_candidates.size());
@@ -143,57 +130,41 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 		return result;
 	}
 
+	// --- Case 2: Logic for Multiple Files ---
 
-	// --- Logic for Multiple Files ---
-
-	// Step 2: Group N files into K unique "MIME profiles".
+	// Step 1: Group N files into K unique "MIME profiles".
 	// This is the "slow" part with N external calls (xdg-mime, file).
 
 	// Maps every pathname to its calculated RawMimeSet.
-	// Used in Step 4 for O(1) profile lookup per file.
 	std::unordered_map<std::wstring, RawMimeSet> path_to_profile;
-	path_to_profile.reserve(pathnames.size()); // Pre-allocate buckets
+	path_to_profile.reserve(pathnames.size());
 
 	// Holds the K unique RawMimeSet profiles found across all N files.
-	// Used in Step 3 to iterate K times.
 	std::unordered_set<RawMimeSet, RawMimeSet::Hash> unique_profiles;
 
-
 	for (const auto& w_pathname : pathnames) {
-		std::string path_mb = StrWide2MB(w_pathname);
-		RawMimeSet raw_set = GetRawMimeSet(path_mb); // N calls to external tools
+		RawMimeSet raw_mime_set = GetRawMimeSet(StrWide2MB(w_pathname)); // N calls to external tools
 
 		// Map this path to its profile.
-		path_to_profile.try_emplace(w_pathname, raw_set);
+		path_to_profile.try_emplace(w_pathname, raw_mime_set);
 
 		// Add the profile to the set of unique profiles.
-		// std::unordered_set::insert will automatically handle duplicates.
-		unique_profiles.insert(raw_set);
+		unique_profiles.insert(raw_mime_set);
 	}
 
-	// Step 3: Gather candidates K times, not N times.
-	// (K = unique_profiles.size())
+	// Step 2: Gather candidates K times, not N times. (K = unique_profiles.size())
 
-	// This cache holds the expensive results.
-	// Key: The unique RawMimeSet profile.
-	// Value: The list of candidates for that profile.
+	// This cache holds the expensive results: unique RawMimeSet profile -> list of candidates for it
 	std::unordered_map<RawMimeSet, std::vector<RankedCandidate>, RawMimeSet::Hash> candidate_cache;
 
-	for (const auto& raw_set : unique_profiles) {
-		// We call K times, using the pre-calculated profile.
-
-		// 1. Expand the raw profile into a full list of prioritized MIME types,
-		// using the pre-built _op_... maps.
-		auto prioritized_mimes = ExpandAndPrioritizeMimeTypes(raw_set);
-
-		// 2. Find candidates using that list and the pre-built caches/indexes.
-		// Find candidates for this profile; this uses the pre-built _op_... caches/indexes.
-		candidate_cache[raw_set] = ResolveCandidatesForMimeProfile(prioritized_mimes);
+	for (const auto& raw_mime_set : unique_profiles) {
+		auto prioritized_mimes = ExpandAndPrioritizeMimeTypes(raw_mime_set);
+		candidate_cache[raw_mime_set] = ResolveCandidatesForExpandedMimeProfile(prioritized_mimes);
 	}
 
-	// Step 4: Iterative Intersection using the K-sized cache.
+	// Step 3: Iterative Intersection using the K-sized cache.
 
-	// Step 4a: Establish a baseline set from the *first* file's profile.
+	// Step 3a: Establish a baseline set from the *first* file's profile.
 	// We can safely use operator[] as pathnames[0] is guaranteed to be in the map.
 	RawMimeSet& base_profile = path_to_profile[pathnames[0]];
 	std::vector<RankedCandidate>& candidates_for_first_file = candidate_cache[base_profile];
@@ -202,7 +173,7 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 		return {};
 	}
 
-	// Step 4b: Convert the baseline into a hash map for efficient lookups.
+	// Step 3b: Convert the baseline into a hash map for efficient lookups.
 	CandidateMap final_candidates;
 	final_candidates.reserve(candidates_for_first_file.size());
 	for (const auto& candidate : candidates_for_first_file) {
@@ -211,20 +182,18 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 		}
 	}
 
-	// Step 4c: Iteratively intersect with candidates from each subsequent file.
+	// Step 3c: Iteratively intersect with candidates from each subsequent file.
 	for (size_t i = 1; i < pathnames.size(); ++i) {
 
-		// Get the profile for the current file (O(1) average lookup).
+		// Get the profile for the current file
 		RawMimeSet& current_profile = path_to_profile[pathnames[i]];
 
-		// Optimization: If the current file has the same profile as the
-		// previous one that triggered an intersection, skip it.
+		// Optimization: If the current file has the same profile as the previous one that triggered an intersection, skip it.
 		if (current_profile == base_profile) {
 			continue;
 		}
 
 		// Get the *cached* list of candidates for this new profile.
-		// (O(1) average lookup).
 		std::vector<RankedCandidate>& candidates_for_current_file = candidate_cache[current_profile];
 
 		// For efficient intersection, create a lookup map of candidates for the current file.
@@ -263,7 +232,7 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 		}
 	}
 
-	// Step 5: Convert the final filtered map into a vector for sorting.
+	// Step 4: Convert the final filtered map into a vector for sorting.
 	std::vector<RankedCandidate> finalists;
 	finalists.reserve(final_candidates.size());
 	for (const auto& pair : final_candidates) {
@@ -272,7 +241,7 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 
 	SortFinalCandidates(finalists);
 
-	// Step 6: Build the final list in the format required by the UI.
+	// Step 5: Build the final list in the format required by the UI.
 	std::vector<CandidateInfo> result;
 	result.reserve(finalists.size());
 	for (const auto& finalist : finalists) {
@@ -282,9 +251,6 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 	// Source info is ambiguous for multiple files and was already cleared.
 	return result;
 }
-
-
-
 
 
 // Constructs command lines according to the Exec= key in the .desktop file.
@@ -338,7 +304,7 @@ std::vector<std::wstring> XDGBasedAppProvider::ConstructCommandLine(const Candid
 		final_args.reserve(tokens.size() + pathnames.size());
 
 		// Use the first file as a context for expanding non-list field codes like %c or a standalone %f.
-		std::string first_pathname_mb = StrWide2MB(pathnames[0]);
+		std::string first_pathname = StrWide2MB(pathnames[0]);
 
 		for (const std::string& token : tokens) {
 			// A single token can contain multiple codes, but only one list code (%F or %U).
@@ -353,7 +319,7 @@ std::vector<std::wstring> XDGBasedAppProvider::ConstructCommandLine(const Candid
 			} else {
 				// Expand other codes like %f, %u, %c using the first file as context.
 				std::vector<std::string> expanded;
-				if (!ExpandFieldCodes(desktop_entry, first_pathname_mb, token, expanded)) {
+				if (!ExpandFieldCodes(desktop_entry, first_pathname, token, expanded)) {
 					return {}; // Invalid field code.
 				}
 				final_args.insert(final_args.end(), expanded.begin(), expanded.end());
@@ -469,8 +435,7 @@ std::vector<Field> XDGBasedAppProvider::GetCandidateDetails(const CandidateInfo&
 }
 
 
-// Collects unique MIME types for a list of files.
-// It uses `xdg-mime`, `file`, and an internal extension map
+// Collects unique MIME types for a list of files. It uses `xdg-mime`, `file`, and an internal extension map
 std::vector<std::wstring> XDGBasedAppProvider::GetMimeTypes(const std::vector<std::wstring>& pathnames)
 {
 	std::vector<std::string> ordered_unique_mimes;
@@ -486,11 +451,11 @@ std::vector<std::wstring> XDGBasedAppProvider::GetMimeTypes(const std::vector<st
 		}
 	};
 
-	for (const auto& pathname : pathnames) {
-		std::string path_mb = StrWide2MB(pathname);
-		add_unique(MimeTypeFromXdgMimeTool(path_mb));
-		add_unique(MimeTypeFromFileTool(path_mb));
-		add_unique(MimeTypeByExtension(path_mb));
+	for (const auto& w_pathname : pathnames) {
+		std::string pathname = StrWide2MB(w_pathname);
+		add_unique(MimeTypeFromXdgMimeTool(pathname));
+		add_unique(MimeTypeFromFileTool(pathname));
+		add_unique(MimeTypeByExtension(pathname));
 	}
 
 	std::vector<std::wstring> result;
@@ -508,7 +473,7 @@ std::vector<std::wstring> XDGBasedAppProvider::GetMimeTypes(const std::vector<st
 
 
 // Finds all candidates for a single file's expanded MIME list.
-std::vector<XDGBasedAppProvider::RankedCandidate> XDGBasedAppProvider::ResolveCandidatesForMimeProfile(
+std::vector<XDGBasedAppProvider::RankedCandidate> XDGBasedAppProvider::ResolveCandidatesForExpandedMimeProfile(
 	const std::vector<std::string>& prioritized_mimes)
 {
 	// This map will store the final, unique candidates for this MIME list.
@@ -519,7 +484,6 @@ std::vector<XDGBasedAppProvider::RankedCandidate> XDGBasedAppProvider::ResolveCa
 
 	if (!global_default_app.empty()) {
 		const auto& mime_for_default = prioritized_mimes[0];
-		// Access association rules from the operation-scoped field
 		if (!IsAssociationRemoved(this->_op_associations.value(), mime_for_default, global_default_app)) {
 			int rank = (prioritized_mimes.size() - 0) * Ranking::SPECIFICITY_MULTIPLIER + Ranking::SOURCE_RANK_GLOBAL_DEFAULT;
 			// Pass the mutable unique_candidates map to the helper
@@ -531,7 +495,6 @@ std::vector<XDGBasedAppProvider::RankedCandidate> XDGBasedAppProvider::ResolveCa
 	FindCandidatesFromMimeLists(prioritized_mimes, unique_candidates);
 
 	// Find candidates using either mimeinfo.cache for speed, or a full scan as a fallback.
-	// Both strategies now use the pre-built _op_... data structures.
 	if (_use_mimeinfo_cache) {
 		FindCandidatesFromCache(prioritized_mimes, unique_candidates);
 	} else {
@@ -550,11 +513,20 @@ std::vector<XDGBasedAppProvider::RankedCandidate> XDGBasedAppProvider::ResolveCa
 }
 
 
+// Find the system's global default handler for a MIME type.
+std::string XDGBasedAppProvider::GetDefaultApp(const std::string& mime_type)
+{
+	if (mime_type.empty()) return "";
+	std::string escaped_mime = EscapePathForShell(mime_type);
+	std::string cmd = "xdg-mime query default " + escaped_mime + " 2>/dev/null";
+	return RunCommandAndCaptureOutput(cmd);
+}
+
+
 // Finds candidates from the parsed mimeapps.list files. This is a high-priority source.
 void XDGBasedAppProvider::FindCandidatesFromMimeLists(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates)
 {
 	const int total_mimes = prioritized_mimes.size();
-	// Access association rules from the operation-scoped field
 	const auto& associations = this->_op_associations.value();
 
 	for (int i = 0; i < total_mimes; ++i) {
@@ -591,13 +563,10 @@ void XDGBasedAppProvider::FindCandidatesFromMimeLists(const std::vector<std::str
 void XDGBasedAppProvider::FindCandidatesFromCache(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates)
 {
 	const int total_mimes = prioritized_mimes.size();
-	// This map tracks the best rank for each app to avoid rank demotion
-	// by a less-specific MIME type.
+	// This map tracks the best rank for each app to avoid rank demotion by a less-specific MIME type.
 	std::map<std::string, std::pair<int, std::string>> app_best_rank_and_source;
 
-	// Access the pre-built mime.cache from the operation-scoped field
 	const auto& mime_cache = this->_op_mime_cache.value();
-	// Access association rules from the operation-scoped field
 	const auto& associations = this->_op_associations.value();
 
 	// First, find the best possible rank for each application across all matching MIME types.
@@ -616,7 +585,6 @@ void XDGBasedAppProvider::FindCandidatesFromCache(const std::vector<std::string>
 				if (IsAssociationRemoved(associations, mime, app_desktop_file)) continue;
 
 				std::string source_info = assoc.source_path + StrWide2MB(m_GetMsg(MFor)) + mime;
-				// try_emplace inserts if new, or does nothing if key exists.
 				auto [it, inserted] = app_best_rank_and_source.try_emplace(app_desktop_file, std::make_pair(rank, source_info));
 				// If not inserted (key existed), update only if the new rank is better.
 				if (!inserted && rank > it->second.first) {
@@ -634,8 +602,7 @@ void XDGBasedAppProvider::FindCandidatesFromCache(const std::vector<std::string>
 }
 
 
-// Finds candidates by looking up the pre-built mime-to-app index.
-// This is used when _use_mimeinfo_cache is false.
+// Finds candidates by looking up the pre-built mime-to-app index. Used when _use_mimeinfo_cache is false.
 void XDGBasedAppProvider::FindCandidatesByFullScan(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates)
 {
 	const int total_mimes = prioritized_mimes.size();
@@ -643,9 +610,7 @@ void XDGBasedAppProvider::FindCandidatesByFullScan(const std::vector<std::string
 	// A map to store the best rank found for each unique application.
 	std::map<const DesktopEntry*, std::pair<int, std::string>> app_best_rank_and_source;
 
-	// Access the pre-built mime-to-app index from the operation-scoped field
 	const auto& mime_to_app_index = this->_op_mime_to_app_index.value();
-	// Access association rules from the operation-scoped field
 	const auto& associations = this->_op_associations.value();
 
 	// Iterate through all prioritized MIME types for the current file.
@@ -655,7 +620,7 @@ void XDGBasedAppProvider::FindCandidatesByFullScan(const std::vector<std::string
 		// Find this MIME type in the pre-built mime-to-app index.
 		auto it_index = mime_to_app_index.find(mime);
 		if (it_index == mime_to_app_index.end()) {
-			continue; // No applications are associated with this MIME type in the index.
+			continue; // no applications are associated with this MIME type in the index.
 		}
 
 		// Calculate the rank for this level of MIME specificity.
@@ -672,8 +637,7 @@ void XDGBasedAppProvider::FindCandidatesByFullScan(const std::vector<std::string
 
 			std::string source_info = StrWide2MB(m_GetMsg(MFullScanFor)) + mime;
 
-			// Try to insert the app with its rank. If it already exists,
-			// update its rank only if the new one is higher.
+			// Try to insert the app with its rank. If it already exists, update its rank only if the new one is higher.
 			auto [it, inserted] = app_best_rank_and_source.try_emplace(entry_ptr, std::make_pair(rank, source_info));
 			if (!inserted && rank > it->second.first) {
 				it->second.first = rank;
@@ -684,8 +648,7 @@ void XDGBasedAppProvider::FindCandidatesByFullScan(const std::vector<std::string
 
 	// Now, register each unique candidate with its best-found rank.
 	for (const auto& [entry_ptr, rank_and_source] : app_best_rank_and_source) {
-		// Call the registration helper directly, passing the dereferenced entry
-		// to avoid a redundant cache lookup.
+		// Call the registration helper directly, passing the dereferenced entry to avoid a redundant cache lookup.
 		RegisterCandidate(unique_candidates, *entry_ptr, rank_and_source.first, rank_and_source.second);
 	}
 }
@@ -719,7 +682,6 @@ void XDGBasedAppProvider::RegisterCandidate(CandidateMap& unique_candidates, con
 		return;
 	}
 
-	// Access the current desktop env from the operation-scoped field
 	const auto& current_desktop_env = this->_op_current_desktop_env.value();
 
 	// Optionally filter applications based on the current desktop environment
@@ -752,9 +714,6 @@ void XDGBasedAppProvider::AddOrUpdateCandidate(CandidateMap& unique_candidates, 
 	// A unique key to identify an application.
 	AppUniqueKey unique_key{entry.name, entry.exec};
 
-	// try_emplace attempts to insert a new element.
-	// it -> iterator to the element (either newly inserted or existing)
-	// inserted -> bool, true if insertion happened, false if key already existed
 	auto [it, inserted] = unique_candidates.try_emplace(unique_key, RankedCandidate{&entry, rank, source_info});
 
 	// If the candidate already exists, update it only if the new rank is higher.
@@ -819,12 +778,8 @@ CandidateInfo XDGBasedAppProvider::ConvertDesktopEntryToCandidateInfo(const Desk
 
 	const std::string& exec = desktop_entry.exec;
 
-	// Correctly check for multi-file and single-file field codes, respecting '%%' escapes.
 	bool has_multi_file_code = HasFieldCode(exec, "FU");
 	bool has_single_file_code = HasFieldCode(exec, "fu");
-
-	// An app is "multi-file aware" if it has %F/%U, or no file codes at all
-	// (in which case files are appended).
 	candidate.multi_file_aware = has_multi_file_code || (!has_multi_file_code && !has_single_file_code);
 
 	return candidate;
@@ -837,32 +792,32 @@ CandidateInfo XDGBasedAppProvider::ConvertDesktopEntryToCandidateInfo(const Desk
 // Gathers the "raw" MIME types from all enabled detection methods for a single file.
 XDGBasedAppProvider::RawMimeSet XDGBasedAppProvider::GetRawMimeSet(const std::string& pathname)
 {
-	RawMimeSet raw_set;
+	RawMimeSet raw_mime_set;
 
-	raw_set.is_readable_file = IsReadableFile(pathname);
+	raw_mime_set.is_readable_file = IsReadableFile(pathname);
 
-	if (!raw_set.is_readable_file) {
-		raw_set.is_dir = IsValidDir(pathname);
+	if (!raw_mime_set.is_readable_file) {
+		raw_mime_set.is_valid_dir = IsValidDir(pathname);
 	}
 
 	// Only run detection tools if the path is a file or directory
-	if (raw_set.is_dir || raw_set.is_readable_file)
+	if (raw_mime_set.is_valid_dir || raw_mime_set.is_readable_file)
 	{
-		raw_set.xdg_mime = MimeTypeFromXdgMimeTool(pathname);
-		raw_set.file_mime = MimeTypeFromFileTool(pathname);
+		raw_mime_set.xdg_mime = MimeTypeFromXdgMimeTool(pathname);
+		raw_mime_set.file_mime = MimeTypeFromFileTool(pathname);
 
 		// Extension fallback only makes sense for files
-		if (raw_set.is_readable_file) {
-			raw_set.ext_mime = MimeTypeByExtension(pathname);
+		if (raw_mime_set.is_readable_file) {
+			raw_mime_set.ext_mime = MimeTypeByExtension(pathname);
 		}
 	}
 
-	return raw_set;
+	return raw_mime_set;
 }
 
 
 // Expands and prioritizes MIME types for a file using multiple methods.
-std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const RawMimeSet& raw_set)
+std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const RawMimeSet& raw_mime_set)
 {
 	std::vector<std::string> mime_types;
 	std::unordered_set<std::string> seen;
@@ -876,24 +831,22 @@ std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const
 	};
 
 	// Use the pre-calculated boolean flags from the RawMimeSet
-	if (raw_set.is_dir || raw_set.is_readable_file) {
+	if (raw_mime_set.is_valid_dir || raw_mime_set.is_readable_file) {
 
 		// --- Step 1: Initial, most specific MIME type detection ---
 		// Use the pre-detected types from the RawMimeSet
-		add_unique(raw_set.xdg_mime);
-		add_unique(raw_set.file_mime);
-		add_unique(raw_set.ext_mime); // this will be empty if it was a directory
+		add_unique(raw_mime_set.xdg_mime);
+		add_unique(raw_mime_set.file_mime);
+		add_unique(raw_mime_set.ext_mime); // this will be empty if it was a directory
 
 		// --- Step 2: Iteratively expand the MIME type list with parents and aliases ---
-		// Access the operation-scoped alias and subclass maps
 		if (_op_subclasses || _op_aliases) {
-			// The reverse alias map (_op_canonical_to_aliases_map) is pre-built.
-			// The loop iterates over the vector as it grows.
+
 			for (size_t i = 0; i < mime_types.size(); ++i) {
 				const std::string current_mime = mime_types[i];
 
 				// Expansion A: process aliases
-				if (_op_aliases) { // Use the operation-scoped field
+				if (_op_aliases) {
 
 					// --- Standard forward lookup (alias -> canonical) ---
 					const auto& alias_to_canonical_map = *_op_aliases;
@@ -903,7 +856,8 @@ std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const
 					}
 
 					// --- Smart reverse lookup (canonical -> alias) using the pre-built map ---
-					// Find aliases for the current canonical MIME type, but filter them to avoid incorrect associations (e.g., image/* -> text/*).
+					// Find aliases for the current canonical MIME type, but filter them
+					// to avoid incorrect associations (e.g., image/* -> text/*).
 
 					if (_op_canonical_to_aliases_map.has_value()) {
 						auto it_aliases = _op_canonical_to_aliases_map->find(current_mime);
@@ -911,9 +865,7 @@ std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const
 							size_t canonical_slash_pos = current_mime.find('/');
 							// Proceed only if the canonical MIME type has a valid format (e.g., "type/subtype").
 							if (canonical_slash_pos != std::string::npos) {
-								// Use string_view to avoid memory allocations from substr().
 								std::string_view canonical_major_type(current_mime.data(), canonical_slash_pos);
-
 								for (const auto& alias : it_aliases->second) {
 									size_t alias_slash_pos = alias.find('/');
 									if (alias_slash_pos != std::string::npos) {
@@ -942,6 +894,7 @@ std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const
 		}
 
 		if (_resolve_structured_suffixes) {
+
 			// --- Step 3: Add base types for structured syntaxes (e.g., +xml, +zip) ---
 			// This is a reliable fallback that works even if the subclass hierarchy is incomplete in the system's MIME database.
 
@@ -983,7 +936,7 @@ std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const
 
 		if (_show_universal_handlers) {
 			// --- Step 5: Add the ultimate fallback for any binary data ---
-			if (raw_set.is_readable_file) {
+			if (raw_mime_set.is_readable_file) {
 				add_unique("application/octet-stream");
 			}
 		}
@@ -993,7 +946,6 @@ std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const
 }
 
 
-// Runs 'xdg-mime query filetype' if _use_xdg_mime_tool is enabled.
 std::string XDGBasedAppProvider::MimeTypeFromXdgMimeTool(const std::string& pathname)
 {
 	std::string result;
@@ -1005,7 +957,6 @@ std::string XDGBasedAppProvider::MimeTypeFromXdgMimeTool(const std::string& path
 }
 
 
-// Runs 'file --mime-type' if _use_file_tool is enabled.
 std::string XDGBasedAppProvider::MimeTypeFromFileTool(const std::string& pathname)
 {
 	std::string result;
@@ -1213,7 +1164,6 @@ std::string XDGBasedAppProvider::MimeTypeByExtension(const std::string& pathname
 // ****************************** XDG Database Parsing & Caching ******************************
 
 // Retrieves a DesktopEntry from the cache or parses it from disk if not present.
-// This function now uses the operation-scoped search paths and the class-level cache.
 const std::optional<DesktopEntry>& XDGBasedAppProvider::GetCachedDesktopEntry(const std::string& desktop_file)
 {
 	// Use the class-level cache
@@ -1221,7 +1171,6 @@ const std::optional<DesktopEntry>& XDGBasedAppProvider::GetCachedDesktopEntry(co
 		return it->second;
 	}
 
-	// Use the operation-scoped desktop search paths
 	// The `desktop_file` parameter is just the basename (e.g., "firefox.desktop")
 	for (const auto& base_dir : this->_op_desktop_paths.value()) {
 		std::string full_path = base_dir + "/" + desktop_file;
@@ -1235,7 +1184,7 @@ const std::optional<DesktopEntry>& XDGBasedAppProvider::GetCachedDesktopEntry(co
 }
 
 
-// Builds an in-memory index that maps a MIME type to a list of DesktopEntry pointers
+// Builds in-memory index that maps a MIME type to a list of DesktopEntry pointers
 // that can handle it. This avoids repeated filesystem scanning.
 void XDGBasedAppProvider::BuildMimeTypeToAppIndex(const std::vector<std::string>& search_paths, MimeToAppIndex& index)
 {
@@ -1250,7 +1199,6 @@ void XDGBasedAppProvider::BuildMimeTypeToAppIndex(const std::vector<std::string>
 				continue;
 			}
 
-			// This will use the operation-scoped desktop paths and the class-level desktop entry cache.
 			const auto& desktop_entry_opt = GetCachedDesktopEntry(filename);
 			if (!desktop_entry_opt.has_value()) {
 				continue;
@@ -1284,14 +1232,10 @@ void XDGBasedAppProvider::ParseAllMimeinfoCacheFiles(const std::vector<std::stri
 }
 
 
-
 // Combines multiple mimeapps.list files into a single association structure.
-// The order of paths is important, from high priority to low.
 XDGBasedAppProvider::MimeAssociation XDGBasedAppProvider::ParseMimeappsLists(const std::vector<std::string>& paths)
 {
 	MimeAssociation associations;
-	// The `paths` vector is already sorted from high-priority (user)
-	// to low-priority (system).
 	for (const auto& path : paths) {
 		ParseMimeappsList(path, associations);
 	}
@@ -1858,26 +1802,20 @@ bool XDGBasedAppProvider::HasFieldCode(const std::string& exec, const std::strin
 
 
 // Converts absolute local filepath to a file:// URI.
-// This function implements percent-encoding according to RFC 3986.
-// It ensures that all characters except for the "unreserved" set and
-// the filepath separator '/' are encoded. This implementation is locale-independent.
 std::string XDGBasedAppProvider::PathToUri(const std::string& absolute_local_filepath)
 {
 	std::stringstream uri_stream;
 	uri_stream << "file://";
-	// Use std::uppercase for hex values to comply with the RFC 3986 recommendation.
 	uri_stream << std::hex << std::uppercase << std::setfill('0');
 
 	for (const unsigned char c : absolute_local_filepath) {
-		// Perform a locale-independent check for unreserved characters (RFC 3986)
-		// plus the path separator '/'.
+		// Perform a locale-independent check for unreserved characters (RFC 3986) plus the path separator '/'.
 		if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
 			|| c == '-' || c == '_' || c == '.' || c == '~' || c == '/')
 		{
 			uri_stream << c;
 		} else {
 			// Percent-encode all other characters.
-			// setw(2) ensures a leading zero for single-digit hex values (e.g., %0F).
 			uri_stream << '%' << std::setw(2) << static_cast<int>(c);
 		}
 	}
@@ -1886,11 +1824,6 @@ std::string XDGBasedAppProvider::PathToUri(const std::string& absolute_local_fil
 
 
 // Escapes a single command-line argument for safe execution by the shell.
-// This function uses the most robust method for shell escaping: enclosing the
-// argument in single quotes. Any literal single quotes within the argument are
-// handled using the standard `'\''` sequence.
-// An optimization is included to avoid quoting arguments that are already safe,
-// improving command line readability. The safety check is locale-independent.
 std::string XDGBasedAppProvider::EscapeArg(const std::string& arg)
 {
 	if (arg.empty()) {
@@ -1931,15 +1864,6 @@ std::string XDGBasedAppProvider::EscapeArg(const std::string& arg)
 
 
 // ****************************** System & Environment Helpers ******************************
-
-// Runs 'xdg-mime query default' to find the system's default handler for a MIME type.
-std::string XDGBasedAppProvider::GetDefaultApp(const std::string& mime_type)
-{
-	if (mime_type.empty()) return "";
-	std::string escaped_mime = EscapePathForShell(mime_type);
-	std::string cmd = "xdg-mime query default " + escaped_mime + " 2>/dev/null";
-	return RunCommandAndCaptureOutput(cmd);
-}
 
 
 // Checks if an executable exists and is runnable.

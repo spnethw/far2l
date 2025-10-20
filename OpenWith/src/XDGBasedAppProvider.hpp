@@ -57,7 +57,7 @@ private:
 		std::string xdg_mime;  // result from xdg-mime query filetype
 		std::string file_mime; // result from file --mime-type
 		std::string ext_mime;  // result from internal extension fallback map
-		bool is_dir = false;
+		bool is_valid_dir = false;
 		bool is_readable_file = false;
 
 		bool operator==(const RawMimeSet& other) const
@@ -65,7 +65,7 @@ private:
 			return xdg_mime == other.xdg_mime &&
 				   file_mime == other.file_mime &&
 				   ext_mime == other.ext_mime &&
-				   is_dir == other.is_dir &&
+				   is_valid_dir == other.is_valid_dir &&
 				   is_readable_file == other.is_readable_file;
 		}
 
@@ -77,7 +77,7 @@ private:
 				std::size_t h1 = std::hash<std::string>{}(s.xdg_mime);
 				std::size_t h2 = std::hash<std::string>{}(s.file_mime);
 				std::size_t h3 = std::hash<std::string>{}(s.ext_mime);
-				std::size_t h4 = std::hash<bool>{}(s.is_dir);
+				std::size_t h4 = std::hash<bool>{}(s.is_valid_dir);
 				std::size_t h5 = std::hash<bool>{}(s.is_readable_file);
 
 				// Combine hashes using a simple boost-like hash_combine
@@ -178,7 +178,8 @@ private:
 	using SettingKeyToMemberPtrMap = std::map<std::wstring, bool XDGBasedAppProvider::*>;
 
 	// --- Searching and ranking candidates logic ---
-	std::vector<RankedCandidate> ResolveCandidatesForMimeProfile(const std::vector<std::string>& prioritized_mimes);
+	std::vector<RankedCandidate> ResolveCandidatesForExpandedMimeProfile(const std::vector<std::string>& prioritized_mimes);
+	static std::string GetDefaultApp(const std::string& mime_type);
 	void FindCandidatesFromMimeLists(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates);
 	void FindCandidatesFromCache(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates);
 	void FindCandidatesByFullScan(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates);
@@ -191,7 +192,7 @@ private:
 
 	// --- File MIME Type Detection & Expansion ---
 	RawMimeSet GetRawMimeSet(const std::string& pathname_mb);
-	std::vector<std::string> ExpandAndPrioritizeMimeTypes(const RawMimeSet& raw_set);
+	std::vector<std::string> ExpandAndPrioritizeMimeTypes(const RawMimeSet& raw_mime_set);
 	std::string MimeTypeFromXdgMimeTool(const std::string& escaped_pathname);
 	std::string MimeTypeFromFileTool(const std::string& escaped_pathname);
 	std::string MimeTypeByExtension(const std::string& escaped_pathname);
@@ -220,7 +221,6 @@ private:
 	static std::string EscapeArg(const std::string& arg);
 
 	// --- System & Environment Helpers ---
-	static std::string GetDefaultApp(const std::string& mime_type);
 	static bool CheckExecutable(const std::string& path);
 	static std::string GetEnv(const char* var, const char* default_val = "");
 	static std::string RunCommandAndCaptureOutput(const std::string& cmd);
