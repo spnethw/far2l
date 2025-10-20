@@ -203,7 +203,7 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 	}
 
 	// Step 4b: Convert the baseline into a hash map for efficient lookups.
-	std::unordered_map<AppUniqueKey, RankedCandidate, AppUniqueKeyHash> final_candidates;
+	CandidateMap final_candidates;
 	final_candidates.reserve(candidates_for_first_file.size());
 	for (const auto& candidate : candidates_for_first_file) {
 		if (candidate.entry) {
@@ -512,7 +512,7 @@ std::vector<XDGBasedAppProvider::RankedCandidate> XDGBasedAppProvider::ResolveCa
 	const std::vector<std::string>& prioritized_mimes)
 {
 	// This map will store the final, unique candidates for this MIME list.
-	std::unordered_map<AppUniqueKey, RankedCandidate, AppUniqueKeyHash> unique_candidates;
+	CandidateMap unique_candidates;
 
 	// Check for a global default app using 'xdg-mime query default'.
 	std::string global_default_app = GetDefaultApp(prioritized_mimes.empty() ? "" : prioritized_mimes[0]);
@@ -551,8 +551,7 @@ std::vector<XDGBasedAppProvider::RankedCandidate> XDGBasedAppProvider::ResolveCa
 
 
 // Finds candidates from the parsed mimeapps.list files. This is a high-priority source.
-void XDGBasedAppProvider::FindCandidatesFromMimeLists(const std::vector<std::string>& prioritized_mimes,
-													  std::unordered_map<AppUniqueKey, RankedCandidate, AppUniqueKeyHash>& unique_candidates)
+void XDGBasedAppProvider::FindCandidatesFromMimeLists(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates)
 {
 	const int total_mimes = prioritized_mimes.size();
 	// Access association rules from the operation-scoped field
@@ -589,8 +588,7 @@ void XDGBasedAppProvider::FindCandidatesFromMimeLists(const std::vector<std::str
 
 
 // Finds candidates from the pre-generated mimeinfo.cache file for performance.
-void XDGBasedAppProvider::FindCandidatesFromCache(const std::vector<std::string>& prioritized_mimes,
-												  std::unordered_map<AppUniqueKey, RankedCandidate, AppUniqueKeyHash>& unique_candidates)
+void XDGBasedAppProvider::FindCandidatesFromCache(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates)
 {
 	const int total_mimes = prioritized_mimes.size();
 	// This map tracks the best rank for each app to avoid rank demotion
@@ -638,8 +636,7 @@ void XDGBasedAppProvider::FindCandidatesFromCache(const std::vector<std::string>
 
 // Finds candidates by looking up the pre-built mime-to-app index.
 // This is used when _use_mimeinfo_cache is false.
-void XDGBasedAppProvider::FindCandidatesByFullScan(const std::vector<std::string>& prioritized_mimes,
-												   std::unordered_map<AppUniqueKey, RankedCandidate, AppUniqueKeyHash>& unique_candidates)
+void XDGBasedAppProvider::FindCandidatesByFullScan(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates)
 {
 	const int total_mimes = prioritized_mimes.size();
 
@@ -696,10 +693,8 @@ void XDGBasedAppProvider::FindCandidatesByFullScan(const std::vector<std::string
 
 // Processes a single application candidate: validates it, filters it, and adds it to the context.
 // This version retrieves the DesktopEntry from cache via its name.
-void XDGBasedAppProvider::ValidateAndRegisterCandidate(std::unordered_map<AppUniqueKey, RankedCandidate, AppUniqueKeyHash>& unique_candidates,
-													   const std::string& app_desktop_file,
-													   int rank,
-													   const std::string& source_info)
+void XDGBasedAppProvider::ValidateAndRegisterCandidate(CandidateMap& unique_candidates, const std::string& app_desktop_file,
+													   int rank, const std::string& source_info)
 {
 	if (app_desktop_file.empty()) return;
 
@@ -716,10 +711,8 @@ void XDGBasedAppProvider::ValidateAndRegisterCandidate(std::unordered_map<AppUni
 
 // This is the core validation and registration helper.
 // It filters a candidate (TryExec, ShowIn/NotShowIn) and adds it to the map.
-void XDGBasedAppProvider::RegisterCandidate(std::unordered_map<AppUniqueKey, RankedCandidate, AppUniqueKeyHash>& unique_candidates,
-											const DesktopEntry& entry,
-											int rank,
-											const std::string& source_info)
+void XDGBasedAppProvider::RegisterCandidate(CandidateMap& unique_candidates, const DesktopEntry& entry,
+											int rank, const std::string& source_info)
 {
 	// Optionally validate the TryExec key to ensure the executable exists.
 	if (_validate_try_exec && !entry.try_exec.empty() && !CheckExecutable(entry.try_exec)) {
@@ -753,10 +746,8 @@ void XDGBasedAppProvider::RegisterCandidate(std::unordered_map<AppUniqueKey, Ran
 
 
 // Adds a new candidate to the results map or updates its rank if a better one is found.
-void XDGBasedAppProvider::AddOrUpdateCandidate(std::unordered_map<AppUniqueKey, RankedCandidate, AppUniqueKeyHash>& unique_candidates,
-											   const DesktopEntry& entry,
-											   int rank,
-											   const std::string& source_info)
+void XDGBasedAppProvider::AddOrUpdateCandidate(CandidateMap& unique_candidates, const DesktopEntry& entry,
+											   int rank, const std::string& source_info)
 {
 	// A unique key to identify an application.
 	AppUniqueKey unique_key{entry.name, entry.exec};
@@ -1246,7 +1237,7 @@ const std::optional<DesktopEntry>& XDGBasedAppProvider::GetCachedDesktopEntry(co
 
 // Builds an in-memory index that maps a MIME type to a list of DesktopEntry pointers
 // that can handle it. This avoids repeated filesystem scanning.
-void XDGBasedAppProvider::BuildMimeTypeToAppIndex(const std::vector<std::string>& search_paths, std::unordered_map<std::string, std::vector<const DesktopEntry*>>& index)
+void XDGBasedAppProvider::BuildMimeTypeToAppIndex(const std::vector<std::string>& search_paths, MimeToAppIndex& index)
 {
 	for (const auto& dir : search_paths) {
 		DIR* dir_stream = opendir(dir.c_str());
@@ -1282,7 +1273,7 @@ void XDGBasedAppProvider::BuildMimeTypeToAppIndex(const std::vector<std::string>
 
 
 // Parses all mimeinfo.cache files found in the XDG search paths into a single map, avoiding repeated file I/O.
-void XDGBasedAppProvider::ParseAllMimeinfoCacheFiles(const std::vector<std::string>& search_paths, std::unordered_map<std::string, std::vector<MimeAssociation::AssociationSource>>& mime_cache)
+void XDGBasedAppProvider::ParseAllMimeinfoCacheFiles(const std::vector<std::string>& search_paths, MimeCacheMap& mime_cache)
 {
 	for (const auto& dir : search_paths) {
 		std::string cache_path = dir + "/mimeinfo.cache";
@@ -1466,8 +1457,7 @@ std::string XDGBasedAppProvider::GetLocalizedValue(const std::unordered_map<std:
 
 
 // Parses mimeinfo.cache file format: [MIME Cache] section with mime/type=app1.desktop;app2.desktop;
-void XDGBasedAppProvider::ParseMimeinfoCache(const std::string& path,
-											 std::unordered_map<std::string, std::vector<MimeAssociation::AssociationSource>>& mime_cache)
+void XDGBasedAppProvider::ParseMimeinfoCache(const std::string& path, MimeCacheMap& mime_cache)
 {
 	std::ifstream file(path);
 	if (!file.is_open()) return;

@@ -172,14 +172,19 @@ private:
 		}
 	};
 
+	using CandidateMap = std::unordered_map<AppUniqueKey, RankedCandidate, AppUniqueKeyHash>;
+	using MimeToAppIndex = std::unordered_map<std::string, std::vector<const DesktopEntry*>>;
+	using MimeCacheMap = std::unordered_map<std::string, std::vector<MimeAssociation::AssociationSource>>;
+	using SettingKeyToMemberPtrMap = std::map<std::wstring, bool XDGBasedAppProvider::*>;
+
 	// --- Searching and ranking candidates logic ---
 	std::vector<RankedCandidate> ResolveCandidatesForMimeProfile(const std::vector<std::string>& prioritized_mimes);
-	void FindCandidatesFromMimeLists(const std::vector<std::string>& prioritized_mimes, std::unordered_map<AppUniqueKey, RankedCandidate, AppUniqueKeyHash>& unique_candidates);
-	void FindCandidatesFromCache(const std::vector<std::string>& prioritized_mimes, std::unordered_map<AppUniqueKey, RankedCandidate, AppUniqueKeyHash>& unique_candidates);
-	void FindCandidatesByFullScan(const std::vector<std::string>& prioritized_mimes, std::unordered_map<AppUniqueKey, RankedCandidate, AppUniqueKeyHash>& unique_candidates);
-	void ValidateAndRegisterCandidate(std::unordered_map<AppUniqueKey, RankedCandidate, AppUniqueKeyHash>& unique_candidates, const std::string& app_desktop_file, int rank, const std::string& source_info);
-	void RegisterCandidate(std::unordered_map<AppUniqueKey, RankedCandidate, AppUniqueKeyHash>& unique_candidates, const DesktopEntry& entry, int rank, const std::string& source_info);
-	void AddOrUpdateCandidate(std::unordered_map<AppUniqueKey, RankedCandidate, AppUniqueKeyHash>& unique_candidates, const DesktopEntry& entry, int rank, const std::string& source_info);
+	void FindCandidatesFromMimeLists(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates);
+	void FindCandidatesFromCache(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates);
+	void FindCandidatesByFullScan(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates);
+	void ValidateAndRegisterCandidate(CandidateMap& unique_candidates, const std::string& app_desktop_file, int rank, const std::string& source_info);
+	void RegisterCandidate(CandidateMap& unique_candidates, const DesktopEntry& entry, int rank, const std::string& source_info);
+	void AddOrUpdateCandidate(CandidateMap& unique_candidates, const DesktopEntry& entry, int rank, const std::string& source_info);
 	static bool IsAssociationRemoved(const MimeAssociation& associations, const std::string& mime_type, const std::string& app_desktop_file);
 	void SortFinalCandidates(std::vector<RankedCandidate>& candidates) const;
 	static CandidateInfo ConvertDesktopEntryToCandidateInfo(const DesktopEntry& desktop_entry);
@@ -193,13 +198,13 @@ private:
 
 	// --- XDG Database Parsing & Caching ---
 	const std::optional<DesktopEntry>& GetCachedDesktopEntry(const std::string& desktop_file);
-	void BuildMimeTypeToAppIndex(const std::vector<std::string>& search_paths, std::unordered_map<std::string, std::vector<const DesktopEntry*>>& index);
-	void ParseAllMimeinfoCacheFiles(const std::vector<std::string>& search_paths, std::unordered_map<std::string, std::vector<MimeAssociation::AssociationSource>>& mime_cache);
+	void BuildMimeTypeToAppIndex(const std::vector<std::string>& search_paths, MimeToAppIndex& index);
+	void ParseAllMimeinfoCacheFiles(const std::vector<std::string>& search_paths, MimeCacheMap& mime_cache);
 	static MimeAssociation ParseMimeappsLists(const std::vector<std::string>& paths);
 	static void ParseMimeappsList(const std::string& path, MimeAssociation& associations);
 	static std::optional<DesktopEntry> ParseDesktopFile(const std::string& path);
 	static std::string GetLocalizedValue(const std::unordered_map<std::string, std::string>& values, const std::string& base_key);
-	void ParseMimeinfoCache(const std::string& path, std::unordered_map<std::string, std::vector<MimeAssociation::AssociationSource>>& mime_cache);
+	void ParseMimeinfoCache(const std::string& path, MimeCacheMap& mime_cache);
 	static std::unordered_map<std::string, std::string> LoadMimeAliases();
 	static std::unordered_map<std::string, std::string> LoadMimeSubclasses();
 	static std::vector<std::string> GetDesktopFileSearchPaths();
@@ -262,7 +267,7 @@ private:
 	std::vector<PlatformSettingDefinition> _platform_settings_definitions;
 
 	// A pre-calculated lookup map (Key -> MemberPtr) for efficient updates in SetPlatformSettings.
-	std::map<std::wstring, bool XDGBasedAppProvider::*> _key_to_member_map;
+	SettingKeyToMemberPtrMap _key_to_member_map;
 
 
 	// --- Operation-Scoped State ---
@@ -279,8 +284,8 @@ private:
 	std::optional<std::string> _op_current_desktop_env; // $XDG_CURRENT_DESKTOP
 
 	// One of the following two caches will be populated based on settings.
-	std::optional<std::unordered_map<std::string, std::vector<MimeAssociation::AssociationSource>>> _op_mime_cache; // from mimeinfo.cache
-	std::optional<std::unordered_map<std::string, std::vector<const DesktopEntry*>>> _op_mime_to_app_index;   // from full .desktop scan
+	std::optional<MimeCacheMap> _op_mime_cache;	// from mimeinfo.cache
+	std::optional<MimeToAppIndex> _op_mime_to_app_index;	// from full .desktop scan
 
 	// RAII helper to manage the lifecycle of the operation-scoped state.
 	// It populates all _op_... fields on construction and clears them on destruction.
