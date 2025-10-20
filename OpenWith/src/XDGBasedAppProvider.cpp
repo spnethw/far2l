@@ -133,68 +133,71 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 	// --- Case 2: Logic for Multiple Files ---
 
 	// Step 1: Group N files into K unique "MIME profiles".
-	// This is the "slow" part with N external calls (xdg-mime, file).
-
-	// Maps every pathname to its calculated RawMimeSet.
-	std::unordered_map<std::wstring, RawMimeSet> path_to_profile;
-	path_to_profile.reserve(pathnames.size());
-
-	// Holds the K unique RawMimeSet profiles found across all N files.
 	std::unordered_set<RawMimeSet, RawMimeSet::Hash> unique_profiles;
-
 	for (const auto& w_pathname : pathnames) {
-		RawMimeSet raw_mime_set = GetRawMimeSet(StrWide2MB(w_pathname)); // N calls to external tools
-
-		// Map this path to its profile.
-		path_to_profile.try_emplace(w_pathname, raw_mime_set);
-
-		// Add the profile to the set of unique profiles.
-		unique_profiles.insert(raw_mime_set);
+		unique_profiles.insert(GetRawMimeSet(StrWide2MB(w_pathname))); // N calls to external tools
 	}
 
 	// Step 2: Gather candidates K times, not N times. (K = unique_profiles.size())
-
-	// This cache holds the expensive results: unique RawMimeSet profile -> list of candidates for it
 	std::unordered_map<RawMimeSet, std::vector<RankedCandidate>, RawMimeSet::Hash> candidate_cache;
+
+	if (unique_profiles.empty()) {
+		return {};
+	}
 
 	for (const auto& raw_mime_set : unique_profiles) {
 		auto prioritized_mimes = ExpandAndPrioritizeMimeTypes(raw_mime_set);
-		candidate_cache[raw_mime_set] = ResolveCandidatesForExpandedMimeProfile(prioritized_mimes);
+		auto candidates = ResolveCandidatesForExpandedMimeProfile(prioritized_mimes);
+
+		// Fail-fast optimization: If any profile has zero candidates, the
+		// final intersection will be empty. We can stop all work immediately.
+		if (candidates.empty()) {
+			return {};
+		}
+
+		// Use std::move as 'candidates' is a local rvalue.
+		candidate_cache[raw_mime_set] = std::move(candidates);
 	}
 
 	// Step 3: Iterative Intersection using the K-sized cache.
 
-	// Step 3a: Establish a baseline set from the *first* file's profile.
-	// We can safely use operator[] as pathnames[0] is guaranteed to be in the map.
-	RawMimeSet& base_profile = path_to_profile[pathnames[0]];
-	std::vector<RankedCandidate>& candidates_for_first_file = candidate_cache[base_profile];
+	// Step 3a: Optimization: Find the profile with the *smallest* candidate set.
+	// Intersection will be much faster if we start with the most restrictive set.
+	auto smallest_set_it = unique_profiles.begin();
+	// We know from Step 2 that no candidate list is empty, so min_size > 0.
+	size_t min_size = candidate_cache.at(*smallest_set_it).size();
 
-	if (candidates_for_first_file.empty()) {
-		return {};
+	for (auto it = std::next(smallest_set_it); it != unique_profiles.end(); ++it) {
+		size_t current_size = candidate_cache.at(*it).size();
+		if (current_size < min_size) {
+			min_size = current_size;
+			smallest_set_it = it;
+		}
 	}
 
-	// Step 3b: Convert the baseline into a hash map for efficient lookups.
+	// Step 3b: Establish a baseline set from the *smallest* profile.
+	const RawMimeSet base_profile = *smallest_set_it;
+	// Use .at() for const-correctness; we know the key exists from Step 2.
+	std::vector<RankedCandidate>& baseline_candidates = candidate_cache.at(base_profile);
+
 	CandidateMap final_candidates;
-	final_candidates.reserve(candidates_for_first_file.size());
-	for (const auto& candidate : candidates_for_first_file) {
+	final_candidates.reserve(baseline_candidates.size());
+	for (const auto& candidate : baseline_candidates) {
 		if (candidate.entry) {
 			final_candidates.try_emplace(AppUniqueKey{candidate.entry->name, candidate.entry->exec}, candidate);
 		}
 	}
 
-	// Step 3c: Iteratively intersect with candidates from each subsequent file.
-	for (size_t i = 1; i < pathnames.size(); ++i) {
-
-		// Get the profile for the current file
-		RawMimeSet& current_profile = path_to_profile[pathnames[i]];
-
-		// Optimization: If the current file has the same profile as the previous one that triggered an intersection, skip it.
+	// Step 3c: Iteratively intersect with candidates from all *other* profiles.
+	// This loop runs (K - 1) times.
+	for (const auto& current_profile : unique_profiles) {
+		// Skip the profile we already used as the baseline.
 		if (current_profile == base_profile) {
 			continue;
 		}
 
 		// Get the *cached* list of candidates for this new profile.
-		std::vector<RankedCandidate>& candidates_for_current_file = candidate_cache[current_profile];
+		std::vector<RankedCandidate>& candidates_for_current_file = candidate_cache.at(current_profile);
 
 		// For efficient intersection, create a lookup map of candidates for the current file.
 		std::unordered_map<AppUniqueKey, const RankedCandidate*, AppUniqueKeyHash> current_file_candidates_map;
@@ -222,9 +225,6 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 				++it;
 			}
 		}
-
-		// Update the base_profile for the next loop's optimization check.
-		base_profile = current_profile;
 
 		// Early exit optimization.
 		if (final_candidates.empty()) {
