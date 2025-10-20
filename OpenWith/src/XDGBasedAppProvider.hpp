@@ -126,11 +126,9 @@ private:
 
 		bool operator<(const RankedCandidate& other) const {
 			if (rank != other.rank) {
-				// Primary sort: descending by rank (highest rank first). 
-				return rank > other.rank;
+				return rank > other.rank; // primary sort: descending by rank (highest rank first).
 			}
-			// Secondary sort: ascending by name for stability when ranks are equal.
-			return entry && other.entry && entry->name < other.entry->name;
+			return entry && other.entry && entry->name < other.entry->name; // secondary sort: ascending by name
 		}
 	};
 
@@ -144,11 +142,11 @@ private:
 			std::string source_path;
 		};
 
-		// Maps MIME type -> default application from [Default Applications].
+		// MIME type -> default application from [Default Applications].
 		std::unordered_map<std::string, AssociationSource> defaults;
-		// Maps MIME type -> list of apps from [Added Associations].
+		// MIME type -> list of apps from [Added Associations].
 		std::unordered_map<std::string, std::vector<AssociationSource>> added;
-		// Maps MIME type -> set of apps from [Removed Associations].
+		// MIME type -> set of apps from [Removed Associations].
 		std::unordered_map<std::string, std::unordered_set<std::string>> removed;
 	};
 
@@ -179,15 +177,12 @@ private:
 	void FindCandidatesFromMimeLists(const std::vector<std::string>& prioritized_mimes, std::unordered_map<AppUniqueKey, RankedCandidate, AppUniqueKeyHash>& unique_candidates);
 	void FindCandidatesFromCache(const std::vector<std::string>& prioritized_mimes, std::unordered_map<AppUniqueKey, RankedCandidate, AppUniqueKeyHash>& unique_candidates);
 	void FindCandidatesByFullScan(const std::vector<std::string>& prioritized_mimes, std::unordered_map<AppUniqueKey, RankedCandidate, AppUniqueKeyHash>& unique_candidates);
-	void RegisterCandidate(std::unordered_map<AppUniqueKey, RankedCandidate, AppUniqueKeyHash>& unique_candidates, const DesktopEntry& entry, int rank, const std::string& source_info);
 	void ValidateAndRegisterCandidate(std::unordered_map<AppUniqueKey, RankedCandidate, AppUniqueKeyHash>& unique_candidates, const std::string& app_desktop_file, int rank, const std::string& source_info);
+	void RegisterCandidate(std::unordered_map<AppUniqueKey, RankedCandidate, AppUniqueKeyHash>& unique_candidates, const DesktopEntry& entry, int rank, const std::string& source_info);
 	void AddOrUpdateCandidate(std::unordered_map<AppUniqueKey, RankedCandidate, AppUniqueKeyHash>& unique_candidates, const DesktopEntry& entry, int rank, const std::string& source_info);
 	static bool IsAssociationRemoved(const MimeAssociation& associations, const std::string& mime_type, const std::string& app_desktop_file);
 	void SortFinalCandidates(std::vector<RankedCandidate>& candidates) const;
-	static std::string GetDefaultApp(const std::string& mime_type);
-	static bool CheckExecutable(const std::string& path);
 	static CandidateInfo ConvertDesktopEntryToCandidateInfo(const DesktopEntry& desktop_entry);
-	static bool HasFieldCode(const std::string& exec, const std::string& codes_to_find);
 
 	// --- File MIME Type Detection & Expansion ---
 	RawMimeSet GetRawMimeSet(const std::string& pathname_mb);
@@ -197,26 +192,33 @@ private:
 	std::string MimeTypeByExtension(const std::string& escaped_pathname);
 
 	// --- XDG Database Parsing & Caching ---
-	void ParseAllMimeinfoCacheFiles(const std::vector<std::string>& search_paths, std::unordered_map<std::string, std::vector<MimeAssociation::AssociationSource>>& mime_cache);
+	const std::optional<DesktopEntry>& GetCachedDesktopEntry(const std::string& desktop_file);
 	void BuildMimeTypeToAppIndex(const std::vector<std::string>& search_paths, std::unordered_map<std::string, std::vector<const DesktopEntry*>>& index);
+	void ParseAllMimeinfoCacheFiles(const std::vector<std::string>& search_paths, std::unordered_map<std::string, std::vector<MimeAssociation::AssociationSource>>& mime_cache);
+	static MimeAssociation ParseMimeappsLists(const std::vector<std::string>& paths);
+	static void ParseMimeappsList(const std::string& path, MimeAssociation& associations);
+	static std::optional<DesktopEntry> ParseDesktopFile(const std::string& path);
+	static std::string GetLocalizedValue(const std::unordered_map<std::string, std::string>& values, const std::string& base_key);
+	void ParseMimeinfoCache(const std::string& path, std::unordered_map<std::string, std::vector<MimeAssociation::AssociationSource>>& mime_cache);
 	static std::unordered_map<std::string, std::string> LoadMimeAliases();
 	static std::unordered_map<std::string, std::string> LoadMimeSubclasses();
-	const std::optional<DesktopEntry>& GetCachedDesktopEntry(const std::string& desktop_file);
-	static std::optional<DesktopEntry> ParseDesktopFile(const std::string& path);
-	static void ParseMimeappsList(const std::string& path, MimeAssociation& associations);
-	static MimeAssociation ParseMimeappsLists(const std::vector<std::string>& paths);
-	void ParseMimeinfoCache(const std::string& path, std::unordered_map<std::string, std::vector<MimeAssociation::AssociationSource>>& mime_cache);
-	static std::string GetLocalizedValue(const std::unordered_map<std::string, std::string>& values, const std::string& base_key);
-	static std::vector<std::string> GetMimeDatabaseSearchPaths();
 	static std::vector<std::string> GetDesktopFileSearchPaths();
 	static std::vector<std::string> GetMimeappsListSearchPaths();
+	static std::vector<std::string> GetMimeDatabaseSearchPaths();
 
 	// --- Command line constructing ---
-	static std::string UnescapeGeneralString(const std::string& raw_str);
 	static std::vector<std::string> TokenizeExecString(const std::string& exec_str);
+	static std::string UnescapeGeneralString(const std::string& raw_str);
 	static bool ExpandFieldCodes(const DesktopEntry& candidate, const std::string& pathname, const std::string& unescaped, std::vector<std::string>& out_args);
+	static bool HasFieldCode(const std::string& exec, const std::string& codes_to_find);
 	static std::string PathToUri(const std::string& path);
 	static std::string EscapeArg(const std::string& arg);
+
+	// --- System & Environment Helpers ---
+	static std::string GetDefaultApp(const std::string& mime_type);
+	static bool CheckExecutable(const std::string& path);
+	static std::string GetEnv(const char* var, const char* default_val = "");
+	static std::string RunCommandAndCaptureOutput(const std::string& cmd);
 
 	// --- Common helper functions ---
 	static std::string Trim(std::string str);
@@ -225,8 +227,7 @@ private:
 	static std::string GetBaseName(const std::string& path);
 	static bool IsValidDir(const std::string& path);
 	static bool IsReadableFile(const std::string &path);
-	static std::string RunCommandAndCaptureOutput(const std::string& cmd);
-	static std::string GetEnv(const char* var, const char* default_val = "");
+
 
 	// WARNING: This cache is a std::map on purpose.
 	// It owns all DesktopEntry objects for the duration of a GetAppCandidates call.
@@ -290,7 +291,6 @@ private:
 		~OperationContext();                       // Clears fields
 	};
 	friend struct OperationContext;
-
 };
 
 #endif

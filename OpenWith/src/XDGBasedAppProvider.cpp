@@ -284,47 +284,7 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 }
 
 
-// Finds all candidates for a single file's expanded MIME list.
-std::vector<XDGBasedAppProvider::RankedCandidate> XDGBasedAppProvider::ResolveCandidatesForMimeProfile(
-	const std::vector<std::string>& prioritized_mimes)
-{
-	// This map will store the final, unique candidates for this MIME list.
-	std::unordered_map<AppUniqueKey, RankedCandidate, AppUniqueKeyHash> unique_candidates;
 
-	// Check for a global default app using 'xdg-mime query default'.
-	std::string global_default_app = GetDefaultApp(prioritized_mimes.empty() ? "" : prioritized_mimes[0]);
-
-	if (!global_default_app.empty()) {
-		const auto& mime_for_default = prioritized_mimes[0];
-		// Access association rules from the operation-scoped field
-		if (!IsAssociationRemoved(this->_op_associations.value(), mime_for_default, global_default_app)) {
-			int rank = (prioritized_mimes.size() - 0) * Ranking::SPECIFICITY_MULTIPLIER + Ranking::SOURCE_RANK_GLOBAL_DEFAULT;
-			// Pass the mutable unique_candidates map to the helper
-			ValidateAndRegisterCandidate(unique_candidates, global_default_app, rank,  "xdg-mime query default " + mime_for_default);
-		}
-	}
-
-	// Find candidates from mimeapps.list files.
-	FindCandidatesFromMimeLists(prioritized_mimes, unique_candidates);
-
-	// Find candidates using either mimeinfo.cache for speed, or a full scan as a fallback.
-	// Both strategies now use the pre-built _op_... data structures.
-	if (_use_mimeinfo_cache) {
-		FindCandidatesFromCache(prioritized_mimes, unique_candidates);
-	} else {
-		FindCandidatesByFullScan(prioritized_mimes, unique_candidates);
-	}
-
-	std::vector<RankedCandidate> sorted_candidates;
-	sorted_candidates.reserve(unique_candidates.size());
-	for (const auto& [key, ranked_candidate] : unique_candidates) {
-		sorted_candidates.push_back(ranked_candidate);
-	}
-
-	SortFinalCandidates(sorted_candidates);
-
-	return sorted_candidates;
-}
 
 
 // Constructs command lines according to the Exec= key in the .desktop file.
@@ -543,7 +503,51 @@ std::vector<std::wstring> XDGBasedAppProvider::GetMimeTypes(const std::vector<st
 }
 
 
-// ******************** Searching and ranking candidates logic ********************
+
+// ****************************** Searching and ranking candidates logic ******************************
+
+
+// Finds all candidates for a single file's expanded MIME list.
+std::vector<XDGBasedAppProvider::RankedCandidate> XDGBasedAppProvider::ResolveCandidatesForMimeProfile(
+	const std::vector<std::string>& prioritized_mimes)
+{
+	// This map will store the final, unique candidates for this MIME list.
+	std::unordered_map<AppUniqueKey, RankedCandidate, AppUniqueKeyHash> unique_candidates;
+
+	// Check for a global default app using 'xdg-mime query default'.
+	std::string global_default_app = GetDefaultApp(prioritized_mimes.empty() ? "" : prioritized_mimes[0]);
+
+	if (!global_default_app.empty()) {
+		const auto& mime_for_default = prioritized_mimes[0];
+		// Access association rules from the operation-scoped field
+		if (!IsAssociationRemoved(this->_op_associations.value(), mime_for_default, global_default_app)) {
+			int rank = (prioritized_mimes.size() - 0) * Ranking::SPECIFICITY_MULTIPLIER + Ranking::SOURCE_RANK_GLOBAL_DEFAULT;
+			// Pass the mutable unique_candidates map to the helper
+			ValidateAndRegisterCandidate(unique_candidates, global_default_app, rank,  "xdg-mime query default " + mime_for_default);
+		}
+	}
+
+	// Find candidates from mimeapps.list files.
+	FindCandidatesFromMimeLists(prioritized_mimes, unique_candidates);
+
+	// Find candidates using either mimeinfo.cache for speed, or a full scan as a fallback.
+	// Both strategies now use the pre-built _op_... data structures.
+	if (_use_mimeinfo_cache) {
+		FindCandidatesFromCache(prioritized_mimes, unique_candidates);
+	} else {
+		FindCandidatesByFullScan(prioritized_mimes, unique_candidates);
+	}
+
+	std::vector<RankedCandidate> sorted_candidates;
+	sorted_candidates.reserve(unique_candidates.size());
+	for (const auto& [key, ranked_candidate] : unique_candidates) {
+		sorted_candidates.push_back(ranked_candidate);
+	}
+
+	SortFinalCandidates(sorted_candidates);
+
+	return sorted_candidates;
+}
 
 
 // Finds candidates from the parsed mimeapps.list files. This is a high-priority source.
@@ -771,8 +775,8 @@ void XDGBasedAppProvider::AddOrUpdateCandidate(std::unordered_map<AppUniqueKey, 
 }
 
 
-// Checks if an application association for a given MIME type is explicitly
-// removed in the [Removed Associations] section of mimeapps.list.
+// Checks if an application association for a given MIME type is explicitly removed
+// in the [Removed Associations] section of mimeapps.list.
 bool XDGBasedAppProvider::IsAssociationRemoved(const MimeAssociation& associations, const std::string& mime_type, const std::string& app_desktop_file)
 {
 	// 1. Check for an exact match (e.g., "image/jpeg")
@@ -805,15 +809,39 @@ void XDGBasedAppProvider::SortFinalCandidates(std::vector<RankedCandidate>& cand
 			return a.entry->name < b.entry->name;
 		});
 	} else {
-		// Use the standard ranking defined in the < operator for RankedCandidate
-		// (sorts by rank descending, then name ascending).
+		// Use the standard ranking defined in the < operator for RankedCandidate (sorts by rank descending, then name ascending).
 		std::sort(candidates.begin(), candidates.end());
 	}
 }
 
 
-// ****************************** MIME types detection ******************************
+// Converts a parsed DesktopEntry object into a CandidateInfo struct for the UI.
+CandidateInfo XDGBasedAppProvider::ConvertDesktopEntryToCandidateInfo(const DesktopEntry& desktop_entry)
+{
+	CandidateInfo candidate;
+	candidate.terminal = desktop_entry.terminal;
+	candidate.name = StrMB2Wide(desktop_entry.name);
 
+	// The ID is the basename of the .desktop file (e.g., "firefox.desktop").
+	// This is used for lookups and to handle overrides correctly.
+	candidate.id = StrMB2Wide(GetBaseName(desktop_entry.desktop_file));
+
+	const std::string& exec = desktop_entry.exec;
+
+	// Correctly check for multi-file and single-file field codes, respecting '%%' escapes.
+	bool has_multi_file_code = HasFieldCode(exec, "FU");
+	bool has_single_file_code = HasFieldCode(exec, "fu");
+
+	// An app is "multi-file aware" if it has %F/%U, or no file codes at all
+	// (in which case files are appended).
+	candidate.multi_file_aware = has_multi_file_code || (!has_multi_file_code && !has_single_file_code);
+
+	return candidate;
+}
+
+
+
+// ****************************** File MIME Type Detection & Expansion ******************************
 
 // Gathers the "raw" MIME types from all enabled detection methods for a single file.
 XDGBasedAppProvider::RawMimeSet XDGBasedAppProvider::GetRawMimeSet(const std::string& pathname)
@@ -839,55 +867,6 @@ XDGBasedAppProvider::RawMimeSet XDGBasedAppProvider::GetRawMimeSet(const std::st
 	}
 
 	return raw_set;
-}
-
-
-// Parses all mimeinfo.cache files found in the XDG search paths into a single map, avoiding repeated file I/O.
-void XDGBasedAppProvider::ParseAllMimeinfoCacheFiles(const std::vector<std::string>& search_paths, std::unordered_map<std::string, std::vector<MimeAssociation::AssociationSource>>& mime_cache)
-{
-	for (const auto& dir : search_paths) {
-		std::string cache_path = dir + "/mimeinfo.cache";
-		if (IsReadableFile(cache_path)) {
-			ParseMimeinfoCache(cache_path, mime_cache);
-		}
-	}
-}
-
-
-// Builds an in-memory index that maps a MIME type to a list of DesktopEntry pointers
-// that can handle it. This avoids repeated filesystem scanning.
-void XDGBasedAppProvider::BuildMimeTypeToAppIndex(const std::vector<std::string>& search_paths, std::unordered_map<std::string, std::vector<const DesktopEntry*>>& index)
-{
-	for (const auto& dir : search_paths) {
-		DIR* dir_stream = opendir(dir.c_str());
-		if (!dir_stream) continue;
-
-		struct dirent* dir_entry;
-		while ((dir_entry = readdir(dir_stream))) {
-			std::string filename = dir_entry->d_name;
-			if (filename.size() <= 8 || filename.substr(filename.size() - 8) != ".desktop") {
-				continue;
-			}
-
-			// This will use the operation-scoped desktop paths and the class-level desktop entry cache.
-			const auto& desktop_entry_opt = GetCachedDesktopEntry(filename);
-			if (!desktop_entry_opt.has_value()) {
-				continue;
-			}
-
-			// A non-owning pointer is safe because _desktop_entry_cache is a std::map, which has pointer stability.
-			const DesktopEntry* entry_ptr = &desktop_entry_opt.value();
-
-			// Split the MimeType= key and populate the index for each MIME type.
-			std::vector<std::string> entry_mimes = SplitString(entry_ptr->mimetype, ';');
-			for (const auto& mime : entry_mimes) {
-				if (!mime.empty()) {
-					index[mime].push_back(entry_ptr);
-				}
-			}
-		}
-		closedir(dir_stream);
-	}
 }
 
 
@@ -1053,7 +1032,7 @@ std::string XDGBasedAppProvider::MimeTypeByExtension(const std::string& pathname
 	// This is not comprehensive but covers many common cases if other tools fail.
 	static const std::unordered_map<std::string, std::string> s_ext_to_type_map = {
 
-	// Shell / scripts / source code
+		// Shell / scripts / source code
 
 		{".sh",    "application/x-shellscript"},
 		{".bash",  "application/x-shellscript"},
@@ -1239,96 +1218,8 @@ std::string XDGBasedAppProvider::MimeTypeByExtension(const std::string& pathname
 }
 
 
-// Returns XDG-compliant search paths for MIME database files (aliases, subclasses, etc.)
-std::vector<std::string> XDGBasedAppProvider::GetMimeDatabaseSearchPaths()
-{
-	std::vector<std::string> paths;
-	std::unordered_set<std::string> seen_paths;
 
-	auto add_path = [&](const std::string& p) {
-		if (!p.empty() && seen_paths.insert(p).second) {
-			paths.push_back(p);
-		}
-	};
-
-	std::string xdg_data_home = XDGBasedAppProvider::GetEnv("XDG_DATA_HOME", "");
-	if (!xdg_data_home.empty()) {
-		add_path(xdg_data_home + "/mime");
-	} else {
-		add_path(XDGBasedAppProvider::GetEnv("HOME", "") + "/.local/share/mime");
-	}
-
-	std::string xdg_data_dirs = XDGBasedAppProvider::GetEnv("XDG_DATA_DIRS", "/usr/local/share:/usr/share");
-	for (const auto& dir : XDGBasedAppProvider::SplitString(xdg_data_dirs, ':')) {
-		add_path(dir + "/mime");
-	}
-	return paths;
-}
-
-
-// Loads the MIME alias map (alias -> canonical) from all 'aliases' files.
-std::unordered_map<std::string, std::string> XDGBasedAppProvider::LoadMimeAliases()
-{
-	std::unordered_map<std::string, std::string> alias_to_canonical_map;
-	auto mime_paths = GetMimeDatabaseSearchPaths();
-
-	// Iterate paths from high priority (user) to low priority (system).
-	for (const auto& path : mime_paths) {
-		std::string alias_file_path = path + "/aliases";
-		std::ifstream file(alias_file_path);
-		if (!file.is_open()) continue;
-
-		std::string line;
-		while (std::getline(file, line)) {
-			line = XDGBasedAppProvider::Trim(line);
-			if (line.empty() || line[0] == '#') continue;
-
-			std::stringstream ss(line);
-			std::string alias_mime, canonical_mime;
-			if (ss >> alias_mime >> canonical_mime) {
-				// Use try_emplace to ensure that only the first-encountered alias
-				// (from the highest-priority file) is inserted.
-				alias_to_canonical_map.try_emplace(alias_mime, canonical_mime);
-			}
-		}
-	}
-	return alias_to_canonical_map;
-}
-
-
-// Loads the MIME type inheritance map (child -> parent) from all 'subclasses' files.
-// Files with higher priority (user-specific) override lower-priority (system) ones.
-std::unordered_map<std::string, std::string> XDGBasedAppProvider::LoadMimeSubclasses()
-{
-	std::unordered_map<std::string, std::string> child_to_parent_map;
-	auto mime_paths = GetMimeDatabaseSearchPaths();
-
-	// Iterate paths from low priority (system) to high (user).
-	// This ensures that user-defined rules in higher-priority files
-	// will overwrite the system-wide ones when inserted into the map.
-	for (auto it = mime_paths.rbegin(); it != mime_paths.rend(); ++it) {
-		std::string subclasses_file_path = *it + "/subclasses";
-		std::ifstream file(subclasses_file_path);
-		if (!file.is_open()) continue;
-
-		std::string line;
-		while (std::getline(file, line)) {
-			line = Trim(line);
-			if (line.empty() || line[0] == '#') continue;
-
-			std::stringstream ss(line);
-			std::string child_mime, parent_mime;
-			if (ss >> child_mime >> parent_mime) {
-				child_to_parent_map[child_mime] = parent_mime;
-			}
-		}
-	}
-	return child_to_parent_map;
-}
-
-
-// ****************************** Parsing XDG files and data ******************************
-
+// ****************************** XDG Database Parsing & Caching ******************************
 
 // Retrieves a DesktopEntry from the cache or parses it from disk if not present.
 // This function now uses the operation-scoped search paths and the class-level cache.
@@ -1350,6 +1241,116 @@ const std::optional<DesktopEntry>& XDGBasedAppProvider::GetCachedDesktopEntry(co
 	}
 	// Cache a nullopt if the file is not found anywhere to avoid repeated searches.
 	return _desktop_entry_cache[desktop_file] = std::nullopt;
+}
+
+
+// Builds an in-memory index that maps a MIME type to a list of DesktopEntry pointers
+// that can handle it. This avoids repeated filesystem scanning.
+void XDGBasedAppProvider::BuildMimeTypeToAppIndex(const std::vector<std::string>& search_paths, std::unordered_map<std::string, std::vector<const DesktopEntry*>>& index)
+{
+	for (const auto& dir : search_paths) {
+		DIR* dir_stream = opendir(dir.c_str());
+		if (!dir_stream) continue;
+
+		struct dirent* dir_entry;
+		while ((dir_entry = readdir(dir_stream))) {
+			std::string filename = dir_entry->d_name;
+			if (filename.size() <= 8 || filename.substr(filename.size() - 8) != ".desktop") {
+				continue;
+			}
+
+			// This will use the operation-scoped desktop paths and the class-level desktop entry cache.
+			const auto& desktop_entry_opt = GetCachedDesktopEntry(filename);
+			if (!desktop_entry_opt.has_value()) {
+				continue;
+			}
+
+			// A non-owning pointer is safe because _desktop_entry_cache is a std::map, which has pointer stability.
+			const DesktopEntry* entry_ptr = &desktop_entry_opt.value();
+
+			// Split the MimeType= key and populate the index for each MIME type.
+			std::vector<std::string> entry_mimes = SplitString(entry_ptr->mimetype, ';');
+			for (const auto& mime : entry_mimes) {
+				if (!mime.empty()) {
+					index[mime].push_back(entry_ptr);
+				}
+			}
+		}
+		closedir(dir_stream);
+	}
+}
+
+
+// Parses all mimeinfo.cache files found in the XDG search paths into a single map, avoiding repeated file I/O.
+void XDGBasedAppProvider::ParseAllMimeinfoCacheFiles(const std::vector<std::string>& search_paths, std::unordered_map<std::string, std::vector<MimeAssociation::AssociationSource>>& mime_cache)
+{
+	for (const auto& dir : search_paths) {
+		std::string cache_path = dir + "/mimeinfo.cache";
+		if (IsReadableFile(cache_path)) {
+			ParseMimeinfoCache(cache_path, mime_cache);
+		}
+	}
+}
+
+
+
+// Combines multiple mimeapps.list files into a single association structure.
+// The order of paths is important, from high priority to low.
+XDGBasedAppProvider::MimeAssociation XDGBasedAppProvider::ParseMimeappsLists(const std::vector<std::string>& paths)
+{
+	MimeAssociation associations;
+	// The `paths` vector is already sorted from high-priority (user)
+	// to low-priority (system).
+	for (const auto& path : paths) {
+		ParseMimeappsList(path, associations);
+	}
+	return associations;
+}
+
+
+// Parses a single mimeapps.list file, extracting Default/Added/Removed associations.
+void XDGBasedAppProvider::ParseMimeappsList(const std::string& path, MimeAssociation& associations)
+{
+	std::ifstream file(path);
+	if (!file.is_open()) return;
+
+	std::string line, current_section;
+	while (std::getline(file, line)) {
+		line = Trim(line);
+		if (line.empty() || line[0] == '#') continue;
+
+		if (line[0] == '[' && line.back() == ']') {
+			current_section = line;
+			continue;
+		}
+
+		auto eq_pos = line.find('=');
+		if (eq_pos == std::string::npos) continue;
+
+		std::string key = Trim(line.substr(0, eq_pos)); // MIME type
+		std::string value = Trim(line.substr(eq_pos + 1)); // Semicolon-separated .desktop files
+		auto values = SplitString(value, ';');
+
+		if (values.empty()) continue;
+
+		if (current_section == "[Default Applications]") {
+			// Only use the first default if not already set, as higher priority files are parsed first.
+			if (associations.defaults.find(key) == associations.defaults.end()) {
+				associations.defaults[key] = { values[0], path };
+			}
+		} else if (current_section == "[Added Associations]") {
+			auto& vec = associations.added[key];
+			for (const auto& v : values) {
+				if (!v.empty()) {
+					vec.push_back({v, path});
+				}
+			}
+		} else if (current_section == "[Removed Associations]") {
+			for(const auto& v : values) {
+				if(!v.empty()) associations.removed[key].insert(v);
+			}
+		}
+	}
 }
 
 
@@ -1427,63 +1428,40 @@ std::optional<DesktopEntry> XDGBasedAppProvider::ParseDesktopFile(const std::str
 }
 
 
-// Parses a single mimeapps.list file, extracting Default/Added/Removed associations.
-void XDGBasedAppProvider::ParseMimeappsList(const std::string& path, MimeAssociation& associations)
+// Retrieves a localized string value (e.g., Name[en_US]) from a map of key-value pairs,
+// following the locale resolution logic based on environment variables.
+// Priority: LC_ALL -> LC_MESSAGES -> LANG.
+// Fallback: full locale (en_US) -> language only (en) -> unlocalized key.
+std::string XDGBasedAppProvider::GetLocalizedValue(const std::unordered_map<std::string, std::string>& values,
+												   const std::string& base_key)
 {
-	std::ifstream file(path);
-	if (!file.is_open()) return;
-
-	std::string line, current_section;
-	while (std::getline(file, line)) {
-		line = Trim(line);
-		if (line.empty() || line[0] == '#') continue;
-
-		if (line[0] == '[' && line.back() == ']') {
-			current_section = line;
-			continue;
-		}
-
-		auto eq_pos = line.find('=');
-		if (eq_pos == std::string::npos) continue;
-
-		std::string key = Trim(line.substr(0, eq_pos)); // MIME type
-		std::string value = Trim(line.substr(eq_pos + 1)); // Semicolon-separated .desktop files
-		auto values = SplitString(value, ';');
-
-		if (values.empty()) continue;
-
-		if (current_section == "[Default Applications]") {
-			// Only use the first default if not already set, as higher priority files are parsed first.
-			if (associations.defaults.find(key) == associations.defaults.end()) {
-				associations.defaults[key] = { values[0], path };
+	const char* env_vars[] = {"LC_ALL", "LC_MESSAGES", "LANG"};
+	for (const auto* var : env_vars) {
+		const char* value = getenv(var);
+		if (value && *value && std::strlen(value) >= 2) {
+			std::string locale(value);
+			// Remove character set suffix (e.g., en_US.UTF-8 -> en_US).
+			size_t dot_pos = locale.find('.');
+			if (dot_pos != std::string::npos) {
+				locale = locale.substr(0, dot_pos);
 			}
-		} else if (current_section == "[Added Associations]") {
-			auto& vec = associations.added[key];
-			for (const auto& v : values) {
-				if (!v.empty()) {
-					vec.push_back({v, path});
+			if (!locale.empty()) {
+				// Try full locale (e.g., Name[en_US]).
+				auto it = values.find(base_key + "[" + locale + "]");
+				if (it != values.end()) return it->second;
+				// Try language part only (e.g., Name[en]).
+				size_t underscore_pos = locale.find('_');
+				if (underscore_pos != std::string::npos) {
+					std::string lang_only = locale.substr(0, underscore_pos);
+					it = values.find(base_key + "[" + lang_only + "]");
+					if (it != values.end()) return it->second;
 				}
 			}
-		} else if (current_section == "[Removed Associations]") {
-			for(const auto& v : values) {
-				if(!v.empty()) associations.removed[key].insert(v);
-			}
 		}
 	}
-}
-
-
-// Combines multiple mimeapps.list files into a single association structure.
-// The order of paths is important, from high priority to low.
-XDGBasedAppProvider::MimeAssociation XDGBasedAppProvider::ParseMimeappsLists(const std::vector<std::string>& paths)
-{
-	MimeAssociation associations;
-	// The `paths` vector is already sorted from high-priority (user)
-	// to low-priority (system).
-	for (const auto& path : paths) {
-		ParseMimeappsList(path, associations);
-	}
-	return associations;
+	// Fallback to the unlocalized key (e.g., Name=).
+	auto it = values.find(base_key);
+	return (it != values.end()) ? it->second : "";
 }
 
 
@@ -1532,258 +1510,65 @@ void XDGBasedAppProvider::ParseMimeinfoCache(const std::string& path,
 }
 
 
-
-// Retrieves a localized string value (e.g., Name[en_US]) from a map of key-value pairs,
-// following the locale resolution logic based on environment variables.
-// Priority: LC_ALL -> LC_MESSAGES -> LANG.
-// Fallback: full locale (en_US) -> language only (en) -> unlocalized key.
-std::string XDGBasedAppProvider::GetLocalizedValue(const std::unordered_map<std::string, std::string>& values,
-												   const std::string& base_key)
+// Loads the MIME alias map (alias -> canonical) from all 'aliases' files.
+std::unordered_map<std::string, std::string> XDGBasedAppProvider::LoadMimeAliases()
 {
-	const char* env_vars[] = {"LC_ALL", "LC_MESSAGES", "LANG"};
-	for (const auto* var : env_vars) {
-		const char* value = getenv(var);
-		if (value && *value && std::strlen(value) >= 2) {
-			std::string locale(value);
-			// Remove character set suffix (e.g., en_US.UTF-8 -> en_US).
-			size_t dot_pos = locale.find('.');
-			if (dot_pos != std::string::npos) {
-				locale = locale.substr(0, dot_pos);
-			}
-			if (!locale.empty()) {
-				// Try full locale (e.g., Name[en_US]).
-				auto it = values.find(base_key + "[" + locale + "]");
-				if (it != values.end()) return it->second;
-				// Try language part only (e.g., Name[en]).
-				size_t underscore_pos = locale.find('_');
-				if (underscore_pos != std::string::npos) {
-					std::string lang_only = locale.substr(0, underscore_pos);
-					it = values.find(base_key + "[" + lang_only + "]");
-					if (it != values.end()) return it->second;
-				}
+	std::unordered_map<std::string, std::string> alias_to_canonical_map;
+	auto mime_paths = GetMimeDatabaseSearchPaths();
+
+	// Iterate paths from high priority (user) to low priority (system).
+	for (const auto& path : mime_paths) {
+		std::string alias_file_path = path + "/aliases";
+		std::ifstream file(alias_file_path);
+		if (!file.is_open()) continue;
+
+		std::string line;
+		while (std::getline(file, line)) {
+			line = XDGBasedAppProvider::Trim(line);
+			if (line.empty() || line[0] == '#') continue;
+
+			std::stringstream ss(line);
+			std::string alias_mime, canonical_mime;
+			if (ss >> alias_mime >> canonical_mime) {
+				// Use try_emplace to ensure that only the first-encountered alias
+				// (from the highest-priority file) is inserted.
+				alias_to_canonical_map.try_emplace(alias_mime, canonical_mime);
 			}
 		}
 	}
-	// Fallback to the unlocalized key (e.g., Name=).
-	auto it = values.find(base_key);
-	return (it != values.end()) ? it->second : "";
+	return alias_to_canonical_map;
 }
 
 
-
-// ****************************** Command line constructing ******************************
-
-
-// Performs the first-pass un-escaping for a raw string from a .desktop file.
-// This handles general GKeyFile-style escape sequences like '\\' -> '\', '\s' -> ' ', etc.
-std::string XDGBasedAppProvider::UnescapeGeneralString(const std::string& raw_str)
+// Loads the MIME type inheritance map (child -> parent) from all 'subclasses' files.
+// Files with higher priority (user-specific) override lower-priority (system) ones.
+std::unordered_map<std::string, std::string> XDGBasedAppProvider::LoadMimeSubclasses()
 {
-	std::string result;
-	result.reserve(raw_str.length());
+	std::unordered_map<std::string, std::string> child_to_parent_map;
+	auto mime_paths = GetMimeDatabaseSearchPaths();
 
-	for (size_t i = 0; i < raw_str.length(); ++i) {
-		if (raw_str[i] == '\\') {
-			if (i + 1 < raw_str.length()) {
-				i++; // Move to the character after the backslash
-				switch (raw_str[i]) {
-				case 's': result += ' '; break;
-				case 'n': result += '\n'; break;
-				case 't': result += '\t'; break;
-				case 'r': result += '\r'; break;
-				case '\\': result += '\\'; break;
-				default:
-					// For unknown escape sequences, the backslash is dropped
-					// and the character is preserved.
-					result += raw_str[i];
-					break;
-				}
-			} else {
-				// A trailing backslash at the end of the string is treated as a literal.
-				result += '\\';
-			}
-		} else {
-			result += raw_str[i];
-		}
-	}
-	return result;
-}
+	// Iterate paths from low priority (system) to high (user).
+	// This ensures that user-defined rules in higher-priority files
+	// will overwrite the system-wide ones when inserted into the map.
+	for (auto it = mime_paths.rbegin(); it != mime_paths.rend(); ++it) {
+		std::string subclasses_file_path = *it + "/subclasses";
+		std::ifstream file(subclasses_file_path);
+		if (!file.is_open()) continue;
 
+		std::string line;
+		while (std::getline(file, line)) {
+			line = Trim(line);
+			if (line.empty() || line[0] == '#') continue;
 
-// Tokenizes the Exec= string into a vector of arguments, handling quotes and escapes
-// as defined by the Desktop Entry Specification.
-std::vector<std::string> XDGBasedAppProvider::TokenizeExecString(const std::string& exec_str)
-{
-	// Pass 1: Handle general GKeyFile string escapes.
-	const std::string unescaped_str = UnescapeGeneralString(exec_str);
-
-	// Pass 2: Tokenize the result.
-	std::vector<std::string> tokens;
-	std::string current_token;
-	bool in_quotes = false;
-
-	for (size_t i = 0; i < unescaped_str.length(); ++i) {
-		char c = unescaped_str[i];
-
-		if (in_quotes) {
-			if (c == '"') {
-				in_quotes = false; // end of quoted section
-			} else if (c == '\\') {
-				// Handle escaped characters inside a quoted section.
-				if (i + 1 < unescaped_str.length()) {
-					// The spec mentions `\"`, `\``, `\$`, and `\\`.
-					// A robust implementation simply un-escapes the next character.
-					current_token += unescaped_str[++i];
-				} else {
-					// A trailing backslash is treated as a literal.
-					current_token += c;
-				}
-			} else {
-				current_token += c;
-			}
-		} else { // not in a quoted section
-			if (isspace(c)) { // use isspace for both ' ' and '\t'
-				// A whitespace character separates arguments.
-				if (!current_token.empty()) {
-					tokens.push_back(current_token);
-					current_token.clear();
-				}
-			} else if (c == '"') {
-				in_quotes = true; // start of a quoted section
-			} else {
-				// Append regular character to the current token.
-				current_token += c;
+			std::stringstream ss(line);
+			std::string child_mime, parent_mime;
+			if (ss >> child_mime >> parent_mime) {
+				child_to_parent_map[child_mime] = parent_mime;
 			}
 		}
 	}
-
-	// Add the final token if the string didn't end with a separator.
-	if (!current_token.empty()) {
-		tokens.push_back(current_token);
-	}
-
-	return tokens;
+	return child_to_parent_map;
 }
-
-
-// Converts absolute local filepath to a file:// URI.
-// This function implements percent-encoding according to RFC 3986.
-// It ensures that all characters except for the "unreserved" set and
-// the filepath separator '/' are encoded. This implementation is locale-independent.
-std::string XDGBasedAppProvider::PathToUri(const std::string& absolute_local_filepath)
-{
-	std::stringstream uri_stream;
-	uri_stream << "file://";
-	// Use std::uppercase for hex values to comply with the RFC 3986 recommendation.
-	uri_stream << std::hex << std::uppercase << std::setfill('0');
-
-	for (const unsigned char c : absolute_local_filepath) {
-		// Perform a locale-independent check for unreserved characters (RFC 3986)
-		// plus the path separator '/'.
-		if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
-			|| c == '-' || c == '_' || c == '.' || c == '~' || c == '/')
-		{
-			uri_stream << c;
-		} else {
-			// Percent-encode all other characters.
-			// setw(2) ensures a leading zero for single-digit hex values (e.g., %0F).
-			uri_stream << '%' << std::setw(2) << static_cast<int>(c);
-		}
-	}
-	return uri_stream.str();
-}
-
-
-// Expands XDG Desktop Entry field codes (%f, %u, %c, etc.).
-// This function correctly distinguishes between field codes that expect a local
-// file path (%f, %F) and those that expect a URI (%u, %U).
-bool XDGBasedAppProvider::ExpandFieldCodes(const DesktopEntry& candidate,
-										   const std::string& pathname,
-										   const std::string& unescaped,
-										   std::vector<std::string>& out_args)
-{
-	std::string cur;
-	for (size_t i = 0; i < unescaped.size(); ++i) {
-		char c = unescaped[i];
-		if (c == '%') {
-			if (i + 1 >= unescaped.size()) return false; // Dangling '%' is an error.
-			char code = unescaped[i + 1];
-			++i;
-			switch (code) {
-			case 'f': case 'F': // %f, %F expect a local path.
-				cur += pathname;
-				break;
-			case 'u': case 'U': // %u, %U expect a URI.
-				cur += PathToUri(pathname); // Convert the local path to a file:// URI.
-				break;
-			case 'c': // The application's name (from the Name= key).
-				cur += candidate.name;
-				break;
-			case '%': // A literal '%' character.
-				cur.push_back('%');
-				break;
-			// Deprecated and unused field codes are silently ignored
-			case 'n': case 'd': case 'D': case 't': case 'T': case 'v': case 'm':
-			case 'k': case 'i':
-				break;
-			default:
-				// Any other field code is invalid.
-				return false;
-			}
-		} else {
-			cur.push_back(c);
-		}
-	}
-	if (!cur.empty()) out_args.push_back(cur);
-	return true;
-}
-
-
-// Escapes a single command-line argument for safe execution by the shell.
-// This function uses the most robust method for shell escaping: enclosing the
-// argument in single quotes. Any literal single quotes within the argument are
-// handled using the standard `'\''` sequence.
-// An optimization is included to avoid quoting arguments that are already safe,
-// improving command line readability. The safety check is locale-independent.
-std::string XDGBasedAppProvider::EscapeArg(const std::string& arg)
-{
-	if (arg.empty()) {
-		return "''"; // An empty string is represented as '' in the shell.
-	}
-
-	bool is_safe = true;
-	for (const unsigned char c : arg) {
-		// Perform a locale-independent check for 7-bit ASCII characters.
-		if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
-			  || c == '/' || c == '.' || c == '_' || c == '-'))
-		{
-			is_safe = false;
-			break;
-		}
-	}
-
-	if (is_safe) {
-		return arg;
-	}
-
-	std::string out;
-	out.push_back('\'');
-	for (const unsigned char uc : arg) {
-		if (uc == '\'') {
-			// A single quote cannot be escaped inside a single-quoted string.
-			// The standard method is to end the string (''), add an escaped quote (\'),
-			// and start a new string (''). For example, "it's" becomes 'it'\''s'.
-			out.append("'\\''");
-		} else {
-			out.push_back(static_cast<char>(uc));
-		}
-	}
-	out.push_back('\'');
-	return out;
-}
-
-
-
-// ****************************** Paths and the System environment helpers ******************************
 
 
 // Returns XDG-compliant search paths for .desktop files, ordered by priority.
@@ -1871,6 +1656,292 @@ std::vector<std::string> XDGBasedAppProvider::GetMimeappsListSearchPaths()
 }
 
 
+// Returns XDG-compliant search paths for MIME database files (aliases, subclasses, etc.)
+std::vector<std::string> XDGBasedAppProvider::GetMimeDatabaseSearchPaths()
+{
+	std::vector<std::string> paths;
+	std::unordered_set<std::string> seen_paths;
+
+	auto add_path = [&](const std::string& p) {
+		if (!p.empty() && seen_paths.insert(p).second) {
+			paths.push_back(p);
+		}
+	};
+
+	std::string xdg_data_home = XDGBasedAppProvider::GetEnv("XDG_DATA_HOME", "");
+	if (!xdg_data_home.empty()) {
+		add_path(xdg_data_home + "/mime");
+	} else {
+		add_path(XDGBasedAppProvider::GetEnv("HOME", "") + "/.local/share/mime");
+	}
+
+	std::string xdg_data_dirs = XDGBasedAppProvider::GetEnv("XDG_DATA_DIRS", "/usr/local/share:/usr/share");
+	for (const auto& dir : XDGBasedAppProvider::SplitString(xdg_data_dirs, ':')) {
+		add_path(dir + "/mime");
+	}
+	return paths;
+}
+
+
+
+// ****************************** Command line constructing ******************************
+
+// Tokenizes the Exec= string into a vector of arguments, handling quotes and escapes
+// as defined by the Desktop Entry Specification.
+std::vector<std::string> XDGBasedAppProvider::TokenizeExecString(const std::string& exec_str)
+{
+	// Pass 1: Handle general GKeyFile string escapes.
+	const std::string unescaped_str = UnescapeGeneralString(exec_str);
+
+	// Pass 2: Tokenize the result.
+	std::vector<std::string> tokens;
+	std::string current_token;
+	bool in_quotes = false;
+
+	for (size_t i = 0; i < unescaped_str.length(); ++i) {
+		char c = unescaped_str[i];
+
+		if (in_quotes) {
+			if (c == '"') {
+				in_quotes = false; // end of quoted section
+			} else if (c == '\\') {
+				// Handle escaped characters inside a quoted section.
+				if (i + 1 < unescaped_str.length()) {
+					// The spec mentions `\"`, `\``, `\$`, and `\\`.
+					// A robust implementation simply un-escapes the next character.
+					current_token += unescaped_str[++i];
+				} else {
+					// A trailing backslash is treated as a literal.
+					current_token += c;
+				}
+			} else {
+				current_token += c;
+			}
+		} else { // not in a quoted section
+			if (isspace(c)) { // use isspace for both ' ' and '\t'
+				// A whitespace character separates arguments.
+				if (!current_token.empty()) {
+					tokens.push_back(current_token);
+					current_token.clear();
+				}
+			} else if (c == '"') {
+				in_quotes = true; // start of a quoted section
+			} else {
+				// Append regular character to the current token.
+				current_token += c;
+			}
+		}
+	}
+
+	// Add the final token if the string didn't end with a separator.
+	if (!current_token.empty()) {
+		tokens.push_back(current_token);
+	}
+
+	return tokens;
+}
+
+
+// Performs the first-pass un-escaping for a raw string from a .desktop file.
+// This handles general GKeyFile-style escape sequences like '\\' -> '\', '\s' -> ' ', etc.
+std::string XDGBasedAppProvider::UnescapeGeneralString(const std::string& raw_str)
+{
+	std::string result;
+	result.reserve(raw_str.length());
+
+	for (size_t i = 0; i < raw_str.length(); ++i) {
+		if (raw_str[i] == '\\') {
+			if (i + 1 < raw_str.length()) {
+				i++; // Move to the character after the backslash
+				switch (raw_str[i]) {
+				case 's': result += ' '; break;
+				case 'n': result += '\n'; break;
+				case 't': result += '\t'; break;
+				case 'r': result += '\r'; break;
+				case '\\': result += '\\'; break;
+				default:
+					// For unknown escape sequences, the backslash is dropped
+					// and the character is preserved.
+					result += raw_str[i];
+					break;
+				}
+			} else {
+				// A trailing backslash at the end of the string is treated as a literal.
+				result += '\\';
+			}
+		} else {
+			result += raw_str[i];
+		}
+	}
+	return result;
+}
+
+
+// Expands XDG Desktop Entry field codes (%f, %u, %c, etc.).
+// This function correctly distinguishes between field codes that expect a local
+// file path (%f, %F) and those that expect a URI (%u, %U).
+bool XDGBasedAppProvider::ExpandFieldCodes(const DesktopEntry& candidate,
+										   const std::string& pathname,
+										   const std::string& unescaped,
+										   std::vector<std::string>& out_args)
+{
+	std::string cur;
+	for (size_t i = 0; i < unescaped.size(); ++i) {
+		char c = unescaped[i];
+		if (c == '%') {
+			if (i + 1 >= unescaped.size()) return false; // Dangling '%' is an error.
+			char code = unescaped[i + 1];
+			++i;
+			switch (code) {
+			case 'f': case 'F': // %f, %F expect a local path.
+				cur += pathname;
+				break;
+			case 'u': case 'U': // %u, %U expect a URI.
+				cur += PathToUri(pathname); // Convert the local path to a file:// URI.
+				break;
+			case 'c': // The application's name (from the Name= key).
+				cur += candidate.name;
+				break;
+			case '%': // A literal '%' character.
+				cur.push_back('%');
+				break;
+			// Deprecated and unused field codes are silently ignored
+			case 'n': case 'd': case 'D': case 't': case 'T': case 'v': case 'm':
+			case 'k': case 'i':
+				break;
+			default:
+				// Any other field code is invalid.
+				return false;
+			}
+		} else {
+			cur.push_back(c);
+		}
+	}
+	if (!cur.empty()) out_args.push_back(cur);
+	return true;
+}
+
+
+// Searches the Exec string for any field code characters specified in 'codes_to_find'.
+// This function correctly handles escaped '%%' sequences according to the XDG specification.
+bool XDGBasedAppProvider::HasFieldCode(const std::string& exec, const std::string& codes_to_find)
+{
+	size_t pos = 0;
+	// Find the next occurrence of '%' starting from the current position.
+	while ((pos = exec.find('%', pos)) != std::string::npos) {
+		// Ensure there is a character following the '%'. A trailing '%' is not a field code.
+		if (pos + 1 >= exec.size()) {
+			break;
+		}
+
+		const char next_char = exec[pos + 1];
+
+		// If the character following '%' is not one of the codes we are looking for,
+		// it might be '%%' or another irrelevant code. Skip it and continue searching.
+		if (codes_to_find.find(next_char) == std::string::npos) {
+			pos++;
+			continue;
+		}
+
+		// A potential field code (e.g., %F) has been found. Now, we must check if it's escaped.
+		// Count the number of consecutive '%' characters immediately preceding our find.
+		size_t preceding_percents = 0;
+		size_t check_pos = pos;
+		while (check_pos > 0 && exec[check_pos - 1] == '%') {
+			preceding_percents++;
+			check_pos--;
+		}
+
+		// If the number of preceding '%' is even (0, 2, 4...), the current '%' is not escaped
+		// and thus starts a valid field code (e.g., %F, %%%F).
+		if (preceding_percents % 2 == 0) {
+			return true;
+		}
+
+		// If the number is odd, the current '%' is part of an escaped sequence (e.g., %%F, %%%%F).
+		// We must ignore it and continue the search from the next character.
+		pos++;
+	}
+
+	return false;
+}
+
+
+// Converts absolute local filepath to a file:// URI.
+// This function implements percent-encoding according to RFC 3986.
+// It ensures that all characters except for the "unreserved" set and
+// the filepath separator '/' are encoded. This implementation is locale-independent.
+std::string XDGBasedAppProvider::PathToUri(const std::string& absolute_local_filepath)
+{
+	std::stringstream uri_stream;
+	uri_stream << "file://";
+	// Use std::uppercase for hex values to comply with the RFC 3986 recommendation.
+	uri_stream << std::hex << std::uppercase << std::setfill('0');
+
+	for (const unsigned char c : absolute_local_filepath) {
+		// Perform a locale-independent check for unreserved characters (RFC 3986)
+		// plus the path separator '/'.
+		if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+			|| c == '-' || c == '_' || c == '.' || c == '~' || c == '/')
+		{
+			uri_stream << c;
+		} else {
+			// Percent-encode all other characters.
+			// setw(2) ensures a leading zero for single-digit hex values (e.g., %0F).
+			uri_stream << '%' << std::setw(2) << static_cast<int>(c);
+		}
+	}
+	return uri_stream.str();
+}
+
+
+// Escapes a single command-line argument for safe execution by the shell.
+// This function uses the most robust method for shell escaping: enclosing the
+// argument in single quotes. Any literal single quotes within the argument are
+// handled using the standard `'\''` sequence.
+// An optimization is included to avoid quoting arguments that are already safe,
+// improving command line readability. The safety check is locale-independent.
+std::string XDGBasedAppProvider::EscapeArg(const std::string& arg)
+{
+	if (arg.empty()) {
+		return "''"; // An empty string is represented as '' in the shell.
+	}
+
+	bool is_safe = true;
+	for (const unsigned char c : arg) {
+		// Perform a locale-independent check for 7-bit ASCII characters.
+		if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+			  || c == '/' || c == '.' || c == '_' || c == '-'))
+		{
+			is_safe = false;
+			break;
+		}
+	}
+
+	if (is_safe) {
+		return arg;
+	}
+
+	std::string out;
+	out.push_back('\'');
+	for (const unsigned char uc : arg) {
+		if (uc == '\'') {
+			// A single quote cannot be escaped inside a single-quoted string.
+			// The standard method is to end the string (''), add an escaped quote (\'),
+			// and start a new string (''). For example, "it's" becomes 'it'\''s'.
+			out.append("'\\''");
+		} else {
+			out.push_back(static_cast<char>(uc));
+		}
+	}
+	out.push_back('\'');
+	return out;
+}
+
+
+
+// ****************************** System & Environment Helpers ******************************
+
 // Runs 'xdg-mime query default' to find the system's default handler for a MIME type.
 std::string XDGBasedAppProvider::GetDefaultApp(const std::string& mime_type)
 {
@@ -1937,9 +2008,16 @@ std::string XDGBasedAppProvider::GetEnv(const char* var, const char* default_val
 }
 
 
+// Runs a shell command and captures its standard output.
+std::string XDGBasedAppProvider::RunCommandAndCaptureOutput(const std::string& cmd)
+{
+	std::string result;
+	return POpen(result, cmd.c_str()) ? Trim(result) : "";
+}
+
+
 
 // ****************************** Common helper functions ******************************
-
 
 // Trims whitespace from both ends of a string.
 std::string XDGBasedAppProvider::Trim(std::string str)
@@ -2020,83 +2098,8 @@ bool XDGBasedAppProvider::IsReadableFile(const std::string &path) {
 }
 
 
-// Runs a shell command and captures its standard output.
-std::string XDGBasedAppProvider::RunCommandAndCaptureOutput(const std::string& cmd)
-{
-	std::string result;
-	return POpen(result, cmd.c_str()) ? Trim(result) : "";
-}
 
-
-// Searches the Exec string for any field code characters specified in 'codes_to_find'.
-// This function correctly handles escaped '%%' sequences according to the XDG specification.
-bool XDGBasedAppProvider::HasFieldCode(const std::string& exec, const std::string& codes_to_find)
-{
-	size_t pos = 0;
-	// Find the next occurrence of '%' starting from the current position.
-	while ((pos = exec.find('%', pos)) != std::string::npos) {
-		// Ensure there is a character following the '%'. A trailing '%' is not a field code.
-		if (pos + 1 >= exec.size()) {
-			break;
-		}
-
-		const char next_char = exec[pos + 1];
-
-		// If the character following '%' is not one of the codes we are looking for,
-		// it might be '%%' or another irrelevant code. Skip it and continue searching.
-		if (codes_to_find.find(next_char) == std::string::npos) {
-			pos++;
-			continue;
-		}
-
-		// A potential field code (e.g., %F) has been found. Now, we must check if it's escaped.
-		// Count the number of consecutive '%' characters immediately preceding our find.
-		size_t preceding_percents = 0;
-		size_t check_pos = pos;
-		while (check_pos > 0 && exec[check_pos - 1] == '%') {
-			preceding_percents++;
-			check_pos--;
-		}
-
-		// If the number of preceding '%' is even (0, 2, 4...), the current '%' is not escaped
-		// and thus starts a valid field code (e.g., %F, %%%F).
-		if (preceding_percents % 2 == 0) {
-			return true;
-		}
-
-		// If the number is odd, the current '%' is part of an escaped sequence (e.g., %%F, %%%%F).
-		// We must ignore it and continue the search from the next character.
-		pos++;
-	}
-
-	return false;
-}
-
-
-// Converts a parsed DesktopEntry object into a CandidateInfo struct for the UI.
-CandidateInfo XDGBasedAppProvider::ConvertDesktopEntryToCandidateInfo(const DesktopEntry& desktop_entry)
-{
-	CandidateInfo candidate;
-	candidate.terminal = desktop_entry.terminal;
-	candidate.name = StrMB2Wide(desktop_entry.name);
-
-	// The ID is the basename of the .desktop file (e.g., "firefox.desktop").
-	// This is used for lookups and to handle overrides correctly.
-	candidate.id = StrMB2Wide(GetBaseName(desktop_entry.desktop_file));
-
-	const std::string& exec = desktop_entry.exec;
-
-	// Correctly check for multi-file and single-file field codes, respecting '%%' escapes.
-	bool has_multi_file_code = HasFieldCode(exec, "FU");
-	bool has_single_file_code = HasFieldCode(exec, "fu");
-
-	// An app is "multi-file aware" if it has %F/%U, or no file codes at all
-	// (in which case files are appended).
-	candidate.multi_file_aware = has_multi_file_code || (!has_multi_file_code && !has_single_file_code);
-
-	return candidate;
-}
-
+// ****************************** RAII cache helper ******************************
 
 // Constructor for the RAII helper.
 // This populates all operation-scoped class fields.
