@@ -115,8 +115,8 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 	// --- Case 1: Handle the simple single-file ---
 	if (pathnames.size() == 1) {
 
-		RawMimeSet raw_mime_set = GetRawMimeSet(StrWide2MB(pathnames[0]));
-		auto prioritized_mimes = ExpandAndPrioritizeMimeTypes(raw_mime_set);
+		auto profile = GetRawMimeProfile(StrWide2MB(pathnames[0]));
+		auto prioritized_mimes = ExpandAndPrioritizeMimeTypes(profile);
 		auto ranked_candidates = ResolveCandidatesForExpandedMimeProfile(prioritized_mimes);
 
 		std::vector<CandidateInfo> result;
@@ -133,38 +133,37 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 	// --- Case 2: Logic for Multiple Files ---
 
 	// Step 1: Group N files into K unique "MIME profiles".
-	std::unordered_set<RawMimeSet, RawMimeSet::Hash> unique_profiles;
+	std::unordered_set<RawMimeProfile, RawMimeProfile::Hash> unique_profiles;
 	for (const auto& w_pathname : pathnames) {
-		unique_profiles.insert(GetRawMimeSet(StrWide2MB(w_pathname))); // N calls to external tools
+		unique_profiles.insert(GetRawMimeProfile(StrWide2MB(w_pathname))); // N calls to external tools
 	}
 
 	// Step 2: Gather candidates K times, not N times. (K = unique_profiles.size())
-	std::unordered_map<RawMimeSet, std::vector<RankedCandidate>, RawMimeSet::Hash> candidate_cache;
+	std::unordered_map<RawMimeProfile, std::vector<RankedCandidate>, RawMimeProfile::Hash> candidate_cache;
 
 	if (unique_profiles.empty()) {
 		return {};
 	}
 
-	for (const auto& raw_mime_set : unique_profiles) {
-		auto prioritized_mimes = ExpandAndPrioritizeMimeTypes(raw_mime_set);
+	for (const auto& profile : unique_profiles) {
+		auto prioritized_mimes = ExpandAndPrioritizeMimeTypes(profile);
 		auto candidates = ResolveCandidatesForExpandedMimeProfile(prioritized_mimes);
 
-		// Fail-fast optimization: If any profile has zero candidates, the
-		// final intersection will be empty. We can stop all work immediately.
+		// Fail-fast optimization: If any profile has zero candidates, the final intersection will be empty.
 		if (candidates.empty()) {
-			return {};
+			return {}; // we can stop all work immediately.
 		}
 
 		// Use std::move as 'candidates' is a local rvalue.
-		candidate_cache[raw_mime_set] = std::move(candidates);
+		candidate_cache[profile] = std::move(candidates);
 	}
 
 	// Step 3: Iterative Intersection using the K-sized cache.
 
 	// Step 3a: Optimization: Find the profile with the *smallest* candidate set.
 	// Intersection will be much faster if we start with the most restrictive set.
+
 	auto smallest_set_it = unique_profiles.begin();
-	// We know from Step 2 that no candidate list is empty, so min_size > 0.
 	size_t min_size = candidate_cache.at(*smallest_set_it).size();
 
 	for (auto it = std::next(smallest_set_it); it != unique_profiles.end(); ++it) {
@@ -176,8 +175,7 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 	}
 
 	// Step 3b: Establish a baseline set from the *smallest* profile.
-	const RawMimeSet base_profile = *smallest_set_it;
-	// Use .at() for const-correctness; we know the key exists from Step 2.
+	const RawMimeProfile base_profile = *smallest_set_it;
 	std::vector<RankedCandidate>& baseline_candidates = candidate_cache.at(base_profile);
 
 	CandidateMap final_candidates;
@@ -188,36 +186,32 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 		}
 	}
 
-	// Step 3c: Iteratively intersect with candidates from all *other* profiles.
-	// This loop runs (K - 1) times.
+	// Step 3c: Iteratively intersect with candidates from all *other* profiles. This loop runs (K - 1) times.
 	for (const auto& current_profile : unique_profiles) {
-		// Skip the profile we already used as the baseline.
 		if (current_profile == base_profile) {
-			continue;
+			continue;	// skip the profile we already used as the baseline.
 		}
 
-		// Get the *cached* list of candidates for this new profile.
-		std::vector<RankedCandidate>& candidates_for_current_file = candidate_cache.at(current_profile);
+		// Get the *cached* list of candidates for the current profile.
+		std::vector<RankedCandidate>& candidates_for_current_profile = candidate_cache.at(current_profile);
 
-		// For efficient intersection, create a lookup map of candidates for the current file.
-		std::unordered_map<AppUniqueKey, const RankedCandidate*, AppUniqueKeyHash> current_file_candidates_map;
-		current_file_candidates_map.reserve(candidates_for_current_file.size());
-		for (const auto& candidate : candidates_for_current_file) {
+		// For efficient intersection, create a lookup map of candidates for the current profile.
+		std::unordered_map<AppUniqueKey, const RankedCandidate*, AppUniqueKeyHash> current_profile_candidates_map;
+		current_profile_candidates_map.reserve(candidates_for_current_profile.size());
+		for (const auto& candidate : candidates_for_current_profile) {
 			if (candidate.entry) {
-				current_file_candidates_map.try_emplace(AppUniqueKey{candidate.entry->name, candidate.entry->exec}, &candidate);
+				current_profile_candidates_map.try_emplace(AppUniqueKey{candidate.entry->name, candidate.entry->exec}, &candidate);
 			}
 		}
 
-		// Iterate through our master list (`final_candidates`) and remove any app
-		// that cannot handle the current file's profile.
+		// Iterate through our master list (`final_candidates`) and remove any app that cannot handle the current profile.
 		for (auto it = final_candidates.begin(); it != final_candidates.end(); ) {
-			auto find_it = current_file_candidates_map.find(it->first);
-
-			if (find_it == current_file_candidates_map.end()) {
-				// This app is not in the list for the current file, so remove it.
+			auto find_it = current_profile_candidates_map.find(it->first);
+			if (find_it == current_profile_candidates_map.end()) {
+				// This app is not in the list for the current profile, so remove it.
 				it = final_candidates.erase(it);
 			} else {
-				// The app is valid. Update its rank if this file provides a better one.
+				// The app is valid. Update its rank if this profile provides a better one.
 				const RankedCandidate* current_candidate_ptr = find_it->second;
 				if (current_candidate_ptr->rank > it->second.rank) {
 					it->second.rank = current_candidate_ptr->rank;
@@ -790,34 +784,29 @@ CandidateInfo XDGBasedAppProvider::ConvertDesktopEntryToCandidateInfo(const Desk
 // ****************************** File MIME Type Detection & Expansion ******************************
 
 // Gathers the "raw" MIME types from all enabled detection methods for a single file.
-XDGBasedAppProvider::RawMimeSet XDGBasedAppProvider::GetRawMimeSet(const std::string& pathname)
+XDGBasedAppProvider::RawMimeProfile XDGBasedAppProvider::GetRawMimeProfile(const std::string& pathname)
 {
-	RawMimeSet raw_mime_set;
-
-	raw_mime_set.is_readable_file = IsReadableFile(pathname);
-
-	if (!raw_mime_set.is_readable_file) {
-		raw_mime_set.is_valid_dir = IsValidDir(pathname);
+	RawMimeProfile profile;
+	profile.is_readable_file = IsReadableFile(pathname);
+	if (!profile.is_readable_file) {
+		profile.is_valid_dir = IsValidDir(pathname);
 	}
-
 	// Only run detection tools if the path is a file or directory
-	if (raw_mime_set.is_valid_dir || raw_mime_set.is_readable_file)
+	if (profile.is_valid_dir || profile.is_readable_file)
 	{
-		raw_mime_set.xdg_mime = MimeTypeFromXdgMimeTool(pathname);
-		raw_mime_set.file_mime = MimeTypeFromFileTool(pathname);
-
+		profile.xdg_mime = MimeTypeFromXdgMimeTool(pathname);
+		profile.file_mime = MimeTypeFromFileTool(pathname);
 		// Extension fallback only makes sense for files
-		if (raw_mime_set.is_readable_file) {
-			raw_mime_set.ext_mime = MimeTypeByExtension(pathname);
+		if (profile.is_readable_file) {
+			profile.ext_mime = MimeTypeByExtension(pathname);
 		}
 	}
-
-	return raw_mime_set;
+	return profile;
 }
 
 
 // Expands and prioritizes MIME types for a file using multiple methods.
-std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const RawMimeSet& raw_mime_set)
+std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const RawMimeProfile& profile)
 {
 	std::vector<std::string> mime_types;
 	std::unordered_set<std::string> seen;
@@ -831,13 +820,13 @@ std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const
 	};
 
 	// Use the pre-calculated boolean flags from the RawMimeSet
-	if (raw_mime_set.is_valid_dir || raw_mime_set.is_readable_file) {
+	if (profile.is_valid_dir || profile.is_readable_file) {
 
 		// --- Step 1: Initial, most specific MIME type detection ---
 		// Use the pre-detected types from the RawMimeSet
-		add_unique(raw_mime_set.xdg_mime);
-		add_unique(raw_mime_set.file_mime);
-		add_unique(raw_mime_set.ext_mime); // this will be empty if it was a directory
+		add_unique(profile.xdg_mime);
+		add_unique(profile.file_mime);
+		add_unique(profile.ext_mime); // this will be empty if it was a directory
 
 		// --- Step 2: Iteratively expand the MIME type list with parents and aliases ---
 		if (_op_subclasses || _op_aliases) {
@@ -936,7 +925,7 @@ std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const
 
 		if (_show_universal_handlers) {
 			// --- Step 5: Add the ultimate fallback for any binary data ---
-			if (raw_mime_set.is_readable_file) {
+			if (profile.is_readable_file) {
 				add_unique("application/octet-stream");
 			}
 		}

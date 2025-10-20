@@ -51,8 +51,7 @@ public:
 private:
 
 	// Represents the "raw" MIME profile of a file, derived from all available detection tools before any expansion.
-	// This struct is used as a "fingerprint" to group files of the identical type and cache their candidate lists.
-	struct RawMimeSet
+	struct RawMimeProfile
 	{
 		std::string xdg_mime;  // result from xdg-mime query filetype
 		std::string file_mime; // result from file --mime-type
@@ -60,7 +59,7 @@ private:
 		bool is_valid_dir = false;
 		bool is_readable_file = false;
 
-		bool operator==(const RawMimeSet& other) const
+		bool operator==(const RawMimeProfile& other) const
 		{
 			return xdg_mime == other.xdg_mime &&
 				   file_mime == other.file_mime &&
@@ -69,10 +68,10 @@ private:
 				   is_readable_file == other.is_readable_file;
 		}
 
-		// Custom hash function to allow RawMimeSet to be used as a key in std::unordered_map.
+		// Custom hash function to allow RawMimeProfile to be used as a key in std::unordered_map.
 		struct Hash
 		{
-			std::size_t operator()(const RawMimeSet& s) const noexcept
+			std::size_t operator()(const RawMimeProfile& s) const noexcept
 			{
 				std::size_t h1 = std::hash<std::string>{}(s.xdg_mime);
 				std::size_t h2 = std::hash<std::string>{}(s.file_mime);
@@ -191,8 +190,8 @@ private:
 	static CandidateInfo ConvertDesktopEntryToCandidateInfo(const DesktopEntry& desktop_entry);
 
 	// --- File MIME Type Detection & Expansion ---
-	RawMimeSet GetRawMimeSet(const std::string& pathname_mb);
-	std::vector<std::string> ExpandAndPrioritizeMimeTypes(const RawMimeSet& raw_mime_set);
+	RawMimeProfile GetRawMimeProfile(const std::string& pathname_mb);
+	std::vector<std::string> ExpandAndPrioritizeMimeTypes(const RawMimeProfile& profile);
 	std::string MimeTypeFromXdgMimeTool(const std::string& escaped_pathname);
 	std::string MimeTypeFromFileTool(const std::string& escaped_pathname);
 	std::string MimeTypeByExtension(const std::string& escaped_pathname);
