@@ -177,7 +177,8 @@ private:
 	using SettingKeyToMemberPtrMap = std::map<std::wstring, bool XDGBasedAppProvider::*>;
 
 	// --- Searching and ranking candidates logic ---
-	std::vector<RankedCandidate> ResolveCandidatesForExpandedMimeProfile(const std::vector<std::string>& prioritized_mimes);
+	std::vector<RankedCandidate> ResolveMimesToCandidateVector(const std::vector<std::string>& prioritized_mimes);
+	CandidateMap ResolveMimesToCandidateMap(const std::vector<std::string>& prioritized_mimes);
 	static std::string GetDefaultApp(const std::string& mime_type);
 	void FindCandidatesFromMimeLists(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates);
 	void FindCandidatesFromCache(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates);
