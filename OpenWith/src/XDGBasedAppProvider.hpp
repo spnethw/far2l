@@ -183,7 +183,7 @@ private:
 	void RegisterCandidateById(CandidateMap& unique_candidates, const std::string& app_desktop_file, int rank, const std::string& source_info);
 	void RegisterCandidateFromObject(CandidateMap& unique_candidates, const DesktopEntry& entry, int rank, const std::string& source_info);
 	void AddOrUpdateCandidate(CandidateMap& unique_candidates, const DesktopEntry& entry, int rank, const std::string& source_info);
-	static bool IsAssociationRemoved(const MimeappsConfig& mimeapps_config, const std::string& mime_type, const std::string& app_desktop_file);
+	bool IsAssociationRemoved(const std::string& mime_type, const std::string& app_desktop_file);
 	void SortFinalCandidates(std::vector<RankedCandidate>& candidates) const;
 	static CandidateInfo ConvertDesktopEntryToCandidateInfo(const DesktopEntry& desktop_entry);
 
@@ -196,13 +196,13 @@ private:
 
 	// --- XDG Database Parsing & Caching ---
 	const std::optional<DesktopEntry>& GetCachedDesktopEntry(const std::string& desktop_file);
-	void BuildMimeTypeToAppIndex(const std::vector<std::string>& search_paths, MimeToAppIndex& index);
-	void ParseAllMimeinfoCacheFiles(const std::vector<std::string>& search_paths, MimeCacheMap& mime_cache);
+	MimeToAppIndex BuildMimeTypeToAppIndex(const std::vector<std::string>& search_paths);
+	static MimeCacheMap ParseAllMimeinfoCacheFiles(const std::vector<std::string>& search_paths);
 	static MimeappsConfig ParseMimeappsLists(const std::vector<std::string>& paths);
 	static void ParseMimeappsList(const std::string& path, MimeappsConfig& mimeapps_config);
 	static std::optional<DesktopEntry> ParseDesktopFile(const std::string& path);
 	static std::string GetLocalizedValue(const std::unordered_map<std::string, std::string>& values, const std::string& base_key);
-	void ParseMimeinfoCache(const std::string& path, MimeCacheMap& mime_cache);
+	static void ParseMimeinfoCache(const std::string& path, MimeCacheMap& mime_cache);
 	static std::unordered_map<std::string, std::string> LoadMimeAliases();
 	static std::unordered_map<std::string, std::string> LoadMimeSubclasses();
 	static std::vector<std::string> GetDesktopFileSearchPaths();

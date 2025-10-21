@@ -477,9 +477,8 @@ XDGBasedAppProvider::CandidateMap XDGBasedAppProvider::ResolveMimesToCandidateMa
 
 	if (!global_default_app.empty()) {
 		const auto& mime_for_default = prioritized_mimes[0];
-		if (!IsAssociationRemoved(this->_op_mimeapps_config.value(), mime_for_default, global_default_app)) {
+		if (!IsAssociationRemoved(mime_for_default, global_default_app)) {
 			int rank = (prioritized_mimes.size() - 0) * Ranking::SPECIFICITY_MULTIPLIER + Ranking::SOURCE_RANK_GLOBAL_DEFAULT;
-			// Pass the mutable unique_candidates map to the helper
 			RegisterCandidateById(unique_candidates, global_default_app, rank,  "xdg-mime query default " + mime_for_default);
 		}
 	}
@@ -493,7 +492,6 @@ XDGBasedAppProvider::CandidateMap XDGBasedAppProvider::ResolveMimesToCandidateMa
 		FindCandidatesByFullScan(prioritized_mimes, unique_candidates);
 	}
 
-	// Return the map directly without sorting or vector conversion.
 	return unique_candidates;
 }
 
@@ -523,7 +521,7 @@ void XDGBasedAppProvider::FindCandidatesFromMimeAppsLists(const std::vector<std:
 		auto it_defaults = mimeapps_config.defaults.find(mime);
 		if (it_defaults != mimeapps_config.defaults.end()) {
 			const auto& default_app = it_defaults->second;
-			if (!IsAssociationRemoved(mimeapps_config, mime, default_app.desktop_file)) {
+			if (!IsAssociationRemoved(mime, default_app.desktop_file)) {
 				int rank = mime_specificity_rank * Ranking::SPECIFICITY_MULTIPLIER + Ranking::SOURCE_RANK_MIMEAPPS_DEFAULT;
 				std::string source_info = default_app.source_path + StrWide2MB(m_GetMsg(MIn)) + " [Default Applications] " + StrWide2MB(m_GetMsg(MFor)) + mime;
 				RegisterCandidateById(unique_candidates, default_app.desktop_file, rank, source_info);
@@ -533,7 +531,7 @@ void XDGBasedAppProvider::FindCandidatesFromMimeAppsLists(const std::vector<std:
 		auto it_added = mimeapps_config.added.find(mime);
 		if (it_added != mimeapps_config.added.end()) {
 			for (const auto& app_assoc : it_added->second) {
-				if (!IsAssociationRemoved(mimeapps_config, mime, app_assoc.desktop_file)) {
+				if (!IsAssociationRemoved(mime, app_assoc.desktop_file)) {
 					int rank = mime_specificity_rank * Ranking::SPECIFICITY_MULTIPLIER + Ranking::SOURCE_RANK_MIMEAPPS_ADDED;
 					std::string source_info = app_assoc.source_path + StrWide2MB(m_GetMsg(MIn)) + "[Added Associations]" + StrWide2MB(m_GetMsg(MFor)) + mime;
 					RegisterCandidateById(unique_candidates, app_assoc.desktop_file, rank, source_info);
@@ -550,10 +548,7 @@ void XDGBasedAppProvider::FindCandidatesFromMimeinfoCache(const std::vector<std:
 	const int total_mimes = prioritized_mimes.size();
 	// This map tracks the best rank for each app to avoid rank demotion by a less-specific MIME type.
 	std::map<std::string, std::pair<int, std::string>> app_best_rank_and_source;
-
 	const auto& mime_cache = this->_op_mime_cache.value();
-	const auto& mimeapps_config = this->_op_mimeapps_config.value();
-
 	// First, find the best possible rank for each application across all matching MIME types.
 	// This prevents an app from getting a low rank for a generic MIME type (e.g., text/plain)
 	// if it has already been matched with a high-rank specific MIME type.
@@ -566,9 +561,7 @@ void XDGBasedAppProvider::FindCandidatesFromMimeinfoCache(const std::vector<std:
 			for (const auto& handler_provenance : it_cache->second) {
 				const auto& app_desktop_file = handler_provenance.desktop_file;
 				if (app_desktop_file.empty()) continue;
-
-				if (IsAssociationRemoved(mimeapps_config, mime, app_desktop_file)) continue;
-
+				if (IsAssociationRemoved(mime, app_desktop_file)) continue;
 				std::string source_info = handler_provenance.source_path + StrWide2MB(m_GetMsg(MFor)) + mime;
 				auto [it, inserted] = app_best_rank_and_source.try_emplace(app_desktop_file, std::make_pair(rank, source_info));
 				// If not inserted (key existed), update only if the new rank is better.
@@ -591,12 +584,9 @@ void XDGBasedAppProvider::FindCandidatesFromMimeinfoCache(const std::vector<std:
 void XDGBasedAppProvider::FindCandidatesByFullScan(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates)
 {
 	const int total_mimes = prioritized_mimes.size();
-
 	// A map to store the best rank found for each unique application.
 	std::map<const DesktopEntry*, std::pair<int, std::string>> app_best_rank_and_source;
-
 	const auto& mime_to_app_index = this->_op_mime_to_app_index.value();
-	const auto& mimeapps_config = this->_op_mimeapps_config.value();
 
 	// Iterate through all prioritized MIME types for the current file.
 	for (int i = 0; i < total_mimes; ++i) {
@@ -616,7 +606,7 @@ void XDGBasedAppProvider::FindCandidatesByFullScan(const std::vector<std::string
 			if (!entry_ptr) continue;
 
 			// Check if this specific association is explicitly removed in mimeapps.list.
-			if (IsAssociationRemoved(mimeapps_config, mime, GetBaseName(entry_ptr->desktop_file))) {
+			if (IsAssociationRemoved(mime, GetBaseName(entry_ptr->desktop_file))) {
 				continue;
 			}
 
@@ -712,8 +702,11 @@ void XDGBasedAppProvider::AddOrUpdateCandidate(CandidateMap& unique_candidates, 
 
 // Checks if an application association for a given MIME type is explicitly removed
 // in the [Removed Associations] section of mimeapps.list.
-bool XDGBasedAppProvider::IsAssociationRemoved(const MimeappsConfig& mimeapps_config, const std::string& mime_type, const std::string& app_desktop_file)
+bool XDGBasedAppProvider::IsAssociationRemoved(const std::string& mime_type, const std::string& app_desktop_file)
 {
+	// Get the parsed config from the operation-scoped cache.
+	const auto& mimeapps_config = this->_op_mimeapps_config.value();
+
 	// 1. Check for an exact match (e.g., "image/jpeg")
 	auto it_exact = mimeapps_config.removed.find(mime_type);
 	if (it_exact != mimeapps_config.removed.end() && it_exact->second.count(app_desktop_file)) {
@@ -1166,8 +1159,9 @@ const std::optional<DesktopEntry>& XDGBasedAppProvider::GetCachedDesktopEntry(co
 
 // Builds in-memory index that maps a MIME type to a list of DesktopEntry pointers
 // that can handle it. This avoids repeated filesystem scanning.
-void XDGBasedAppProvider::BuildMimeTypeToAppIndex(const std::vector<std::string>& search_paths, MimeToAppIndex& index)
+XDGBasedAppProvider::MimeToAppIndex XDGBasedAppProvider::BuildMimeTypeToAppIndex(const std::vector<std::string>& search_paths)
 {
+	MimeToAppIndex index;
 	for (const auto& dir : search_paths) {
 		DIR* dir_stream = opendir(dir.c_str());
 		if (!dir_stream) continue;
@@ -1179,36 +1173,42 @@ void XDGBasedAppProvider::BuildMimeTypeToAppIndex(const std::vector<std::string>
 				continue;
 			}
 
+			// This call populates _desktop_entry_cache as a side effect.
 			const auto& desktop_entry_opt = GetCachedDesktopEntry(filename);
 			if (!desktop_entry_opt.has_value()) {
 				continue;
 			}
 
-			// A non-owning pointer is safe because _desktop_entry_cache is a std::map, which has pointer stability.
+			// A non-owning pointer is safe because _desktop_entry_cache is a std::map.
 			const DesktopEntry* entry_ptr = &desktop_entry_opt.value();
 
 			// Split the MimeType= key and populate the index for each MIME type.
 			std::vector<std::string> entry_mimes = SplitString(entry_ptr->mimetype, ';');
 			for (const auto& mime : entry_mimes) {
 				if (!mime.empty()) {
+					// Add the pointer to the list for this MIME type.
 					index[mime].push_back(entry_ptr);
 				}
 			}
 		}
 		closedir(dir_stream);
 	}
+	return index;
 }
 
 
 // Parses all mimeinfo.cache files found in the XDG search paths into a single map, avoiding repeated file I/O.
-void XDGBasedAppProvider::ParseAllMimeinfoCacheFiles(const std::vector<std::string>& search_paths, MimeCacheMap& mime_cache)
+XDGBasedAppProvider::MimeCacheMap XDGBasedAppProvider::ParseAllMimeinfoCacheFiles(const std::vector<std::string>& search_paths)
 {
+	MimeCacheMap mime_cache;
 	for (const auto& dir : search_paths) {
 		std::string cache_path = dir + "/mimeinfo.cache";
 		if (IsReadableFile(cache_path)) {
+			// ParseMimeinfoCache is static and populates the local map.
 			ParseMimeinfoCache(cache_path, mime_cache);
 		}
 	}
+	return mime_cache;
 }
 
 
@@ -1995,8 +1995,7 @@ bool XDGBasedAppProvider::IsReadableFile(const std::string &path) {
 
 // ****************************** RAII cache helper ******************************
 
-// Constructor for the RAII helper.
-// This populates all operation-scoped class fields.
+// Constructor for the RAII helper. This populates all operation-scoped class fields.
 XDGBasedAppProvider::OperationContext::OperationContext(XDGBasedAppProvider& p) : provider(p)
 {
 	// 1. Load MIME-related databases
@@ -2021,14 +2020,10 @@ XDGBasedAppProvider::OperationContext::OperationContext(XDGBasedAppProvider& p) 
 	// 3. Build the primary application lookup cache
 	// We build *either* the mimeinfo.cache or the full mime-to-app index, based on settings.
 	if (provider._use_mimeinfo_cache) {
-		provider._op_mime_cache.emplace();
-		// Parse all mimeinfo.cache files into the operation-scoped cache.
-		provider.ParseAllMimeinfoCacheFiles(provider._op_desktop_paths.value(), provider._op_mime_cache.value());
+		provider._op_mime_cache = XDGBasedAppProvider::ParseAllMimeinfoCacheFiles(provider._op_desktop_paths.value());
 	} else {
-		provider._op_mime_to_app_index.emplace();
-		// Build the mime-to-app index. This call will populate the _desktop_entry_cache
-		// as a side effect by calling GetCachedDesktopEntry.
-		provider.BuildMimeTypeToAppIndex(provider._op_desktop_paths.value(), provider._op_mime_to_app_index.value());
+		// This call will populate the _desktop_entry_cache as a side effect.
+		provider._op_mime_to_app_index = provider.BuildMimeTypeToAppIndex(provider._op_desktop_paths.value());
 	}
 }
 
