@@ -484,12 +484,11 @@ XDGBasedAppProvider::CandidateMap XDGBasedAppProvider::ResolveMimesToCandidateMa
 		}
 	}
 
-	// Find candidates from mimeapps.list files.
-	FindCandidatesFromMimeLists(prioritized_mimes, unique_candidates);
+	FindCandidatesFromMimeAppsLists(prioritized_mimes, unique_candidates);
 
 	// Find candidates using either mimeinfo.cache for speed, or a full scan as a fallback.
 	if (_use_mimeinfo_cache) {
-		FindCandidatesFromCache(prioritized_mimes, unique_candidates);
+		FindCandidatesFromMimeinfoCache(prioritized_mimes, unique_candidates);
 	} else {
 		FindCandidatesByFullScan(prioritized_mimes, unique_candidates);
 	}
@@ -510,7 +509,7 @@ std::string XDGBasedAppProvider::GetDefaultApp(const std::string& mime_type)
 
 
 // Finds candidates from the parsed mimeapps.list files. This is a high-priority source.
-void XDGBasedAppProvider::FindCandidatesFromMimeLists(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates)
+void XDGBasedAppProvider::FindCandidatesFromMimeAppsLists(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates)
 {
 	const int total_mimes = prioritized_mimes.size();
 	const auto& mimeapps_config = this->_op_mimeapps_config.value();
@@ -546,7 +545,7 @@ void XDGBasedAppProvider::FindCandidatesFromMimeLists(const std::vector<std::str
 
 
 // Finds candidates from the pre-generated mimeinfo.cache file for performance.
-void XDGBasedAppProvider::FindCandidatesFromCache(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates)
+void XDGBasedAppProvider::FindCandidatesFromMimeinfoCache(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates)
 {
 	const int total_mimes = prioritized_mimes.size();
 	// This map tracks the best rank for each app to avoid rank demotion by a less-specific MIME type.

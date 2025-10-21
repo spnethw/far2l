@@ -104,7 +104,7 @@ private:
 	};
 
 	// A helper struct to define a platform setting, linking its INI key,
-	// UI display name (from lng.hpp), and its corresponding class member variable.
+	// localized UI display name, its corresponding class member variable, and default value.
 	struct PlatformSettingDefinition {
 		std::string key;
 		LanguageID  display_name_id;
@@ -113,12 +113,11 @@ private:
 	};
 
 	// Holds a non-owning pointer to a cached DesktopEntry and its calculated rank.
-	// The operator< is overloaded to sort candidates in descending order of rank.
 	struct RankedCandidate
 	{
-		const DesktopEntry* entry = nullptr; // pointer to the entry in _desktop_entry_cache
-		int rank = 0;                        // calculated rank
-		std::string source_info;             // info string for F3 dialog (e.g., "from mimeinfo.cache")
+		const DesktopEntry* entry = nullptr;
+		int rank = 0;
+		std::string source_info;
 
 		bool operator<(const RankedCandidate& other) const {
 			if (rank != other.rank) {
@@ -178,8 +177,8 @@ private:
 	std::vector<RankedCandidate> ResolveMimesToCandidateVector(const std::vector<std::string>& prioritized_mimes);
 	CandidateMap ResolveMimesToCandidateMap(const std::vector<std::string>& prioritized_mimes);
 	static std::string GetDefaultApp(const std::string& mime_type);
-	void FindCandidatesFromMimeLists(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates);
-	void FindCandidatesFromCache(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates);
+	void FindCandidatesFromMimeAppsLists(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates);
+	void FindCandidatesFromMimeinfoCache(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates);
 	void FindCandidatesByFullScan(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates);
 	void RegisterCandidateById(CandidateMap& unique_candidates, const std::string& app_desktop_file, int rank, const std::string& source_info);
 	void RegisterCandidateFromObject(CandidateMap& unique_candidates, const DesktopEntry& entry, int rank, const std::string& source_info);
