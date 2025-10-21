@@ -136,7 +136,7 @@ private:
 	};
 
 	// Represents the combined associations from all parsed mimeapps.list files.
-	struct MimeappsConfig
+	struct MimeappsListsData
 	{
 		// MIME type -> default application from [Default Applications].
 		std::unordered_map<std::string, HandlerProvenance> defaults;
@@ -169,8 +169,8 @@ private:
 	};
 
 	using CandidateMap = std::unordered_map<AppUniqueKey, RankedCandidate, AppUniqueKeyHash>;
-	using MimeToAppIndex = std::unordered_map<std::string, std::vector<const DesktopEntry*>>;
-	using MimeCacheMap = std::unordered_map<std::string, std::vector<HandlerProvenance>>;
+	using FullScanMimeIndex = std::unordered_map<std::string, std::vector<const DesktopEntry*>>;
+	using MimeinfoCacheData = std::unordered_map<std::string, std::vector<HandlerProvenance>>;
 	using SettingKeyToMemberPtrMap = std::map<std::wstring, bool XDGBasedAppProvider::*>;
 
 	// --- Searching and ranking candidates logic ---
@@ -196,13 +196,13 @@ private:
 
 	// --- XDG Database Parsing & Caching ---
 	const std::optional<DesktopEntry>& GetCachedDesktopEntry(const std::string& desktop_file);
-	MimeToAppIndex BuildMimeTypeToAppIndex(const std::vector<std::string>& search_paths);
-	static MimeCacheMap ParseAllMimeinfoCacheFiles(const std::vector<std::string>& search_paths);
-	static MimeappsConfig ParseMimeappsLists(const std::vector<std::string>& paths);
-	static void ParseMimeappsList(const std::string& path, MimeappsConfig& mimeapps_config);
+	FullScanMimeIndex BuildMimeTypeToAppIndex(const std::vector<std::string>& search_paths);
+	static MimeinfoCacheData ParseAllMimeinfoCacheFiles(const std::vector<std::string>& search_paths);
+	static MimeappsListsData ParseMimeappsLists(const std::vector<std::string>& paths);
+	static void ParseMimeappsList(const std::string& path, MimeappsListsData& mimeapps_lists_data);
 	static std::optional<DesktopEntry> ParseDesktopFile(const std::string& path);
 	static std::string GetLocalizedValue(const std::unordered_map<std::string, std::string>& values, const std::string& base_key);
-	static void ParseMimeinfoCache(const std::string& path, MimeCacheMap& mime_cache);
+	static void ParseMimeinfoCache(const std::string& path, MimeinfoCacheData& mimeinfo_cache_data);
 	static std::unordered_map<std::string, std::string> LoadMimeAliases();
 	static std::unordered_map<std::string, std::string> LoadMimeSubclasses();
 	static std::vector<std::string> GetDesktopFileSearchPaths();
@@ -272,20 +272,19 @@ private:
 	// They are populated once at the start of GetAppCandidates and cleared at the end
 	// to avoid passing them as parameters through the entire call stack.
 
-	std::optional<std::unordered_map<std::string, std::string>> _op_aliases;
-	std::optional<std::unordered_map<std::string, std::string>> _op_subclasses;
-	std::optional<std::unordered_map<std::string, std::vector<std::string>>> _op_canonical_to_aliases_map; // reverse map (canonical -> aliases)
+	std::optional<std::unordered_map<std::string, std::string>> _op_alias_to_canonical_map;
+	std::optional<std::unordered_map<std::string, std::string>> _op_subclass_to_parent_map;
+	std::optional<std::unordered_map<std::string, std::vector<std::string>>> _op_canonical_to_aliases_map;
 
-	std::optional<MimeappsConfig> _op_mimeapps_config;      // combined mimeapps.list data
+	std::optional<MimeappsListsData> _op_mimeapps_lists_data;      // combined mimeapps.list data
 	std::optional<std::vector<std::string>> _op_desktop_paths; // XDG .desktop file search paths
 	std::optional<std::string> _op_current_desktop_env; // $XDG_CURRENT_DESKTOP
 
 	// One of the following two caches will be populated based on settings.
-	std::optional<MimeCacheMap> _op_mime_cache;	// from mimeinfo.cache
-	std::optional<MimeToAppIndex> _op_mime_to_app_index;	// from full .desktop scan
+	std::optional<MimeinfoCacheData> _op_mime_to_handlers_map;	// from mimeinfo.cache
+	std::optional<FullScanMimeIndex> _op_mime_to_desktop_entry_map;	// from full .desktop scan
 
 	// RAII helper to manage the lifecycle of the operation-scoped state.
-	// It populates all _op_... fields on construction and clears them on destruction.
 	struct OperationContext
 	{
 		XDGBasedAppProvider& provider;
