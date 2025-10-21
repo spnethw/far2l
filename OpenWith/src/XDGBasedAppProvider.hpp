@@ -289,8 +289,8 @@ private:
 	struct OperationContext
 	{
 		XDGBasedAppProvider& provider;
-		OperationContext(XDGBasedAppProvider& p); // Populates fields
-		~OperationContext();                       // Clears fields
+		OperationContext(XDGBasedAppProvider& p);
+		~OperationContext();
 	};
 	friend struct OperationContext;
 };

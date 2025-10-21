@@ -485,10 +485,12 @@ XDGBasedAppProvider::CandidateMap XDGBasedAppProvider::ResolveMimesToCandidateMa
 
 	FindCandidatesFromMimeAppsLists(prioritized_mimes, unique_candidates);
 
-	// Find candidates using either mimeinfo.cache for speed, or a full scan as a fallback.
-	if (_use_mimeinfo_cache) {
+	// Find candidates using the cache prepared by OperationContext.
+	if (_op_mime_cache.has_value()) {
+		// Use the results from mimeinfo.cache (it was successfully loaded and was not empty).
 		FindCandidatesFromMimeinfoCache(prioritized_mimes, unique_candidates);
 	} else {
+		// Use the full scan index (either because caching was disabled, or as a fallback).
 		FindCandidatesByFullScan(prioritized_mimes, unique_candidates);
 	}
 
@@ -2020,12 +2022,24 @@ XDGBasedAppProvider::OperationContext::OperationContext(XDGBasedAppProvider& p) 
 	// 3. Build the primary application lookup cache
 	// We build *either* the mimeinfo.cache or the full mime-to-app index, based on settings.
 	if (provider._use_mimeinfo_cache) {
+		// Attempt to load from mimeinfo.cache first, as per user setting.
 		provider._op_mime_cache = XDGBasedAppProvider::ParseAllMimeinfoCacheFiles(provider._op_desktop_paths.value());
-	} else {
+
+		// Fallback: If the cache is empty (files not found or all are empty),
+		// reset the optional. This will trigger the full scan logic below.
+		if (provider._op_mime_cache.value().empty()) {
+			provider._op_mime_cache.reset();
+		}
+	}
+
+	// If caching is disabled (by user) OR the fallback was triggered (cache was empty)...
+	if (!provider._op_mime_cache.has_value()) {
+		// ...populate the index by performing a full scan.
 		// This call will populate the _desktop_entry_cache as a side effect.
 		provider._op_mime_to_app_index = provider.BuildMimeTypeToAppIndex(provider._op_desktop_paths.value());
 	}
 }
+
 
 // Destructor for the RAII helper. This clears all operation-scoped class fields.
 XDGBasedAppProvider::OperationContext::~OperationContext()
