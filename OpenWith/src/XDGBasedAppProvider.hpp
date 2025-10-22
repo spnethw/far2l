@@ -273,9 +273,8 @@ private:
 	// to avoid passing them as parameters through the entire call stack.
 
 	std::optional<std::unordered_map<std::string, std::string>> _op_alias_to_canonical_map;
-	std::optional<std::unordered_map<std::string, std::string>> _op_subclass_to_parent_map;
 	std::optional<std::unordered_map<std::string, std::vector<std::string>>> _op_canonical_to_aliases_map;
-
+	std::optional<std::unordered_map<std::string, std::string>> _op_subclass_to_parent_map;
 	std::optional<MimeappsListsData> _op_mimeapps_lists_data;      // combined mimeapps.list data
 	std::optional<std::vector<std::string>> _op_desktop_paths; // XDG .desktop file search paths
 	std::optional<std::string> _op_current_desktop_env; // $XDG_CURRENT_DESKTOP

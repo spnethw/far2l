@@ -180,7 +180,7 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 			// Get a reference to the *cached map* for the current profile.
 			CandidateMap& candidates_for_current_profile = candidate_cache.at(current_profile);
 
-			// Iterate through our master list (`final_candidates_map`) and remove any app that cannot handle the current profile.
+			// Iterate through our master list (`final_candidates`) and remove any app that cannot handle the current profile.
 			for (auto it = final_candidates.begin(); it != final_candidates.end(); ) {
 				// Search directly in the cached map for the other profile.
 				auto find_it = candidates_for_current_profile.find(it->first);
@@ -482,7 +482,7 @@ std::string XDGBasedAppProvider::GetDefaultApp(const std::string& mime_type)
 void XDGBasedAppProvider::AppendCandidatesFromMimeAppsLists(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates)
 {
 	const int total_mimes = prioritized_mimes.size();
-	const auto& mimeapps_lists_data = this->_op_mimeapps_lists_data.value();
+	const auto& mimeapps_lists_data = _op_mimeapps_lists_data.value();
 
 	for (int i = 0; i < total_mimes; ++i) {
 		const auto& mime = prioritized_mimes[i];
@@ -520,7 +520,7 @@ void XDGBasedAppProvider::AppendCandidatesFromMimeinfoCache(const std::vector<st
 	const int total_mimes = prioritized_mimes.size();
 	// This map tracks the best rank for each app to avoid rank demotion by a less-specific MIME type.
 	std::map<std::string, std::pair<int, std::string>> app_best_rank_and_source;
-	const auto& mime_to_handlers_map = this->_op_mime_to_handlers_map.value();
+	const auto& mime_to_handlers_map = _op_mime_to_handlers_map.value();
 	// First, find the best possible rank for each application across all matching MIME types.
 	// This prevents an app from getting a low rank for a generic MIME type (e.g., text/plain)
 	// if it has already been matched with a high-rank specific MIME type.
@@ -558,7 +558,7 @@ void XDGBasedAppProvider::AppendCandidatesByFullScan(const std::vector<std::stri
 	const int total_mimes = prioritized_mimes.size();
 	// A map to store the best rank found for each unique application.
 	std::map<const DesktopEntry*, std::pair<int, std::string>> app_best_rank_and_source;
-	const auto& mime_to_desktop_entry_map = this->_op_mime_to_desktop_entry_map.value();
+	const auto& mime_to_desktop_entry_map = _op_mime_to_desktop_entry_map.value();
 
 	// Iterate through all prioritized MIME types for the current file.
 	for (int i = 0; i < total_mimes; ++i) {
@@ -629,7 +629,7 @@ void XDGBasedAppProvider::RegisterCandidateFromObject(CandidateMap& unique_candi
 		return;
 	}
 
-	const auto& current_desktop_env = this->_op_current_desktop_env.value();
+	const auto& current_desktop_env = _op_current_desktop_env.value();
 
 	// Optionally filter applications based on the current desktop environment
 	// using the OnlyShowIn and NotShowIn keys.
@@ -677,7 +677,7 @@ void XDGBasedAppProvider::AddOrUpdateCandidate(CandidateMap& unique_candidates, 
 bool XDGBasedAppProvider::IsAssociationRemoved(const std::string& mime_type, const std::string& app_desktop_file)
 {
 	// Get the parsed config from the operation-scoped cache.
-	const auto& mimeapps_lists_data = this->_op_mimeapps_lists_data.value();
+	const auto& mimeapps_lists_data = _op_mimeapps_lists_data.value();
 
 	// 1. Check for an exact match (e.g., "image/jpeg")
 	auto it_exact = mimeapps_lists_data.removed.find(mime_type);
@@ -1149,7 +1149,7 @@ const std::optional<DesktopEntry>& XDGBasedAppProvider::GetCachedDesktopEntry(co
 	}
 
 	// The `desktop_file` parameter is just the basename (e.g., "firefox.desktop")
-	for (const auto& base_dir : this->_op_desktop_paths.value()) {
+	for (const auto& base_dir : _op_desktop_paths.value()) {
 		std::string full_path = base_dir + "/" + desktop_file;
 		if (auto entry = ParseDesktopFile(full_path)) {
 			// A valid entry was found and parsed, cache and return it.
