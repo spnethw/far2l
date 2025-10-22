@@ -838,23 +838,21 @@ std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const
 					// Find aliases for the current canonical MIME type, but filter them
 					// to avoid incorrect associations (e.g., image/* -> text/*).
 
-					if (_op_canonical_to_aliases_map.has_value()) {
-						auto it_aliases = _op_canonical_to_aliases_map->find(current_mime);
-						if (it_aliases != _op_canonical_to_aliases_map->end()) {
-							size_t canonical_slash_pos = current_mime.find('/');
-							// Proceed only if the canonical MIME type has a valid format (e.g., "type/subtype").
-							if (canonical_slash_pos != std::string::npos) {
-								std::string_view canonical_major_type(current_mime.data(), canonical_slash_pos);
-								for (const auto& alias : it_aliases->second) {
-									size_t alias_slash_pos = alias.find('/');
-									if (alias_slash_pos != std::string::npos) {
-										std::string_view alias_major_type(alias.data(), alias_slash_pos);
-										// Add the alias ONLY if its major type matches the canonical one.
-										// This prevents adding, for example, "text/ico" for "image/vnd.microsoft.icon",
-										// but allows adding "image/x-icon".
-										if (alias_major_type == canonical_major_type) {
-											add_unique(alias);
-										}
+					auto it_aliases = _op_canonical_to_aliases_map->find(current_mime);
+					if (it_aliases != _op_canonical_to_aliases_map->end()) {
+						size_t canonical_slash_pos = current_mime.find('/');
+						// Proceed only if the canonical MIME type has a valid format (e.g., "type/subtype").
+						if (canonical_slash_pos != std::string::npos) {
+							std::string_view canonical_major_type(current_mime.data(), canonical_slash_pos);
+							for (const auto& alias : it_aliases->second) {
+								size_t alias_slash_pos = alias.find('/');
+								if (alias_slash_pos != std::string::npos) {
+									std::string_view alias_major_type(alias.data(), alias_slash_pos);
+									// Add the alias ONLY if its major type matches the canonical one.
+									// This prevents adding, for example, "text/ico" for "image/vnd.microsoft.icon",
+									// but allows adding "image/x-icon".
+									if (alias_major_type == canonical_major_type) {
+										add_unique(alias);
 									}
 								}
 							}
@@ -1792,13 +1790,13 @@ bool XDGBasedAppProvider::HasFieldCode(const std::string& exec, const std::strin
 
 
 // Converts absolute local filepath to a file:// URI.
-std::string XDGBasedAppProvider::PathToUri(const std::string& absolute_local_filepath)
+std::string XDGBasedAppProvider::PathToUri(const std::string& path)
 {
 	std::stringstream uri_stream;
 	uri_stream << "file://";
 	uri_stream << std::hex << std::uppercase << std::setfill('0');
 
-	for (const unsigned char c : absolute_local_filepath) {
+	for (const unsigned char c : path) {
 		// Perform a locale-independent check for unreserved characters (RFC 3986) plus the path separator '/'.
 		if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
 			|| c == '-' || c == '_' || c == '.' || c == '~' || c == '/')

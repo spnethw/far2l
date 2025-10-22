@@ -188,11 +188,11 @@ private:
 	static CandidateInfo ConvertDesktopEntryToCandidateInfo(const DesktopEntry& desktop_entry);
 
 	// --- File MIME Type Detection & Expansion ---
-	RawMimeProfile GetRawMimeProfile(const std::string& pathname_mb);
+	RawMimeProfile GetRawMimeProfile(const std::string& pathname);
 	std::vector<std::string> ExpandAndPrioritizeMimeTypes(const RawMimeProfile& profile);
-	std::string MimeTypeFromXdgMimeTool(const std::string& escaped_pathname);
-	std::string MimeTypeFromFileTool(const std::string& escaped_pathname);
-	std::string MimeTypeByExtension(const std::string& escaped_pathname);
+	std::string MimeTypeFromXdgMimeTool(const std::string& pathname);
+	std::string MimeTypeFromFileTool(const std::string& pathname);
+	std::string MimeTypeByExtension(const std::string& pathname);
 
 	// --- XDG Database Parsing & Caching ---
 	const std::optional<DesktopEntry>& GetCachedDesktopEntry(const std::string& desktop_file);
