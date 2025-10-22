@@ -112,7 +112,7 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 	_last_candidates_source_info.clear();
 	OperationContext op_context(*this);
 
-	CandidateMap final_candidates_map; // The resulting map of unique, ranked candidates
+	CandidateMap final_candidates; // The resulting map of unique, ranked candidates
 
 	// --- Case 1: Handle the simple single-file ---
 	if (pathnames.size() == 1) {
@@ -120,7 +120,7 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 		auto prioritized_mimes = ExpandAndPrioritizeMimeTypes(profile);
 
 		// Directly call the map-based resolver
-		final_candidates_map = ResolveMimesToCandidateMap(prioritized_mimes);
+		final_candidates = ResolveMimesToCandidateMap(prioritized_mimes);
 	}
 	else
 	{
@@ -141,12 +141,12 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 
 		for (const auto& profile : unique_profiles) {
 			auto prioritized_mimes = ExpandAndPrioritizeMimeTypes(profile);
-			auto candidates_map = ResolveMimesToCandidateMap(prioritized_mimes);
+			auto candidates_for_current_profile = ResolveMimesToCandidateMap(prioritized_mimes);
 			// Fail-fast optimization: If any profile has zero candidates, the final intersection will be empty.
-			if (candidates_map.empty()) {
+			if (candidates_for_current_profile.empty()) {
 				return {}; // we can stop all work immediately.
 			}
-			candidate_cache[profile] = std::move(candidates_map);
+			candidate_cache[profile] = std::move(candidates_for_current_profile);
 		}
 
 		// Step 3: Iterative Intersection using the K-sized cache.
@@ -168,7 +168,7 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 		// Step 3b: Establish a baseline set by *moving* the smallest map. This avoids any conversion.
 		const RawMimeProfile base_profile = *smallest_set_it;
 		// Use the map that will hold the final intersected results
-		final_candidates_map = std::move(candidate_cache.at(base_profile));
+		final_candidates = std::move(candidate_cache.at(base_profile));
 
 		// Step 3c: Iteratively intersect with candidates from all *other* profiles. This loop runs (K - 1) times.
 		for (const auto& current_profile : unique_profiles) {
@@ -180,12 +180,12 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 			CandidateMap& candidates_for_current_profile = candidate_cache.at(current_profile);
 
 			// Iterate through our master list (`final_candidates_map`) and remove any app that cannot handle the current profile.
-			for (auto it = final_candidates_map.begin(); it != final_candidates_map.end(); ) {
+			for (auto it = final_candidates.begin(); it != final_candidates.end(); ) {
 				// Search directly in the cached map for the other profile.
 				auto find_it = candidates_for_current_profile.find(it->first);
 				if (find_it == candidates_for_current_profile.end()) {
 					// This app is not in the list for the current profile, so remove it.
-					it = final_candidates_map.erase(it);
+					it = final_candidates.erase(it);
 				} else {
 					// The app is valid. Update its rank if this profile provides a better one.
 					const RankedCandidate& current_candidate = find_it->second;
@@ -197,7 +197,7 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 			}
 
 			// Early exit optimization.
-			if (final_candidates_map.empty()) {
+			if (final_candidates.empty()) {
 				return {};
 			}
 		}
@@ -206,10 +206,10 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 	// --- Step 4: Common Post-processing (for both 1 and >1 file cases) ---
 
 	// Convert the final map to a vector and sort it
-	std::vector<RankedCandidate> sorted_finalists = BuildSortedRankedList(final_candidates_map);
+	auto final_candidates_sorted = BuildSortedRankedList(final_candidates);
 
 	// Only store source info (for F3) when a single file is selected
-	return FormatCandidatesForUI(sorted_finalists, /* store_source_info = */ (pathnames.size() == 1));
+	return FormatCandidatesForUI(final_candidates_sorted, /* store_source_info = */ (pathnames.size() == 1));
 }
 
 
