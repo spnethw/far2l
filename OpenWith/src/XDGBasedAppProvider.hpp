@@ -169,16 +169,16 @@ private:
 	};
 
 	using CandidateMap = std::unordered_map<AppUniqueKey, RankedCandidate, AppUniqueKeyHash>;
-	using FullScanMimeIndex = std::unordered_map<std::string, std::vector<const DesktopEntry*>>;
+	using MimeToDesktopEntryIndex = std::unordered_map<std::string, std::vector<const DesktopEntry*>>;
 	using MimeinfoCacheData = std::unordered_map<std::string, std::vector<HandlerProvenance>>;
 	using SettingKeyToMemberPtrMap = std::map<std::wstring, bool XDGBasedAppProvider::*>;
 
 	// --- Searching and ranking candidates logic ---
 	CandidateMap ResolveMimesToCandidateMap(const std::vector<std::string>& prioritized_mimes);
 	static std::string GetDefaultApp(const std::string& mime_type);
-	void FindCandidatesFromMimeAppsLists(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates);
-	void FindCandidatesFromMimeinfoCache(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates);
-	void FindCandidatesByFullScan(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates);
+	void AppendCandidatesFromMimeAppsLists(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates);
+	void AppendCandidatesFromMimeinfoCache(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates);
+	void AppendCandidatesByFullScan(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates);
 	void RegisterCandidateById(CandidateMap& unique_candidates, const std::string& app_desktop_file, int rank, const std::string& source_info);
 	void RegisterCandidateFromObject(CandidateMap& unique_candidates, const DesktopEntry& entry, int rank, const std::string& source_info);
 	void AddOrUpdateCandidate(CandidateMap& unique_candidates, const DesktopEntry& entry, int rank, const std::string& source_info);
@@ -196,13 +196,13 @@ private:
 
 	// --- XDG Database Parsing & Caching ---
 	const std::optional<DesktopEntry>& GetCachedDesktopEntry(const std::string& desktop_file);
-	FullScanMimeIndex BuildMimeTypeToAppIndex(const std::vector<std::string>& search_paths);
+	MimeToDesktopEntryIndex FullScanDesktopFilesAndBuildIndex(const std::vector<std::string>& search_paths);
 	static MimeinfoCacheData ParseAllMimeinfoCacheFiles(const std::vector<std::string>& search_paths);
+	static void ParseMimeinfoCache(const std::string& path, MimeinfoCacheData& mimeinfo_cache_data);
 	static MimeappsListsData ParseMimeappsLists(const std::vector<std::string>& paths);
 	static void ParseMimeappsList(const std::string& path, MimeappsListsData& mimeapps_lists_data);
 	static std::optional<DesktopEntry> ParseDesktopFile(const std::string& path);
 	static std::string GetLocalizedValue(const std::unordered_map<std::string, std::string>& values, const std::string& base_key);
-	static void ParseMimeinfoCache(const std::string& path, MimeinfoCacheData& mimeinfo_cache_data);
 	static std::unordered_map<std::string, std::string> LoadMimeAliases();
 	static std::unordered_map<std::string, std::string> LoadMimeSubclasses();
 	static std::vector<std::string> GetDesktopFileSearchPaths();
@@ -281,7 +281,7 @@ private:
 
 	// One of the following two caches will be populated based on settings.
 	std::optional<MimeinfoCacheData> _op_mime_to_handlers_map;	// from mimeinfo.cache
-	std::optional<FullScanMimeIndex> _op_mime_to_desktop_entry_map;	// from full .desktop scan
+	std::optional<MimeToDesktopEntryIndex> _op_mime_to_desktop_entry_map;	// from full .desktop scan
 
 	// RAII helper to manage the lifecycle of the operation-scoped state.
 	struct OperationContext

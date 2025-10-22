@@ -448,15 +448,15 @@ XDGBasedAppProvider::CandidateMap XDGBasedAppProvider::ResolveMimesToCandidateMa
 		}
 	}
 
-	FindCandidatesFromMimeAppsLists(prioritized_mimes, unique_candidates);
+	AppendCandidatesFromMimeAppsLists(prioritized_mimes, unique_candidates);
 
 	// Find candidates using the cache prepared by OperationContext.
 	if (_op_mime_to_handlers_map.has_value()) {
 		// Use the results from mimeinfo.cache (it was successfully loaded and was not empty).
-		FindCandidatesFromMimeinfoCache(prioritized_mimes, unique_candidates);
+		AppendCandidatesFromMimeinfoCache(prioritized_mimes, unique_candidates);
 	} else {
 		// Use the full scan index (either because caching was disabled, or as a fallback).
-		FindCandidatesByFullScan(prioritized_mimes, unique_candidates);
+		AppendCandidatesByFullScan(prioritized_mimes, unique_candidates);
 	}
 
 	return unique_candidates;
@@ -474,7 +474,7 @@ std::string XDGBasedAppProvider::GetDefaultApp(const std::string& mime_type)
 
 
 // Finds candidates from the parsed mimeapps.list files. This is a high-priority source.
-void XDGBasedAppProvider::FindCandidatesFromMimeAppsLists(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates)
+void XDGBasedAppProvider::AppendCandidatesFromMimeAppsLists(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates)
 {
 	const int total_mimes = prioritized_mimes.size();
 	const auto& mimeapps_lists_data = this->_op_mimeapps_lists_data.value();
@@ -510,7 +510,7 @@ void XDGBasedAppProvider::FindCandidatesFromMimeAppsLists(const std::vector<std:
 
 
 // Finds candidates from the pre-generated mimeinfo.cache file for performance.
-void XDGBasedAppProvider::FindCandidatesFromMimeinfoCache(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates)
+void XDGBasedAppProvider::AppendCandidatesFromMimeinfoCache(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates)
 {
 	const int total_mimes = prioritized_mimes.size();
 	// This map tracks the best rank for each app to avoid rank demotion by a less-specific MIME type.
@@ -548,7 +548,7 @@ void XDGBasedAppProvider::FindCandidatesFromMimeinfoCache(const std::vector<std:
 
 
 // Finds candidates by looking up the pre-built mime-to-app index. Used when _use_mimeinfo_cache is false.
-void XDGBasedAppProvider::FindCandidatesByFullScan(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates)
+void XDGBasedAppProvider::AppendCandidatesByFullScan(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates)
 {
 	const int total_mimes = prioritized_mimes.size();
 	// A map to store the best rank found for each unique application.
@@ -1160,9 +1160,9 @@ const std::optional<DesktopEntry>& XDGBasedAppProvider::GetCachedDesktopEntry(co
 
 // Builds in-memory index that maps a MIME type to a list of DesktopEntry pointers
 // that can handle it. This avoids repeated filesystem scanning.
-XDGBasedAppProvider::FullScanMimeIndex XDGBasedAppProvider::BuildMimeTypeToAppIndex(const std::vector<std::string>& search_paths)
+XDGBasedAppProvider::MimeToDesktopEntryIndex XDGBasedAppProvider::FullScanDesktopFilesAndBuildIndex(const std::vector<std::string>& search_paths)
 {
-	FullScanMimeIndex index;
+	MimeToDesktopEntryIndex index;
 	for (const auto& dir : search_paths) {
 		DIR* dir_stream = opendir(dir.c_str());
 		if (!dir_stream) continue;
@@ -1209,6 +1209,50 @@ XDGBasedAppProvider::MimeinfoCacheData XDGBasedAppProvider::ParseAllMimeinfoCach
 		}
 	}
 	return data;
+}
+
+
+// Parses mimeinfo.cache file format: [MIME Cache] section with mime/type=app1.desktop;app2.desktop;
+void XDGBasedAppProvider::ParseMimeinfoCache(const std::string& path, MimeinfoCacheData& mimeinfo_cache_data)
+{
+	std::ifstream file(path);
+	if (!file.is_open()) return;
+
+	std::string line;
+	bool in_cache_section = false;
+	while (std::getline(file, line)) {
+		line = Trim(line);
+		if (line.empty() || line[0] == '#') continue;
+
+		if (line == "[MIME Cache]") {
+			in_cache_section = true;
+			continue;
+		}
+
+		if (line[0] == '[') {
+			in_cache_section = false;
+			continue;
+		}
+
+		if (in_cache_section) {
+			auto eq_pos = line.find('=');
+			if (eq_pos == std::string::npos) continue;
+
+			std::string mime = Trim(line.substr(0, eq_pos));
+			std::string apps_str = Trim(line.substr(eq_pos + 1));
+
+			auto apps = SplitString(apps_str, ';');
+			if (!mime.empty() && !apps.empty()) {
+				auto& existing = mimeinfo_cache_data[mime];
+				for (const auto& app : apps) {
+					if (!app.empty()) {
+						// We append apps from all cache files; duplicates are okay.
+						existing.push_back({app, path});
+					}
+				}
+			}
+		}
+	}
 }
 
 
@@ -1377,50 +1421,6 @@ std::string XDGBasedAppProvider::GetLocalizedValue(const std::unordered_map<std:
 	// Fallback to the unlocalized key (e.g., Name=).
 	auto it = values.find(base_key);
 	return (it != values.end()) ? it->second : "";
-}
-
-
-// Parses mimeinfo.cache file format: [MIME Cache] section with mime/type=app1.desktop;app2.desktop;
-void XDGBasedAppProvider::ParseMimeinfoCache(const std::string& path, MimeinfoCacheData& mimeinfo_cache_data)
-{
-	std::ifstream file(path);
-	if (!file.is_open()) return;
-
-	std::string line;
-	bool in_cache_section = false;
-	while (std::getline(file, line)) {
-		line = Trim(line);
-		if (line.empty() || line[0] == '#') continue;
-
-		if (line == "[MIME Cache]") {
-			in_cache_section = true;
-			continue;
-		}
-
-		if (line[0] == '[') {
-			in_cache_section = false;
-			continue;
-		}
-
-		if (in_cache_section) {
-			auto eq_pos = line.find('=');
-			if (eq_pos == std::string::npos) continue;
-
-			std::string mime = Trim(line.substr(0, eq_pos));
-			std::string apps_str = Trim(line.substr(eq_pos + 1));
-
-			auto apps = SplitString(apps_str, ';');
-			if (!mime.empty() && !apps.empty()) {
-				auto& existing = mimeinfo_cache_data[mime];
-				for (const auto& app : apps) {
-					if (!app.empty()) {
-						// We append apps from all cache files; duplicates are okay.
-						existing.push_back({app, path});
-					}
-				}
-			}
-		}
-	}
 }
 
 
@@ -2014,7 +2014,7 @@ XDGBasedAppProvider::OperationContext::OperationContext(XDGBasedAppProvider& p) 
 	if (!provider._op_mime_to_handlers_map.has_value()) {
 		// ...populate the index by performing a full scan.
 		// This call will populate the _desktop_entry_cache as a side effect.
-		provider._op_mime_to_desktop_entry_map = provider.BuildMimeTypeToAppIndex(provider._op_desktop_paths.value());
+		provider._op_mime_to_desktop_entry_map = provider.FullScanDesktopFilesAndBuildIndex(provider._op_desktop_paths.value());
 	}
 }
 
