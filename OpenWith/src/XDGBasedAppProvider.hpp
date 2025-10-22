@@ -174,7 +174,6 @@ private:
 	using SettingKeyToMemberPtrMap = std::map<std::wstring, bool XDGBasedAppProvider::*>;
 
 	// --- Searching and ranking candidates logic ---
-	std::vector<RankedCandidate> ResolveMimesToCandidateVector(const std::vector<std::string>& prioritized_mimes);
 	CandidateMap ResolveMimesToCandidateMap(const std::vector<std::string>& prioritized_mimes);
 	static std::string GetDefaultApp(const std::string& mime_type);
 	void FindCandidatesFromMimeAppsLists(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates);
@@ -184,7 +183,8 @@ private:
 	void RegisterCandidateFromObject(CandidateMap& unique_candidates, const DesktopEntry& entry, int rank, const std::string& source_info);
 	void AddOrUpdateCandidate(CandidateMap& unique_candidates, const DesktopEntry& entry, int rank, const std::string& source_info);
 	bool IsAssociationRemoved(const std::string& mime_type, const std::string& app_desktop_file);
-	void SortFinalCandidates(std::vector<RankedCandidate>& candidates) const;
+	std::vector<RankedCandidate> BuildSortedRankedList(const CandidateMap& candidate_map);
+	std::vector<CandidateInfo> FormatCandidatesForUI(const std::vector<RankedCandidate>& ranked_candidates, bool store_source_info);
 	static CandidateInfo ConvertDesktopEntryToCandidateInfo(const DesktopEntry& desktop_entry);
 
 	// --- File MIME Type Detection & Expansion ---
