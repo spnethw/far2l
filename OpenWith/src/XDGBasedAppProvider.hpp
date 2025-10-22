@@ -183,7 +183,7 @@ private:
 	void RegisterCandidateFromObject(CandidateMap& unique_candidates, const DesktopEntry& entry, int rank, const std::string& source_info);
 	void AddOrUpdateCandidate(CandidateMap& unique_candidates, const DesktopEntry& entry, int rank, const std::string& source_info);
 	bool IsAssociationRemoved(const std::string& mime_type, const std::string& app_desktop_file);
-	std::vector<RankedCandidate> BuildSortedRankedList(const CandidateMap& candidate_map);
+	std::vector<RankedCandidate> BuildSortedRankedCandidatesList(const CandidateMap& candidate_map);
 	std::vector<CandidateInfo> FormatCandidatesForUI(const std::vector<RankedCandidate>& ranked_candidates, bool store_source_info);
 	static CandidateInfo ConvertDesktopEntryToCandidateInfo(const DesktopEntry& desktop_entry);
 
@@ -215,7 +215,6 @@ private:
 	static bool ExpandFieldCodes(const DesktopEntry& candidate, const std::string& pathname, const std::string& unescaped, std::vector<std::string>& out_args);
 	static bool HasFieldCode(const std::string& exec, const std::string& codes_to_find);
 	static std::string PathToUri(const std::string& path);
-	static std::string EscapeArg(const std::string& arg);
 
 	// --- System & Environment Helpers ---
 	static bool CheckExecutable(const std::string& path);
@@ -225,7 +224,7 @@ private:
 	// --- Common helper functions ---
 	static std::string Trim(std::string str);
 	static std::vector<std::string> SplitString(const std::string& str, char delimiter);
-	static std::string EscapePathForShell(const std::string& path);
+	static std::string EscapeArgForShell(const std::string& arg);
 	static std::string GetBaseName(const std::string& path);
 	static bool IsValidDir(const std::string& path);
 	static bool IsReadableFile(const std::string &path);

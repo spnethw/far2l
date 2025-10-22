@@ -107,19 +107,19 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 		return {};
 	}
 
-	// Initialize all operation-scoped state
+	// Clear class-level caches from the previous operation
 	_desktop_entry_cache.clear();
 	_last_candidates_source_info.clear();
+
+	// Initialize all operation-scoped state
 	OperationContext op_context(*this);
 
-	CandidateMap final_candidates; // The resulting map of unique, ranked candidates
+	CandidateMap final_candidates;
 
 	// --- Case 1: Handle the simple single-file ---
 	if (pathnames.size() == 1) {
 		auto profile = GetRawMimeProfile(StrWide2MB(pathnames[0]));
 		auto prioritized_mimes = ExpandAndPrioritizeMimeTypes(profile);
-
-		// Directly call the map-based resolver
 		final_candidates = ResolveMimesToCandidateMap(prioritized_mimes);
 	}
 	else
@@ -206,7 +206,7 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 	// --- Step 4: Common Post-processing (for both 1 and >1 file cases) ---
 
 	// Convert the final map to a vector and sort it
-	auto final_candidates_sorted = BuildSortedRankedList(final_candidates);
+	auto final_candidates_sorted = BuildSortedRankedCandidatesList(final_candidates);
 
 	// Only store source info (for F3) when a single file is selected
 	return FormatCandidatesForUI(final_candidates_sorted, /* store_source_info = */ (pathnames.size() == 1));
@@ -301,7 +301,7 @@ std::vector<std::wstring> XDGBasedAppProvider::ConstructCommandLine(const Candid
 		std::string cmd;
 		for (size_t i = 0; i < final_args.size(); ++i) {
 			if (i > 0) cmd.push_back(' ');
-			cmd += EscapeArg(final_args[i]);
+			cmd += EscapeArgForShell(final_args[i]);
 		}
 		return { StrMB2Wide(cmd) };
 
@@ -335,7 +335,7 @@ std::vector<std::wstring> XDGBasedAppProvider::ConstructCommandLine(const Candid
 			std::string cmd;
 			for (size_t i = 0; i < current_args.size(); ++i) {
 				if (i > 0) cmd.push_back(' ');
-				cmd += EscapeArg(current_args[i]);
+				cmd += EscapeArgForShell(current_args[i]);
 			}
 			final_commands.push_back(StrMB2Wide(cmd));
 		}
@@ -467,7 +467,7 @@ XDGBasedAppProvider::CandidateMap XDGBasedAppProvider::ResolveMimesToCandidateMa
 std::string XDGBasedAppProvider::GetDefaultApp(const std::string& mime_type)
 {
 	if (mime_type.empty()) return "";
-	std::string escaped_mime = EscapePathForShell(mime_type);
+	std::string escaped_mime = EscapeArgForShell(mime_type);
 	std::string cmd = "xdg-mime query default " + escaped_mime + " 2>/dev/null";
 	return RunCommandAndCaptureOutput(cmd);
 }
@@ -695,7 +695,7 @@ bool XDGBasedAppProvider::IsAssociationRemoved(const std::string& mime_type, con
 
 
 // Converts the final map of candidates into a vector and sorts it.
-std::vector<XDGBasedAppProvider::RankedCandidate> XDGBasedAppProvider::BuildSortedRankedList(const CandidateMap& candidate_map)
+std::vector<XDGBasedAppProvider::RankedCandidate> XDGBasedAppProvider::BuildSortedRankedCandidatesList(const CandidateMap& candidate_map)
 {
 	// Convert the map of unique candidates to a vector for sorting.
 	std::vector<RankedCandidate> sorted_candidates;
@@ -767,7 +767,8 @@ CandidateInfo XDGBasedAppProvider::ConvertDesktopEntryToCandidateInfo(const Desk
 
 // ****************************** File MIME Type Detection & Expansion ******************************
 
-// Gathers the "raw" MIME types from all enabled detection methods for a single file.
+// Gathers file attributes (file/dir) and "raw" MIME types from all enabled
+// detection methods for a single file.
 XDGBasedAppProvider::RawMimeProfile XDGBasedAppProvider::GetRawMimeProfile(const std::string& pathname)
 {
 	RawMimeProfile profile;
@@ -923,7 +924,7 @@ std::string XDGBasedAppProvider::MimeTypeFromXdgMimeTool(const std::string& path
 {
 	std::string result;
 	if (_use_xdg_mime_tool) {
-		auto escaped_pathname = EscapePathForShell(pathname);
+		auto escaped_pathname = EscapeArgForShell(pathname);
 		result = RunCommandAndCaptureOutput("xdg-mime query filetype " + escaped_pathname + " 2>/dev/null");
 	}
 	return result;
@@ -934,7 +935,7 @@ std::string XDGBasedAppProvider::MimeTypeFromFileTool(const std::string& pathnam
 {
 	std::string result;
 	if(_use_file_tool) {
-		auto escaped_pathname = EscapePathForShell(pathname);
+		auto escaped_pathname = EscapeArgForShell(pathname);
 		result = RunCommandAndCaptureOutput("file -b --mime-type " + escaped_pathname + " 2>/dev/null");
 	}
 	return result;
@@ -1802,46 +1803,6 @@ std::string XDGBasedAppProvider::PathToUri(const std::string& absolute_local_fil
 }
 
 
-// Escapes a single command-line argument for safe execution by the shell.
-std::string XDGBasedAppProvider::EscapeArg(const std::string& arg)
-{
-	if (arg.empty()) {
-		return "''"; // An empty string is represented as '' in the shell.
-	}
-
-	bool is_safe = true;
-	for (const unsigned char c : arg) {
-		// Perform a locale-independent check for 7-bit ASCII characters.
-		if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
-			  || c == '/' || c == '.' || c == '_' || c == '-'))
-		{
-			is_safe = false;
-			break;
-		}
-	}
-
-	if (is_safe) {
-		return arg;
-	}
-
-	std::string out;
-	out.push_back('\'');
-	for (const unsigned char uc : arg) {
-		if (uc == '\'') {
-			// A single quote cannot be escaped inside a single-quoted string.
-			// The standard method is to end the string (''), add an escaped quote (\'),
-			// and start a new string (''). For example, "it's" becomes 'it'\''s'.
-			out.append("'\\''");
-		} else {
-			out.push_back(static_cast<char>(uc));
-		}
-	}
-	out.push_back('\'');
-	return out;
-}
-
-
-
 // ****************************** System & Environment Helpers ******************************
 
 
@@ -1939,22 +1900,42 @@ std::vector<std::string> XDGBasedAppProvider::SplitString(const std::string& str
 }
 
 
-// Escapes a path for safe use in a shell command by wrapping it in single quotes.
-// It also handles any single quotes that might be inside the path itself.
-std::string XDGBasedAppProvider::EscapePathForShell(const std::string& path)
+// Escapes a single command-line argument for safe execution by the shell.
+std::string XDGBasedAppProvider::EscapeArgForShell(const std::string& arg)
 {
-	std::string escaped_path;
-	escaped_path.reserve(path.size() + 2);
-	escaped_path += '\'';
-	for (char c : path) {
-		if (c == '\'') {
-			escaped_path += "'\\''";
-		} else {
-			escaped_path += c;
+	if (arg.empty()) {
+		return "''"; // An empty string is represented as '' in the shell.
+	}
+
+	bool is_safe = true;
+	for (const unsigned char c : arg) {
+		// Perform a locale-independent check for 7-bit ASCII characters.
+		if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+			  || c == '/' || c == '.' || c == '_' || c == '-'))
+		{
+			is_safe = false;
+			break;
 		}
 	}
-	escaped_path += '\'';
-	return escaped_path;
+
+	if (is_safe) {
+		return arg;
+	}
+
+	std::string out;
+	out.push_back('\'');
+	for (const unsigned char uc : arg) {
+		if (uc == '\'') {
+			// A single quote cannot be escaped inside a single-quoted string.
+			// The standard method is to end the string (''), add an escaped quote (\'),
+			// and start a new string (''). For example, "it's" becomes 'it'\''s'.
+			out.append("'\\''");
+		} else {
+			out.push_back(static_cast<char>(uc));
+		}
+	}
+	out.push_back('\'');
+	return out;
 }
 
 
