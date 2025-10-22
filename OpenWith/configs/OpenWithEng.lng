@@ -30,6 +30,7 @@
 "Filter by Only&ShowIn/NotShowIn"
 "Validate &TryExec"
 "Disable ranking (sort al&phabetically)"
+"Pass plain paths instead of file:// URIs"
 
 "OpenWith: Details"
 

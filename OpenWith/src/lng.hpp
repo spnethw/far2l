@@ -32,6 +32,7 @@ enum LanguageID
 	MFilterByShowIn,
 	MValidateTryExec,
 	MSortAlphabetically,
+	MTreatUrlsAsPaths,
 
 	MDetails,
 

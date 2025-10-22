@@ -212,7 +212,7 @@ private:
 	// --- Command line constructing ---
 	static std::vector<std::string> TokenizeExecString(const std::string& exec_str);
 	static std::string UnescapeGeneralString(const std::string& raw_str);
-	static bool ExpandFieldCodes(const DesktopEntry& candidate, const std::string& pathname, const std::string& unescaped, std::vector<std::string>& out_args);
+	static bool ExpandFieldCodes(const DesktopEntry& candidate, const std::string& pathname, const std::string& unescaped, std::vector<std::string>& out_args, bool treat_urls_as_paths);
 	static bool HasFieldCode(const std::string& exec, const std::string& codes_to_find);
 	static std::string PathToUri(const std::string& path);
 
@@ -258,6 +258,7 @@ private:
 	bool _filter_by_show_in;
 	bool _validate_try_exec;
 	bool _sort_alphabetically;
+	bool _treat_urls_as_paths;
 
 	// Holds all setting definitions. Initialized once in the constructor.
 	std::vector<PlatformSettingDefinition> _platform_settings_definitions;

@@ -46,7 +46,8 @@ XDGBasedAppProvider::XDGBasedAppProvider(TMsgGetter msg_getter) : AppProvider(st
 		{ "UseMimeinfoCache", MUseMimeinfoCache, &XDGBasedAppProvider::_use_mimeinfo_cache, true },
 		{ "FilterByShowIn", MFilterByShowIn, &XDGBasedAppProvider::_filter_by_show_in, false },
 		{ "ValidateTryExec", MValidateTryExec, &XDGBasedAppProvider::_validate_try_exec, false },
-		{ "SortAlphabetically", MSortAlphabetically, &XDGBasedAppProvider::_sort_alphabetically, false }
+		{ "SortAlphabetically", MSortAlphabetically, &XDGBasedAppProvider::_sort_alphabetically, false },
+		{ "TreatUrlsAsPaths", MTreatUrlsAsPaths, &XDGBasedAppProvider::_treat_urls_as_paths, false }
 	};
 
 	for (const auto& def : _platform_settings_definitions) {
@@ -274,12 +275,16 @@ std::vector<std::wstring> XDGBasedAppProvider::ConstructCommandLine(const Candid
 				}
 			} else if (token.find("%U") != std::string::npos) {
 				for (const auto& wpathname : pathnames) {
-					final_args.push_back(PathToUri(StrWide2MB(wpathname)));
+					if (_treat_urls_as_paths) { // compatibility mode?
+						final_args.push_back(StrWide2MB(wpathname));
+					} else {
+						final_args.push_back(PathToUri(StrWide2MB(wpathname)));
+					}
 				}
 			} else {
 				// Expand other codes like %f, %u, %c using the first file as context.
 				std::vector<std::string> expanded;
-				if (!ExpandFieldCodes(desktop_entry, first_pathname, token, expanded)) {
+				if (!ExpandFieldCodes(desktop_entry, first_pathname, token, expanded, _treat_urls_as_paths)) {
 					return {}; // Invalid field code.
 				}
 				final_args.insert(final_args.end(), expanded.begin(), expanded.end());
@@ -319,7 +324,7 @@ std::vector<std::wstring> XDGBasedAppProvider::ConstructCommandLine(const Candid
 			for (const std::string& token : tokens) {
 				std::vector<std::string> expanded;
 				// Expand all codes using the current file as context.
-				if (!ExpandFieldCodes(desktop_entry, pathname_mb, token, expanded)) {
+				if (!ExpandFieldCodes(desktop_entry, pathname_mb, token, expanded, _treat_urls_as_paths)) {
 					// Skip this file on error, but don't fail the whole operation.
 					current_args.clear();
 					break;
@@ -596,7 +601,7 @@ void XDGBasedAppProvider::AppendCandidatesByFullScan(const std::vector<std::stri
 }
 
 
-// Processes a single application candidate: validates it, filters it, and adds it to the context.
+// Processes a single application candidate: validates it, filters it, and adds it to the map.
 // This version retrieves the DesktopEntry from cache via its name.
 void XDGBasedAppProvider::RegisterCandidateById(CandidateMap& unique_candidates, const std::string& app_desktop_file,
 													   int rank, const std::string& source_info)
@@ -1697,7 +1702,8 @@ std::string XDGBasedAppProvider::UnescapeGeneralString(const std::string& raw_st
 bool XDGBasedAppProvider::ExpandFieldCodes(const DesktopEntry& candidate,
 										   const std::string& pathname,
 										   const std::string& unescaped,
-										   std::vector<std::string>& out_args)
+										   std::vector<std::string>& out_args,
+										   bool treat_urls_as_paths)
 {
 	std::string cur;
 	for (size_t i = 0; i < unescaped.size(); ++i) {
@@ -1711,7 +1717,11 @@ bool XDGBasedAppProvider::ExpandFieldCodes(const DesktopEntry& candidate,
 				cur += pathname;
 				break;
 			case 'u': case 'U': // %u, %U expect a URI.
-				cur += PathToUri(pathname); // Convert the local path to a file:// URI.
+				if (treat_urls_as_paths) { // compatibility mode?
+					cur += pathname;
+				} else {
+					cur += PathToUri(pathname);
+				}
 				break;
 			case 'c': // The application's name (from the Name= key).
 				cur += candidate.name;
