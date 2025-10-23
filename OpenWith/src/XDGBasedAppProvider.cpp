@@ -1461,7 +1461,7 @@ std::unordered_map<std::string, std::string> XDGBasedAppProvider::LoadMimeAliase
 // Files with higher priority (user-specific) override lower-priority (system) ones.
 std::unordered_map<std::string, std::string> XDGBasedAppProvider::LoadMimeSubclasses()
 {
-	std::unordered_map<std::string, std::string> child_to_parent_map;
+	std::unordered_map<std::string, std::string> subclass_to_parent_map;
 	auto mime_paths = GetMimeDatabaseSearchPaths();
 
 	// Iterate paths from low priority (system) to high (user).
@@ -1480,11 +1480,11 @@ std::unordered_map<std::string, std::string> XDGBasedAppProvider::LoadMimeSubcla
 			std::stringstream ss(line);
 			std::string child_mime, parent_mime;
 			if (ss >> child_mime >> parent_mime) {
-				child_to_parent_map[child_mime] = parent_mime;
+				subclass_to_parent_map[child_mime] = parent_mime;
 			}
 		}
 	}
-	return child_to_parent_map;
+	return subclass_to_parent_map;
 }
 
 
@@ -2031,8 +2031,8 @@ XDGBasedAppProvider::OperationContext::OperationContext(XDGBasedAppProvider& p) 
 XDGBasedAppProvider::OperationContext::~OperationContext()
 {
 	provider._op_alias_to_canonical_map.reset();
-	provider._op_subclass_to_parent_map.reset();
 	provider._op_canonical_to_aliases_map.reset();
+	provider._op_subclass_to_parent_map.reset();
 	provider._op_mimeapps_lists_data.reset();
 	provider._op_desktop_paths.reset();
 	provider._op_current_desktop_env.reset();
