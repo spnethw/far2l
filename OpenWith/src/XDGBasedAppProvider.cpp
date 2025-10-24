@@ -101,12 +101,16 @@ void XDGBasedAppProvider::SetPlatformSettings(const std::vector<ProviderSetting>
 }
 
 
-// Finds applications that can open all specified files.
 std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vector<std::wstring>& pathnames)
 {
 	if (pathnames.empty()) {
 		return {};
 	}
+
+	// Invalidate the MIME types cache at the start of a new candidate search.
+	// This ensures that GetMimeTypes (if called later) won't return stale data from a *previous* operation.
+	_last_mimetypes_key.clear();
+	_last_mimetypes_cache.clear();
 
 	// Clear class-level caches from the previous operation
 	_desktop_entry_cache.clear();
@@ -117,9 +121,15 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 
 	CandidateMap final_candidates;
 
+	// This set will be populated in both the single-file and multi-file branches.
+	std::unordered_set<RawMimeProfile, RawMimeProfile::Hash> unique_profiles;
+
 	// --- Case 1: Handle the simple single-file ---
 	if (pathnames.size() == 1) {
+		// Get the profile for the single file.
 		auto profile = GetRawMimeProfile(StrWide2MB(pathnames[0]));
+		// Add the profile to the set for later cache warming.
+		unique_profiles.insert(profile);
 		auto prioritized_mimes = ExpandAndPrioritizeMimeTypes(profile);
 		final_candidates = ResolveMimesToCandidateMap(prioritized_mimes);
 	}
@@ -128,7 +138,6 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 		// --- Case 2: Logic for Multiple Files ---
 
 		// Step 1: Group N files into K unique "MIME profiles".
-		std::unordered_set<RawMimeProfile, RawMimeProfile::Hash> unique_profiles;
 		for (const auto& w_pathname : pathnames) {
 			unique_profiles.insert(GetRawMimeProfile(StrWide2MB(w_pathname))); // N calls to external tools
 		}
@@ -203,6 +212,9 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 			}
 		}
 	}
+
+	// --- Cache "warming" for GetMimeTypes ---
+	UpdateMimeCacheFromProfiles(pathnames, unique_profiles);
 
 	// --- Step 4: Common Post-processing (for both 1 and >1 file cases) ---
 
@@ -400,38 +412,24 @@ std::vector<Field> XDGBasedAppProvider::GetCandidateDetails(const CandidateInfo&
 }
 
 
-// Collects unique MIME types for a list of files. It uses `xdg-mime`, `file`, and an internal extension map
+// Collects unique MIME types for a list of files
 std::vector<std::wstring> XDGBasedAppProvider::GetMimeTypes(const std::vector<std::wstring>& pathnames)
 {
-	std::vector<std::string> ordered_unique_mimes;
-	std::unordered_set<std::string> seen_mimes;
+	// Check the cache first
+	if (!_last_mimetypes_key.empty() && _last_mimetypes_key == pathnames) {
+		return _last_mimetypes_cache;
+	}
 
-	// Helper to add a MIME type if it's valid and hasn't been seen.
-	auto add_unique = [&](std::string mime) {
-		mime = Trim(mime);
-		if (!mime.empty() && mime.find('/') != std::string::npos) {
-			if (seen_mimes.insert(mime).second) {
-				ordered_unique_mimes.push_back(std::move(mime));
-			}
-		}
-	};
-
+	// "Cold" path
+	std::unordered_set<RawMimeProfile, RawMimeProfile::Hash> unique_profiles;
 	for (const auto& w_pathname : pathnames) {
-		std::string pathname = StrWide2MB(w_pathname);
-		add_unique(MimeTypeFromXdgMimeTool(pathname));
-		add_unique(MimeTypeFromFileTool(pathname));
-		add_unique(MimeTypeByExtension(pathname));
+		unique_profiles.insert(GetRawMimeProfile(StrWide2MB(w_pathname)));
 	}
 
-	std::vector<std::wstring> result;
-	result.reserve(ordered_unique_mimes.size());
-	for (const auto& mime : ordered_unique_mimes) {
-		result.push_back(StrMB2Wide(mime));
-	}
+	UpdateMimeCacheFromProfiles(pathnames, unique_profiles);
 
-	return result;
+	return _last_mimetypes_cache;
 }
-
 
 
 // ****************************** Searching and ranking candidates logic ******************************
@@ -1142,6 +1140,40 @@ std::string XDGBasedAppProvider::MimeTypeByExtension(const std::string& pathname
 	}
 
 	return result;
+}
+
+
+// This helper function extracts raw MIME types from a pre-computed set of profiles
+// and stores the result in the class-level cache members.
+void XDGBasedAppProvider::UpdateMimeCacheFromProfiles(const std::vector<std::wstring>& pathnames,
+													  const std::unordered_set<RawMimeProfile, RawMimeProfile::Hash>& unique_profiles)
+{
+	std::vector<std::string> ordered_unique_mimes;
+	std::unordered_set<std::string> seen_mimes;
+
+	auto add_unique_to_cache = [&](std::string mime) {
+		mime = Trim(mime);
+		if (!mime.empty() && mime.find('/') != std::string::npos) {
+			if (seen_mimes.insert(mime).second) {
+				ordered_unique_mimes.push_back(std::move(mime));
+			}
+		}
+	};
+
+	for (const auto& profile : unique_profiles) {
+		add_unique_to_cache(profile.xdg_mime);
+		add_unique_to_cache(profile.file_mime);
+		add_unique_to_cache(profile.ext_mime);
+	}
+
+	std::vector<std::wstring> mime_results_wide;
+	mime_results_wide.reserve(ordered_unique_mimes.size());
+	for (const auto& mime : ordered_unique_mimes) {
+		mime_results_wide.push_back(StrMB2Wide(mime));
+	}
+
+	_last_mimetypes_key = pathnames;
+	_last_mimetypes_cache = std::move(mime_results_wide);
 }
 
 

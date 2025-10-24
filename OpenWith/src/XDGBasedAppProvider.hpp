@@ -201,6 +201,7 @@ private:
 	std::string MimeTypeFromXdgMimeTool(const std::string& pathname);
 	std::string MimeTypeFromFileTool(const std::string& pathname);
 	std::string MimeTypeByExtension(const std::string& pathname);
+	void UpdateMimeCacheFromProfiles(const std::vector<std::wstring>& pathnames, const std::unordered_set<RawMimeProfile, RawMimeProfile::Hash>& unique_profiles);
 
 	// --- XDG Database Parsing & Caching ---
 	const std::optional<DesktopEntry>& GetCachedDesktopEntry(const std::string& desktop_file);
@@ -251,6 +252,12 @@ private:
 	// It's used by GetCandidateDetails to display where the association came from (e.g., mimeapps.list).
 	// This is only populated for single-file lookups.
 	std::map<std::wstring, std::string> _last_candidates_source_info;
+
+	// Cache for the last GetMimeTypes request.
+	// This vector stores the file list (key) for which the cache was generated.
+	std::vector<std::wstring> _last_mimetypes_key;
+	// This vector stores the computed MIME type list (value).
+	std::vector<std::wstring> _last_mimetypes_cache;
 
 	// --- Platform-specific settings (values are loaded from INI) ---
 	bool _use_xdg_mime_tool;
