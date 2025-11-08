@@ -111,6 +111,7 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 	// Clear class-level caches from the previous operation
 	_desktop_entry_cache.clear();
 	_last_candidates_source_info.clear();
+	_last_mime_profiles.clear(); // Clear the MIME profile cache for the new operation
 
 	// Initialize all operation-scoped state
 	OperationContext op_context(*this);
@@ -120,6 +121,7 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 	// --- Case 1: Handle the simple single-file ---
 	if (pathnames.size() == 1) {
 		auto profile = GetRawMimeProfile(StrWide2MB(pathnames[0]));
+		_last_mime_profiles.insert(profile); // Cache the single profile
 		auto prioritized_mimes = ExpandAndPrioritizeMimeTypes(profile);
 		final_candidates = ResolveMimesToCandidateMap(prioritized_mimes);
 	}
@@ -132,6 +134,10 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 		for (const auto& w_pathname : pathnames) {
 			unique_profiles.insert(GetRawMimeProfile(StrWide2MB(w_pathname))); // N calls to external tools
 		}
+
+		// Cache all unique profiles. This is done *before* any early exits
+		// so that GetMimeTypes() can report them even if no apps are found.
+		_last_mime_profiles = unique_profiles;
 
 		// Step 2: Gather candidates K times, not N times. (K = unique_profiles.size())
 		std::unordered_map<RawMimeProfile, CandidateMap, RawMimeProfile::Hash> candidate_cache;
@@ -400,33 +406,70 @@ std::vector<Field> XDGBasedAppProvider::GetCandidateDetails(const CandidateInfo&
 }
 
 
-// Collects unique MIME types for a list of files. It uses `xdg-mime`, `file`, and an internal extension map
+// Returns a list of formatted strings representing the unique MIME profiles
+// that were collected during the last GetAppCandidates() call.
 std::vector<std::wstring> XDGBasedAppProvider::GetMimeTypes(const std::vector<std::wstring>& pathnames)
 {
-	std::vector<std::string> ordered_unique_mimes;
-	std::unordered_set<std::string> seen_mimes;
-
-	// Helper to add a MIME type if it's valid and hasn't been seen.
-	auto add_unique = [&](std::string mime) {
-		mime = Trim(mime);
-		if (!mime.empty() && mime.find('/') != std::string::npos) {
-			if (seen_mimes.insert(mime).second) {
-				ordered_unique_mimes.push_back(std::move(mime));
-			}
-		}
-	};
-
-	for (const auto& w_pathname : pathnames) {
-		std::string pathname = StrWide2MB(w_pathname);
-		add_unique(MimeTypeFromXdgMimeTool(pathname));
-		add_unique(MimeTypeFromFileTool(pathname));
-		add_unique(MimeTypeByExtension(pathname));
-	}
+	// The pathnames argument is intentionally ignored, as the results
+	// are based on the _last_mime_profiles cache populated by the
+	// preceding GetAppCandidates() call.
 
 	std::vector<std::wstring> result;
-	result.reserve(ordered_unique_mimes.size());
-	for (const auto& mime : ordered_unique_mimes) {
-		result.push_back(StrMB2Wide(mime));
+	result.reserve(_last_mime_profiles.size());
+
+	// Iterate over the cached profiles from GetAppCandidates
+	for (const auto& profile : _last_mime_profiles)
+	{
+		std::wstring profile_str;
+
+		switch (profile.status)
+		{
+		// The file path does not exist or is in an inaccessible parent directory
+		case PathStatus::DoesNotExist:
+		// The file path exists but is not readable (file) or traversable (dir)
+		case PathStatus::Inaccessible:
+			profile_str = L"(inaccessible)";
+			break;
+
+		// The file path is accessible (dir, regular file, or special file)
+		case PathStatus::IsDirectory:
+		case PathStatus::IsReadableFile:
+		case PathStatus::IsReadableSpecial:
+		case PathStatus::IsOther:
+		{
+			// Collect unique, non-empty MIME types from the raw profile.
+			// Using std::set to ensure uniqueness and canonical order.
+			std::set<std::string> unique_mimes_for_profile;
+			if (!profile.xdg_mime.empty()) {
+				unique_mimes_for_profile.insert(profile.xdg_mime);
+			}
+			if (!profile.file_mime.empty()) {
+				unique_mimes_for_profile.insert(profile.file_mime);
+			}
+			if (!profile.ext_mime.empty()) {
+				unique_mimes_for_profile.insert(profile.ext_mime);
+			}
+
+			if (unique_mimes_for_profile.empty()) {
+				// Accessible, but no MIME type could be determined
+				profile_str = L"(none)";
+			} else {
+				// Build the formatted profile string, e.g., "(image/jpeg;text/plain)"
+				std::stringstream ss;
+				ss << "(";
+				for (auto it = unique_mimes_for_profile.begin(); it != unique_mimes_for_profile.end(); ++it) {
+					if (it != unique_mimes_for_profile.begin()) {
+						ss << ";";
+					}
+					ss << *it;
+				}
+				ss << ")";
+				profile_str = StrMB2Wide(ss.str());
+			}
+			break;
+		}
+		}
+		result.push_back(std::move(profile_str));
 	}
 
 	return result;

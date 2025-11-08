@@ -252,6 +252,10 @@ private:
 	// This is only populated for single-file lookups.
 	std::map<std::wstring, std::string> _last_candidates_source_info;
 
+	// Caches all unique RawMimeProfile objects collected during the last GetAppCandidates call.
+	// This is used by GetMimeTypes to avoid redundant work.
+	std::unordered_set<RawMimeProfile, RawMimeProfile::Hash> _last_mime_profiles;
+
 	// --- Platform-specific settings (values are loaded from INI) ---
 	bool _use_xdg_mime_tool;
 	bool _use_file_tool;

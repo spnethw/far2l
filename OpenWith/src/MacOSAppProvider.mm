@@ -93,6 +93,9 @@ std::vector<CandidateInfo> MacOSAppProvider::GetAppCandidates(const std::vector<
         return {};
     }
 
+    // Clear the class-level profile cache for the new operation
+    _last_mime_profiles.clear();
+
     // --- Part 1: Candidate Discovery and Scoring with Caching ---
 
     // A map to store definitive metadata for every unique app encountered.
@@ -134,13 +137,58 @@ std::vector<CandidateInfo> MacOSAppProvider::GetAppCandidates(const std::vector<
     for (const auto& pathname : pathnames) {
         NSString *path = [NSString stringWithUTF8String:StrWide2MB(pathname).c_str()];
         NSURL *fileURL = [NSURL fileURLWithPath:path];
-        if (!fileURL) continue;
+        if (!fileURL) {
+            // File path is invalid, cache as inaccessible
+            _last_mime_profiles.insert({ L"", L"", false });
+            continue;
+        }
 
         // Determine the file's UTI to use it as a cache key.
         NSString *uti = nil;
         NSError *error = nil;
         [fileURL getResourceValue:&uti forKey:NSURLTypeIdentifierKey error:&error];
-        if (error || !uti) continue;
+        if (error || !uti) {
+            // Failed to get UTI (e.g., file not found, permissions), cache as inaccessible
+            _last_mime_profiles.insert({ L"", L"", false });
+            continue;
+        }
+        
+        // --- Begin: Mime Type Caching Logic ---
+        // Get the MIME type for this UTI and cache the complete profile.
+        // This logic is moved from GetMimeTypes to be done only once.
+        std::wstring result_mime;
+
+        // Use the appropriate API based on the target macOS version.
+#if MAC_OS_X_VERSION_MAX_ALLOWED >= 110000 // UTType is available on macOS 11.0+
+        // Modern approach for macOS 11.0 and later, converting a UTI to a MIME type.
+        UTType *type = [UTType typeWithIdentifier:uti];
+        if (type) {
+            NSString *mimeStr = type.preferredMIMEType;
+            if (mimeStr) result_mime = StrMB2Wide([mimeStr UTF8String]);
+        }
+#else
+        // Legacy approach for older macOS versions.
+#ifdef __clang__
+        CFStringRef mimeType = UTTypeCopyPreferredTagWithClass((__bridge CFStringRef)uti,
+                                                               kUTTagClassMIMEType);
+        if (mimeType) {
+            // Transfer ownership of the CFStringRef to ARC.
+            NSString *mimeStr = (__bridge_transfer NSString *)mimeType;
+            result_mime = StrMB2Wide([mimeStr UTF8String]);
+        }
+#else // gcc does not support ARC.
+        CFStringRef mimeType = UTTypeCopyPreferredTagWithClass((CFStringRef)uti,
+                                                               kUTTagClassMIMEType);
+        if (mimeType) {
+            NSString *mimeStr = [(NSString *)mimeType autorelease];
+            result_mime = StrMB2Wide([mimeStr UTF8String]);
+        }
+#endif
+#endif
+        // Cache the profile: file is accessible, we have a UTI, and we have the MIME (or empty)
+        _last_mime_profiles.insert({ StrMB2Wide([uti UTF8String]), result_mime, true });
+        // --- End: Mime Type Caching Logic ---
+
 
         NSURL* defaultAppURL;
 #if MAC_OS_X_VERSION_MAX_ALLOWED >= 101000 && defined(__clang__)
@@ -322,65 +370,32 @@ std::vector<Field> MacOSAppProvider::GetCandidateDetails(const CandidateInfo& ca
     return details;
 }
 
-// Collects unique MIME types for a list of files using macOS's Uniform Type Identifier (UTI) system.
+
+// Collects unique formatted profile strings based on the last GetAppCandidates call.
 std::vector<std::wstring> MacOSAppProvider::GetMimeTypes(const std::vector<std::wstring>& pathnames) {
-    std::unordered_set<std::wstring> unique_mimes;
-    const std::wstring fallback_mime = L"application/octet-stream";
+    // The pathnames argument is intentionally ignored, as the results
+    // are based on the _last_mime_profiles cache populated by the
+    // preceding GetAppCandidates() call.
 
-    for (const auto& pathname : pathnames) {
-        NSString *nsPath = [NSString stringWithUTF8String:StrWide2MB(pathname).c_str()];
-        NSURL *fileURL = [NSURL fileURLWithPath:nsPath];
-        if (!fileURL) {
-            unique_mimes.insert(fallback_mime);
-            continue;
-        }
+    // Use a set to store only the unique formatted profile strings.
+    std::unordered_set<std::wstring> unique_profile_strings;
+    unique_profile_strings.reserve(_last_mime_profiles.size());
 
-        // Retrieve the Uniform Type Identifier (UTI) for the file.
-        NSString *uti = nil;
-        NSError *error = nil;
-        [fileURL getResourceValue:&uti forKey:NSURLTypeIdentifierKey error:&error];
-        if (error || !uti) {
-            unique_mimes.insert(fallback_mime);
-            continue;
+    for (const auto& profile : _last_mime_profiles) {
+        if (!profile.accessible) {
+            // File was inaccessible (invalid path, permissions, etc.)
+            unique_profile_strings.insert(L"(inaccessible)");
+        } else if (profile.mime_type.empty()) {
+            // File was accessible, UTI was found, but no MIME type equivalent.
+            unique_profile_strings.insert(L"(none)");
+        } else {
+            // File was accessible and had a corresponding MIME type.
+            unique_profile_strings.insert(L"(" + profile.mime_type + L")");
         }
-
-        std::wstring result;
-
-        // Use the appropriate API based on the target macOS version.
-#if MAC_OS_X_VERSION_MAX_ALLOWED >= 110000 // UTType is available on macOS 11.0+
-        // Modern approach for macOS 11.0 and later, converting a UTI to a MIME type.
-        UTType *type = [UTType typeWithIdentifier:uti];
-        if (type) {
-            NSString *mimeStr = type.preferredMIMEType;
-            if (mimeStr) result = StrMB2Wide([mimeStr UTF8String]);
-        }
-#else
-        // Legacy approach for older macOS versions.
-#ifdef __clang__
-        CFStringRef mimeType = UTTypeCopyPreferredTagWithClass((__bridge CFStringRef)uti,
-                                                               kUTTagClassMIMEType);
-        if (mimeType) {
-            // Transfer ownership of the CFStringRef to ARC.
-            NSString *mimeStr = (__bridge_transfer NSString *)mimeType;
-            result = StrMB2Wide([mimeStr UTF8String]);
-        }
-#else // gcc does not support ARC.
-        CFStringRef mimeType = UTTypeCopyPreferredTagWithClass((CFStringRef)uti,
-                                                               kUTTagClassMIMEType);
-        if (mimeType) {
-            NSString *mimeStr = [(NSString *)mimeType autorelease];
-            result = StrMB2Wide([mimeStr UTF8String]);
-        }
-#endif
-#endif
-        unique_mimes.insert(result.empty() ? fallback_mime : result);
     }
     
-    std::vector<std::wstring> result_vec(unique_mimes.begin(), unique_mimes.end());
-    if (result_vec.empty() && !pathnames.empty()) {
-        result_vec.push_back(fallback_mime);
-    }
-
+    // Convert the set of unique strings to the required vector format.
+    std::vector<std::wstring> result_vec(unique_profile_strings.begin(), unique_profile_strings.end());
     return result_vec;
 }
 
