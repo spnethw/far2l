@@ -372,7 +372,8 @@ std::vector<Field> MacOSAppProvider::GetCandidateDetails(const CandidateInfo& ca
 
 
 // Collects unique formatted profile strings based on the last GetAppCandidates call.
-std::vector<std::wstring> MacOSAppProvider::GetMimeTypes(const std::vector<std::wstring>& pathnames) {
+std::vector<std::wstring> MacOSAppProvider::GetMimeTypes()
+{
     // The pathnames argument is intentionally ignored, as the results
     // are based on the _last_mime_profiles cache populated by the
     // preceding GetAppCandidates() call.

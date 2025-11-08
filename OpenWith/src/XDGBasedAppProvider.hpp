@@ -39,7 +39,7 @@ public:
 	explicit XDGBasedAppProvider(TMsgGetter msg_getter);
 	std::vector<CandidateInfo> GetAppCandidates(const std::vector<std::wstring>& pathnames) override;
 	std::vector<std::wstring> ConstructCommandLine(const CandidateInfo& candidate, const std::vector<std::wstring>& pathnames) override;
-	std::vector<std::wstring> GetMimeTypes(const std::vector<std::wstring>& pathnames) override;
+	std::vector<std::wstring> GetMimeTypes() override;
 	std::vector<Field> GetCandidateDetails(const CandidateInfo& candidate) override;
 
 	// Platform-specific settings API
@@ -53,12 +53,12 @@ private:
 	// Represents the status and type of a filesystem path, as determined by stat() and access().
 	enum class PathStatus
 	{
-		DoesNotExist,         // stat() failed (e.g., ENOENT) or parent path inaccessible (e.g., EACCES)
-		IsDirectory,          // S_ISDIR + X_OK (accessible directory)
-		IsReadableFile,       // S_ISREG + R_OK (readable regular file)
-		IsReadableSpecial,    // FIFO, SOCK, BLK, CHR, etc. + R_OK (readable special file)
-		Inaccessible,         // stat() OK, but no access (R_OK for files/special, X_OK for dirs)
-		IsOther               // Other readable types (e.g., S_ISLNK if using lstat, but we don't)
+		DoesNotExist,			// stat() failed (e.g., ENOENT) or parent path inaccessible (e.g., EACCES)
+		IsTraversableDirectory,	// S_ISDIR + X_OK (traversable directory)
+		IsReadableFile,			// S_ISREG + R_OK (readable regular file)
+		IsReadableSpecial,		// FIFO, SOCK, BLK, CHR, etc. + R_OK (readable special file)
+		Inaccessible,			// stat() OK, but no access (R_OK for files/special, X_OK for dirs)
+		IsOther					// Other readable types (e.g., S_ISLNK if using lstat, but we don't)
 	};
 
 	// Represents the "raw" MIME profile of a file, derived from all available detection tools before any expansion.

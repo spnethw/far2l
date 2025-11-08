@@ -426,13 +426,13 @@ namespace OpenWith {
 		// only if the user presses F3 or if no apps are found.
 		std::optional<std::vector<std::wstring>> unique_mimes_cache;
 
-		// Helper lambda to lazily get or populate the MIME types cache.
+		// Helper lambda to lazily get or populate the MIME profiles cache.
 		// It's called only when the MIME info is actually needed.
-		auto get_unique_mimes = [&]() -> const std::vector<std::wstring>& {
+		auto get_unique_mime_profiles = [&]() -> const std::vector<std::wstring>& {
 			// Check if the cache is already populated.
 			if (!unique_mimes_cache.has_value()) {
 				// If not, populate it by calling the expensive provider function.
-				unique_mimes_cache = provider->GetMimeTypes(pathnames);
+				unique_mimes_cache = provider->GetMimeTypes();
 			}
 			// Return a const reference to the cached vector.
 			return *unique_mimes_cache;
@@ -479,7 +479,7 @@ namespace OpenWith {
 				std::vector<std::wstring> error_lines = { GetMsg(MNoAppsFound) };
 
 				// Get the MIME types (lazily) only now that we need them for the error message.
-				const auto& unique_mimes = get_unique_mimes();
+				const auto& unique_mimes = get_unique_mime_profiles();
 
 				auto generate_mime_info_string = [&]() -> std::wstring {
 					if (unique_mimes.empty()) {
@@ -529,7 +529,7 @@ namespace OpenWith {
 				// Repeat until user either launches the application or closes the dialog to go back.
 				while (true) {
 					// Get MIME types (lazily) and pass them to the details dialog.
-					bool wants_to_launch = ShowDetailsDialog(provider.get(), selected_app, pathnames, cmds, get_unique_mimes());
+					bool wants_to_launch = ShowDetailsDialog(provider.get(), selected_app, pathnames, cmds, get_unique_mime_profiles());
 					if (!wants_to_launch) {
 						// User clicked "Close", break the inner loop to return to the main menu.
 						break;

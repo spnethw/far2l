@@ -408,12 +408,8 @@ std::vector<Field> XDGBasedAppProvider::GetCandidateDetails(const CandidateInfo&
 
 // Returns a list of formatted strings representing the unique MIME profiles
 // that were collected during the last GetAppCandidates() call.
-std::vector<std::wstring> XDGBasedAppProvider::GetMimeTypes(const std::vector<std::wstring>& pathnames)
+std::vector<std::wstring> XDGBasedAppProvider::GetMimeTypes()
 {
-	// The pathnames argument is intentionally ignored, as the results
-	// are based on the _last_mime_profiles cache populated by the
-	// preceding GetAppCandidates() call.
-
 	std::vector<std::wstring> result;
 	result.reserve(_last_mime_profiles.size());
 
@@ -432,10 +428,9 @@ std::vector<std::wstring> XDGBasedAppProvider::GetMimeTypes(const std::vector<st
 			break;
 
 		// The file path is accessible (dir, regular file, or special file)
-		case PathStatus::IsDirectory:
+		case PathStatus::IsTraversableDirectory:
 		case PathStatus::IsReadableFile:
 		case PathStatus::IsReadableSpecial:
-		case PathStatus::IsOther:
 		{
 			// Collect unique, non-empty MIME types from the raw profile.
 			// Using std::set to ensure uniqueness and canonical order.
@@ -454,7 +449,7 @@ std::vector<std::wstring> XDGBasedAppProvider::GetMimeTypes(const std::vector<st
 				// Accessible, but no MIME type could be determined
 				profile_str = L"(none)";
 			} else {
-				// Build the formatted profile string, e.g., "(image/jpeg;text/plain)"
+				// Build the formatted profile string, e.g., "(audio/aac;audio/x-hx-aac-adts)"
 				std::stringstream ss;
 				ss << "(";
 				for (auto it = unique_mimes_for_profile.begin(); it != unique_mimes_for_profile.end(); ++it) {
@@ -815,8 +810,7 @@ CandidateInfo XDGBasedAppProvider::ConvertDesktopEntryToCandidateInfo(const Desk
 
 // ****************************** File MIME Type Detection & Expansion ******************************
 
-// Gathers file attributes and "raw" MIME types from all enabled
-// detection methods for a single file.
+// Gathers file attributes and "raw" MIME types from all enabled detection methods for a single file.
 XDGBasedAppProvider::RawMimeProfile XDGBasedAppProvider::GetRawMimeProfile(const std::string& pathname)
 {
 	RawMimeProfile profile;
@@ -828,8 +822,8 @@ XDGBasedAppProvider::RawMimeProfile XDGBasedAppProvider::GetRawMimeProfile(const
 	// Check if the status indicates a file object we can process
 	switch (profile.status) {
 	case PathStatus::IsReadableFile:
-	case PathStatus::IsDirectory:
-	case PathStatus::IsReadableSpecial: // Handle special files (sockets, devices, etc.)
+	case PathStatus::IsTraversableDirectory:
+	case PathStatus::IsReadableSpecial:
 		is_processable = true;
 		break;
 
@@ -872,7 +866,7 @@ std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const
 	};
 
 	// Determine if the path status is one that we can find MIME types for.
-	bool is_processable = (profile.status == PathStatus::IsDirectory ||
+	bool is_processable = (profile.status == PathStatus::IsTraversableDirectory ||
 						   profile.status == PathStatus::IsReadableFile ||
 						   profile.status == PathStatus::IsReadableSpecial);
 
@@ -1006,7 +1000,7 @@ std::string XDGBasedAppProvider::MimeTypeFromFileTool(const std::string& pathnam
 	std::string result;
 	if(_use_file_tool) {
 		auto escaped_pathname = EscapeArgForShell(pathname);
-		result = RunCommandAndCaptureOutput("file -b --mime-type " + escaped_pathname + " 2>/dev/null");
+		result = RunCommandAndCaptureOutput("file --brief --dereference --mime-type " + escaped_pathname + " 2>/dev/null");
 	}
 	return result;
 }
@@ -1562,7 +1556,7 @@ std::vector<std::string> XDGBasedAppProvider::GetDesktopFileSearchPaths()
 	std::unordered_set<std::string> seen_paths;
 
 	auto add_path = [&](const std::string& p) {
-		if (!p.empty() && (GetPathStatus(p) == PathStatus::IsDirectory) && seen_paths.insert(p).second) {
+		if (!p.empty() && (GetPathStatus(p) == PathStatus::IsTraversableDirectory) && seen_paths.insert(p).second) {
 			paths.push_back(p);
 		}
 	};
@@ -1647,7 +1641,7 @@ std::vector<std::string> XDGBasedAppProvider::GetMimeDatabaseSearchPaths()
 	std::unordered_set<std::string> seen_paths;
 
 	auto add_path = [&](const std::string& p) {
-		if (!p.empty() && (GetPathStatus(p) == PathStatus::IsDirectory) && seen_paths.insert(p).second) {
+		if (!p.empty() && (GetPathStatus(p) == PathStatus::IsTraversableDirectory) && seen_paths.insert(p).second) {
 			paths.push_back(p);
 		}
 	};
@@ -2039,7 +2033,7 @@ XDGBasedAppProvider::PathStatus XDGBasedAppProvider::GetPathStatus(const std::st
 	// Check for a directory first
 	if (S_ISDIR(st.st_mode)) {
 		// A directory is "usable" if we have search/traverse permission (X_OK)
-		return (access(path.c_str(), X_OK) == 0) ? PathStatus::IsDirectory : PathStatus::Inaccessible;
+		return (access(path.c_str(), X_OK) == 0) ? PathStatus::IsTraversableDirectory : PathStatus::Inaccessible;
 	}
 
 	// For all other file types (regular, special, etc.),
