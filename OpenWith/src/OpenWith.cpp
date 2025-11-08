@@ -520,7 +520,6 @@ namespace OpenWith {
 				return; // User cancelled the menu (e.g., with Esc); exit the plugin entirely
 			}
 
-			menu_items[active_idx].Selected = false;
 			active_idx = selected_idx;
 			const auto& selected_app = candidates[selected_idx];
 

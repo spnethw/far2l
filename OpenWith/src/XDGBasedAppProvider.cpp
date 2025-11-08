@@ -111,7 +111,7 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 	// Clear class-level caches from the previous operation
 	_desktop_entry_cache.clear();
 	_last_candidates_source_info.clear();
-	_last_mime_profiles.clear(); // Clear the MIME profile cache for the new operation
+	_last_mime_profiles.clear();
 
 	// Initialize all operation-scoped state
 	OperationContext op_context(*this);
