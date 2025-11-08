@@ -787,7 +787,6 @@ XDGBasedAppProvider::RawMimeProfile XDGBasedAppProvider::GetRawMimeProfile(const
 	case PathStatus::IsReadableFile:
 	case PathStatus::IsDirectory:
 	case PathStatus::IsReadableSpecial: // Handle special files (sockets, devices, etc.)
-	case PathStatus::IsOther:           // Handle other unknown but readable types
 		is_processable = true;
 		break;
 
@@ -938,8 +937,7 @@ std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const
 
 		if (_show_universal_handlers) {
 			// --- Step 5: Add the ultimate fallback for any binary data ---
-			// This applies to regular files and special files, but not directories.
-			if (profile.status == PathStatus::IsReadableFile || profile.status == PathStatus::IsReadableSpecial) {
+			if (profile.status == PathStatus::IsReadableFile) {
 				add_unique("application/octet-stream");
 			}
 		}

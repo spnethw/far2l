@@ -84,7 +84,6 @@ private:
 				std::size_t h1 = std::hash<std::string>{}(s.xdg_mime);
 				std::size_t h2 = std::hash<std::string>{}(s.file_mime);
 				std::size_t h3 = std::hash<std::string>{}(s.ext_mime);
-				// Hash the enum class value by casting it to its underlying integer type
 				std::size_t h4 = std::hash<int>{}(static_cast<int>(s.status));
 
 				// Combine hashes using a simple boost-like hash_combine
