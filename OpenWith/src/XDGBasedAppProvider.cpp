@@ -772,30 +772,42 @@ CandidateInfo XDGBasedAppProvider::ConvertDesktopEntryToCandidateInfo(const Desk
 
 // ****************************** File MIME Type Detection & Expansion ******************************
 
-// Gathers file attributes (file/dir) and "raw" MIME types from all enabled
+// Gathers file attributes and "raw" MIME types from all enabled
 // detection methods for a single file.
 XDGBasedAppProvider::RawMimeProfile XDGBasedAppProvider::GetRawMimeProfile(const std::string& pathname)
 {
 	RawMimeProfile profile;
+	// Determine and store the comprehensive status of the path
+	profile.status = GetPathStatus(pathname);
 
-	switch (GetPathStatus(pathname)) {
+	bool is_processable = false;
+
+	// Check if the status indicates a file object we can process
+	switch (profile.status) {
 	case PathStatus::IsReadableFile:
-		profile.is_readable_file = true;
-		break;
 	case PathStatus::IsDirectory:
-		profile.is_valid_dir = true;
+	case PathStatus::IsReadableSpecial: // Handle special files (sockets, devices, etc.)
+	case PathStatus::IsOther:           // Handle other unknown but readable types
+		is_processable = true;
 		break;
+
+	case PathStatus::DoesNotExist:
+	case PathStatus::Inaccessible:
 	default:
+		// Do not process files that don't exist or are inaccessible
+		is_processable = false;
 		break;
 	}
 
-	// Only run detection tools if the path is a file or directory
-	if (profile.is_valid_dir || profile.is_readable_file)
+	// Only run detection tools if the path is valid and accessible
+	if (is_processable)
 	{
 		profile.xdg_mime = MimeTypeFromXdgMimeTool(pathname);
 		profile.file_mime = MimeTypeFromFileTool(pathname);
-		// Extension fallback only makes sense for files
-		if (profile.is_readable_file) {
+
+		// Extension-based fallback only makes sense for regular files,
+		// not for directories or special devices.
+		if (profile.status == PathStatus::IsReadableFile) {
 			profile.ext_mime = MimeTypeByExtension(pathname);
 		}
 	}
@@ -817,14 +829,19 @@ std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const
 		}
 	};
 
-	// Use the pre-calculated boolean flags from the RawMimeProfile
-	if (profile.is_valid_dir || profile.is_readable_file) {
+	// Determine if the path status is one that we can find MIME types for.
+	bool is_processable = (profile.status == PathStatus::IsDirectory ||
+						   profile.status == PathStatus::IsReadableFile ||
+						   profile.status == PathStatus::IsReadableSpecial);
+
+	// Only run expansion logic for processable file objects
+	if (is_processable) {
 
 		// --- Step 1: Initial, most specific MIME type detection ---
 		// Use the pre-detected types from the RawMimeProfile
 		add_unique(profile.xdg_mime);
 		add_unique(profile.file_mime);
-		add_unique(profile.ext_mime); // this will be empty if it was a directory
+		add_unique(profile.ext_mime); // this will be empty unless it was a regular file
 
 		// --- Step 2: Iteratively expand the MIME type list with parents and aliases ---
 		if (_op_subclass_to_parent_map || _op_alias_to_canonical_map) {
@@ -921,7 +938,8 @@ std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const
 
 		if (_show_universal_handlers) {
 			// --- Step 5: Add the ultimate fallback for any binary data ---
-			if (profile.is_readable_file) {
+			// This applies to regular files and special files, but not directories.
+			if (profile.status == PathStatus::IsReadableFile || profile.status == PathStatus::IsReadableSpecial) {
 				add_unique("application/octet-stream");
 			}
 		}
@@ -1970,29 +1988,39 @@ std::string XDGBasedAppProvider::GetBaseName(const std::string& path)
 XDGBasedAppProvider::PathStatus XDGBasedAppProvider::GetPathStatus(const std::string& path)
 {
 	struct stat st;
-	// Perform the system call to get path metadata.
+	// Use stat() to follow symbolic links, as we want to
+	// open the target, not the link itself.
 	if (stat(path.c_str(), &st) != 0) {
-		// If stat fails, the path likely doesn't exist or is inaccessible.
+		// If stat fails (e.g., ENOENT, EACCES on parent dir), the path is unusable.
 		return PathStatus::DoesNotExist;
 	}
 
-	// Check if the path is a directory.
+	// Check for a directory first
 	if (S_ISDIR(st.st_mode)) {
-		return PathStatus::IsDirectory;
+		// A directory is "usable" if we have search/traverse permission (X_OK)
+		return (access(path.c_str(), X_OK) == 0) ? PathStatus::IsDirectory : PathStatus::Inaccessible;
 	}
 
-	// Check if it's a regular file
+	// For all other file types (regular, special, etc.),
+	// "usability" means read permission (R_OK), as MIME tools
+	// need to read the file's content or magic bytes.
+	if (access(path.c_str(), R_OK) != 0) {
+		// This check is safe for sockets and FIFOs, as access()
+		// only checks permissions and does not block.
+		return PathStatus::Inaccessible;
+	}
+
+	// It's readable, now determine the specific type
 	if (S_ISREG(st.st_mode)) {
-		// To confirm readability, we must try to open it.
-		int fd = open(path.c_str(), O_RDONLY);
-		if (fd != -1) {
-			close(fd);
-			return PathStatus::IsReadableFile;
-		}
-		return PathStatus::IsFileButNotReadable;
+		return PathStatus::IsReadableFile;
 	}
 
-	// Handle other filesystem object types like sockets, pipes, etc.
+	// Group all "special" file types (sockets, FIFOs, devices) together
+	if (S_ISFIFO(st.st_mode) || S_ISSOCK(st.st_mode) || S_ISBLK(st.st_mode) || S_ISCHR(st.st_mode)) {
+		return PathStatus::IsReadableSpecial;
+	}
+
+	// Handle other readable filesystem object types (e.g., S_ISLNK if lstat was used)
 	return PathStatus::IsOther;
 }
 

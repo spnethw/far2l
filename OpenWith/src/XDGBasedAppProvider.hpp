@@ -50,19 +50,30 @@ public:
 
 private:
 
+	// Represents the status and type of a filesystem path, as determined by stat() and access().
+	enum class PathStatus
+	{
+		DoesNotExist,         // stat() failed (e.g., ENOENT) or parent path inaccessible (e.g., EACCES)
+		IsDirectory,          // S_ISDIR + X_OK (accessible directory)
+		IsReadableFile,       // S_ISREG + R_OK (readable regular file)
+		IsReadableSpecial,    // FIFO, SOCK, BLK, CHR, etc. + R_OK (readable special file)
+		Inaccessible,         // stat() OK, but no access (R_OK for files/special, X_OK for dirs)
+		IsOther               // Other readable types (e.g., S_ISLNK if using lstat, but we don't)
+	};
+
 	// Represents the "raw" MIME profile of a file, derived from all available detection tools before any expansion.
 	struct RawMimeProfile
 	{
 		std::string xdg_mime;  // result from xdg-mime query filetype
 		std::string file_mime; // result from file --mime-type
 		std::string ext_mime;  // result from internal extension fallback map
-		bool is_valid_dir = false;
-		bool is_readable_file = false;
+		PathStatus status = PathStatus::DoesNotExist; // The determined status and type of the path
 
 		bool operator==(const RawMimeProfile& other) const
 		{
-			return std::tie(is_valid_dir, is_readable_file, xdg_mime, file_mime, ext_mime) ==
-				   std::tie(other.is_valid_dir, other.is_readable_file, other.xdg_mime, other.file_mime, other.ext_mime);
+			// Compare all fields that define the profile
+			return std::tie(status, xdg_mime, file_mime, ext_mime) ==
+				   std::tie(other.status, other.xdg_mime, other.file_mime, other.ext_mime);
 		}
 
 		// Custom hash function to allow RawMimeProfile to be used as a key in std::unordered_map.
@@ -73,15 +84,14 @@ private:
 				std::size_t h1 = std::hash<std::string>{}(s.xdg_mime);
 				std::size_t h2 = std::hash<std::string>{}(s.file_mime);
 				std::size_t h3 = std::hash<std::string>{}(s.ext_mime);
-				std::size_t h4 = std::hash<bool>{}(s.is_valid_dir);
-				std::size_t h5 = std::hash<bool>{}(s.is_readable_file);
+				// Hash the enum class value by casting it to its underlying integer type
+				std::size_t h4 = std::hash<int>{}(static_cast<int>(s.status));
 
 				// Combine hashes using a simple boost-like hash_combine
 				std::size_t seed = h1;
 				seed ^= h2 + 0x9e3779b9 + (seed << 6) + (seed >> 2);
 				seed ^= h3 + 0x9e3779b9 + (seed << 6) + (seed >> 2);
 				seed ^= h4 + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-				seed ^= h5 + 0x9e3779b9 + (seed << 6) + (seed >> 2);
 				return seed;
 			}
 		};
@@ -166,15 +176,6 @@ private:
 			const auto h2 = std::hash<std::string_view>{}(k.exec);
 			return h1 ^ (h2 << 1); // Simple combination hash
 		}
-	};
-
-	enum class PathStatus
-	{
-		DoesNotExist,
-		IsDirectory,
-		IsReadableFile,
-		IsFileButNotReadable,
-		IsOther
 	};
 
 	using CandidateMap = std::unordered_map<AppUniqueKey, RankedCandidate, AppUniqueKeyHash>;
