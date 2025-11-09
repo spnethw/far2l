@@ -94,7 +94,7 @@ std::vector<CandidateInfo> MacOSAppProvider::GetAppCandidates(const std::vector<
 	}
 
 	// Clear the class-level profile cache for the new operation
-	_last_mime_profiles.clear();
+	_last_uti_profiles.clear();
 
 	// --- Part 1: Candidate Discovery and Scoring with Caching ---
 
@@ -139,7 +139,7 @@ std::vector<CandidateInfo> MacOSAppProvider::GetAppCandidates(const std::vector<
 		NSURL *fileURL = [NSURL fileURLWithPath:path];
 		if (!fileURL) {
 			// File path is invalid, cache as inaccessible
-			_last_mime_profiles.insert({ L"", false });
+			_last_uti_profiles.insert({ L"", false });
 			continue;
 		}
 
@@ -149,7 +149,7 @@ std::vector<CandidateInfo> MacOSAppProvider::GetAppCandidates(const std::vector<
 		[fileURL getResourceValue:&uti forKey:NSURLTypeIdentifierKey error:&error];
 		if (error || !uti) {
 			// Failed to get UTI (e.g., file not found, permissions), cache as inaccessible
-			_last_mime_profiles.insert({ L"", false });
+			_last_uti_profiles.insert({ L"", false });
 			continue;
 		}
 
@@ -157,7 +157,7 @@ std::vector<CandidateInfo> MacOSAppProvider::GetAppCandidates(const std::vector<
 		// Cache the file profile (UTI and accessible status).
 		// The conversion from UTI to MIME type is deferred to GetMimeTypes()
 		// to avoid performance overhead in this loop.
-		_last_mime_profiles.insert({ StrMB2Wide([uti UTF8String]), true });
+		_last_uti_profiles.insert({ StrMB2Wide([uti UTF8String]), true });
 		// --- End: Profile Caching Logic ---
 
 
@@ -348,9 +348,9 @@ std::vector<std::wstring> MacOSAppProvider::GetMimeTypes()
 {
 	// Use a set to store only the unique formatted profile strings.
 	std::unordered_set<std::wstring> unique_profile_strings;
-	unique_profile_strings.reserve(_last_mime_profiles.size());
+	unique_profile_strings.reserve(_last_uti_profiles.size());
 
-	for (const auto& profile : _last_mime_profiles) {
+	for (const auto& profile : _last_uti_profiles) {
 		if (!profile.accessible) {
 			// File was inaccessible (invalid path, permissions, etc.)
 			unique_profile_strings.insert(L"(inaccessible)");

@@ -48,7 +48,7 @@ private:
 	};
 
 	// Caches all unique MacFileProfile objects collected during the last GetAppCandidates call.
-	std::unordered_set<MacFileProfile, MacFileProfile::Hash> _last_mime_profiles;
+	std::unordered_set<MacFileProfile, MacFileProfile::Hash> _last_uti_profiles;
 };
 
 #endif
