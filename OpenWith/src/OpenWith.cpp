@@ -482,21 +482,7 @@ namespace OpenWith {
 				const auto& unique_mimes = get_unique_mime_profiles();
 
 				auto generate_mime_info_string = [&]() -> std::wstring {
-					if (unique_mimes.empty()) {
-						return L"(none)";
-					}
-					if (pathnames.size() == 1) {
-						return join_strings(unique_mimes, L"; ");
-					}
-					const size_t mime_count = unique_mimes.size();
-					const size_t count_to_show = std::min<size_t>(mime_count, 3);
-					std::vector<std::wstring> head(unique_mimes.begin(), unique_mimes.begin() + count_to_show);
-					std::wstring result = join_strings(head, L"; ");
-					if (mime_count > count_to_show) {
-						size_t remaining_count = mime_count - count_to_show;
-						result += std::wstring(GetMsg(MAndMore)) + L"(" + std::to_wstring(remaining_count) + L")";
-					}
-					return result;
+					return join_strings(unique_mimes, L"; ");
 				};
 
 				error_lines.push_back(generate_mime_info_string());

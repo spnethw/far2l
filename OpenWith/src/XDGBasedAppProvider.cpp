@@ -954,7 +954,7 @@ std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const
 		}
 	}
 
-	if (_show_universal_handlers || mime_types.empty()) {
+	if (_show_universal_handlers) {
 		// --- Step 5: Add the ultimate fallback for any binary data ---
 		if (profile.is_regular_file) {
 			add_unique("application/octet-stream");
