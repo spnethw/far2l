@@ -413,6 +413,8 @@ std::vector<std::wstring> XDGBasedAppProvider::GetMimeTypes()
 	std::vector<std::wstring> result;
 	result.reserve(_last_mime_profiles.size());
 
+	bool has_none = false;
+
 	// Iterate over the cached profiles from GetAppCandidates
 	for (const auto& profile : _last_mime_profiles)
 	{
@@ -433,7 +435,7 @@ std::vector<std::wstring> XDGBasedAppProvider::GetMimeTypes()
 
 		// 2. Format the final display string
 		if (unique_mimes_for_profile.empty()) {
-			result.push_back(L"(none)");
+			has_none = true;
 		} else {
 			// Build the formatted profile string, e.g., "(audio/aac;audio/x-hx-aac-adts)"
 			std::stringstream ss;
@@ -447,6 +449,10 @@ std::vector<std::wstring> XDGBasedAppProvider::GetMimeTypes()
 			ss << ")";
 			result.push_back(StrMB2Wide(ss.str()));
 		}
+	}
+
+	if (has_none) {
+		result.insert(result.begin(), L"(none)");
 	}
 
 	return result;
