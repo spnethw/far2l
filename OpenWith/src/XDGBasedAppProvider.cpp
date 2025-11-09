@@ -417,7 +417,6 @@ std::vector<std::wstring> XDGBasedAppProvider::GetMimeTypes()
 	for (const auto& profile : _last_mime_profiles)
 	{
 		// 1. Collect unique, non-empty MIME types from the raw profile.
-		// Using std::set to ensure uniqueness and canonical order.
 		std::set<std::string> unique_mimes_for_profile;
 		if (!profile.xdg_mime.empty()) {
 			unique_mimes_for_profile.insert(profile.xdg_mime);
@@ -425,7 +424,7 @@ std::vector<std::wstring> XDGBasedAppProvider::GetMimeTypes()
 		if (!profile.file_mime.empty()) {
 			unique_mimes_for_profile.insert(profile.file_mime);
 		}
-		if (!profile.stat_mime.empty()) { // Add the stat_mime field
+		if (!profile.stat_mime.empty()) {
 			unique_mimes_for_profile.insert(profile.stat_mime);
 		}
 		if (!profile.ext_mime.empty()) {
@@ -434,7 +433,6 @@ std::vector<std::wstring> XDGBasedAppProvider::GetMimeTypes()
 
 		// 2. Format the final display string
 		if (unique_mimes_for_profile.empty()) {
-			// No MIME types found
 			result.push_back(L"(none)");
 		} else {
 			// Build the formatted profile string, e.g., "(audio/aac;audio/x-hx-aac-adts)"
@@ -795,70 +793,43 @@ CandidateInfo XDGBasedAppProvider::ConvertDesktopEntryToCandidateInfo(const Desk
 // ****************************** File MIME Type Detection & Expansion ******************************
 
 // Gathers file attributes and "raw" MIME types from all enabled detection methods for a single file.
-// This function is optimized to perform only one stat() call.
 XDGBasedAppProvider::RawMimeProfile XDGBasedAppProvider::GetRawMimeProfile(const std::string& pathname)
 {
-	RawMimeProfile profile = {}; // Zero-initialize all fields
+	RawMimeProfile profile = {};
 	struct stat st;
 
-	// 1. Perform the single stat() call.
 	if (stat(pathname.c_str(), &st) != 0) {
-		// stat() failed (e.g., ENOENT). We can't determine any file type
-		// (not even ext_mime, as we don't know if it's a regular file).
-		// Return the empty profile.
+		// stat() failed (e.g., ENOENT).
+		// We can't determine any file type. Return the empty profile.
 		return profile;
 	}
 
-	// 2. Path exists. Determine file type and local accessibility flags.
-	// These flags will NOT be stored in the profile,
-	// only used to decide whether to run external tools.
-	bool is_accessible_for_tools = false;
-
+	// Path exists. Determine file type and get MIME types based on it.
 	if (S_ISREG(st.st_mode)) {
 		profile.is_regular_file = true;
+
 		// Only call extension-based lookup for regular files
 		profile.ext_mime = MimeTypeByExtension(pathname);
 
-		// Check for read permission
 		if (access(pathname.c_str(), R_OK) == 0) {
-			is_accessible_for_tools = true;
+			// Run expensive external tools ONLY for accessible regular files.
+			profile.xdg_mime = MimeTypeFromXdgMimeTool(pathname);
+			profile.file_mime = MimeTypeFromFileTool(pathname);
 		}
-	}
-	else if (S_ISDIR(st.st_mode)) {
+
+	} else if (S_ISDIR(st.st_mode)) {
 		profile.stat_mime = "inode/directory";
-		// Check for traverse permission
-		if (access(pathname.c_str(), X_OK) == 0) {
-			is_accessible_for_tools = true;
-		}
-	}
-	else if (S_ISFIFO(st.st_mode)) {
+	} else if (S_ISFIFO(st.st_mode)) {
 		profile.stat_mime = "inode/fifo";
-		if (access(pathname.c_str(), R_OK) == 0) is_accessible_for_tools = true;
-	}
-	else if (S_ISSOCK(st.st_mode)) {
+	} else if (S_ISSOCK(st.st_mode)) {
 		profile.stat_mime = "inode/socket";
-		if (access(pathname.c_str(), R_OK) == 0) is_accessible_for_tools = true;
-	}
-	else if (S_ISCHR(st.st_mode)) {
+	} else if (S_ISCHR(st.st_mode)) {
 		profile.stat_mime = "inode/chardevice";
-		if (access(pathname.c_str(), R_OK) == 0) is_accessible_for_tools = true;
-	}
-	else if (S_ISBLK(st.st_mode)) {
+	} else if (S_ISBLK(st.st_mode)) {
 		profile.stat_mime = "inode/blockdevice";
-		if (access(pathname.c_str(), R_OK) == 0) is_accessible_for_tools = true;
 	}
 
-	// 3. Run expensive external tools ONLY if the path is accessible.
-	// This prevents capturing "permission denied" errors from stdout.
-	if (is_accessible_for_tools) {
-		profile.xdg_mime = MimeTypeFromXdgMimeTool(pathname);
-		profile.file_mime = MimeTypeFromFileTool(pathname);
-	}
-
-	// For inaccessible regular files, we already got ext_mime.
-	// For inaccessible directories, we already got stat_mime.
-	// This provides the best possible information without external tool errors.
-
+	// Return the populated profile.
 	return profile;
 }
 
@@ -879,10 +850,10 @@ std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const
 
 	// --- Step 1: Initial, most specific MIME type detection ---
 	// Use the pre-detected types from the RawMimeProfile in order of priority.
-	add_unique(profile.xdg_mime);  // Highest priority (system standard)
-	add_unique(profile.file_mime); // Second priority (content-based)
-	add_unique(profile.stat_mime); // Third priority (stat()-based fallback)
-	add_unique(profile.ext_mime);  // Lowest priority (name-based fallback)
+	add_unique(profile.xdg_mime);
+	add_unique(profile.file_mime);
+	add_unique(profile.stat_mime);
+	add_unique(profile.ext_mime);
 
 	// --- Step 2: Iteratively expand the MIME type list with parents and aliases ---
 	if (_op_subclass_to_parent_map || _op_alias_to_canonical_map) {
@@ -977,9 +948,8 @@ std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const
 		}
 	}
 
-	if (_show_universal_handlers) {
+	if (_show_universal_handlers || mime_types.empty()) {
 		// --- Step 5: Add the ultimate fallback for any binary data ---
-		// This now correctly checks the independent 'is_regular_file' flag.
 		if (profile.is_regular_file) {
 			add_unique("application/octet-stream");
 		}

@@ -79,7 +79,6 @@ private:
 				std::size_t h4 = std::hash<std::string>{}(s.stat_mime);
 				std::size_t h5 = std::hash<bool>{}(s.is_regular_file);
 
-
 				// Combine hashes using a simple boost-like hash_combine
 				std::size_t seed = h1;
 				seed ^= h2 + 0x9e3779b9 + (seed << 6) + (seed >> 2);
