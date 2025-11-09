@@ -155,7 +155,6 @@ std::vector<CandidateInfo> MacOSAppProvider::GetAppCandidates(const std::vector<
         
         // --- Begin: Mime Type Caching Logic ---
         // Get the MIME type for this UTI and cache the complete profile.
-        // This logic is moved from GetMimeTypes to be done only once.
         std::wstring result_mime;
 
         // Use the appropriate API based on the target macOS version.
@@ -374,10 +373,6 @@ std::vector<Field> MacOSAppProvider::GetCandidateDetails(const CandidateInfo& ca
 // Collects unique formatted profile strings based on the last GetAppCandidates call.
 std::vector<std::wstring> MacOSAppProvider::GetMimeTypes()
 {
-    // The pathnames argument is intentionally ignored, as the results
-    // are based on the _last_mime_profiles cache populated by the
-    // preceding GetAppCandidates() call.
-
     // Use a set to store only the unique formatted profile strings.
     std::unordered_set<std::wstring> unique_profile_strings;
     unique_profile_strings.reserve(_last_mime_profiles.size());
