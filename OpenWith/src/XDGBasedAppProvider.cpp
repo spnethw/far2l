@@ -1249,7 +1249,6 @@ XDGBasedAppProvider::MimeinfoCacheData XDGBasedAppProvider::ParseAllMimeinfoCach
 	MimeinfoCacheData data;
 	for (const auto& dir : search_paths) {
 		std::string cache_path = dir + "/mimeinfo.cache";
-		// Use the new independent helper function
 		if (IsReadableFile(cache_path)) {
 			ParseMimeinfoCache(cache_path, data);
 		}
@@ -1538,7 +1537,6 @@ std::vector<std::string> XDGBasedAppProvider::GetDesktopFileSearchPaths()
 	std::unordered_set<std::string> seen_paths;
 
 	auto add_path = [&](const std::string& p) {
-		// Use the new independent helper function
 		if (!p.empty() && IsTraversableDirectory(p) && seen_paths.insert(p).second) {
 			paths.push_back(p);
 		}
@@ -1577,7 +1575,6 @@ std::vector<std::string> XDGBasedAppProvider::GetMimeappsListSearchPaths()
 	// This helper only adds paths that point to existing, readable files.
 	auto add_path = [&](const std::string& p) {
 		if (p.empty() || !seen_paths.insert(p).second) return;
-		// Use the new independent helper function
 		if (IsReadableFile(p)) {
 			paths.push_back(p);
 		}
@@ -1625,7 +1622,6 @@ std::vector<std::string> XDGBasedAppProvider::GetMimeDatabaseSearchPaths()
 	std::unordered_set<std::string> seen_paths;
 
 	auto add_path = [&](const std::string& p) {
-		// Use the new independent helper function
 		if (!p.empty() && IsTraversableDirectory(p) && seen_paths.insert(p).second) {
 			paths.push_back(p);
 		}
