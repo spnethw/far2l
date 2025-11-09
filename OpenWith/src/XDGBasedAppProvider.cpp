@@ -410,16 +410,14 @@ std::vector<Field> XDGBasedAppProvider::GetCandidateDetails(const CandidateInfo&
 // that were collected during the last GetAppCandidates() call.
 std::vector<std::wstring> XDGBasedAppProvider::GetMimeTypes()
 {
-	std::vector<std::wstring> result;
-	result.reserve(_last_mime_profiles.size());
-
+	std::set<std::wstring> final_unique_strings;
 	bool has_none = false;
 
-	// Iterate over the cached profiles from GetAppCandidates
 	for (const auto& profile : _last_mime_profiles)
 	{
-		// 1. Collect unique, non-empty MIME types from the raw profile.
+
 		std::set<std::string> unique_mimes_for_profile;
+
 		if (!profile.xdg_mime.empty()) {
 			unique_mimes_for_profile.insert(profile.xdg_mime);
 		}
@@ -433,11 +431,9 @@ std::vector<std::wstring> XDGBasedAppProvider::GetMimeTypes()
 			unique_mimes_for_profile.insert(profile.ext_mime);
 		}
 
-		// 2. Format the final display string
 		if (unique_mimes_for_profile.empty()) {
 			has_none = true;
 		} else {
-			// Build the formatted profile string, e.g., "(audio/aac;audio/x-hx-aac-adts)"
 			std::stringstream ss;
 			ss << "(";
 			for (auto it = unique_mimes_for_profile.begin(); it != unique_mimes_for_profile.end(); ++it) {
@@ -447,9 +443,12 @@ std::vector<std::wstring> XDGBasedAppProvider::GetMimeTypes()
 				ss << *it;
 			}
 			ss << ")";
-			result.push_back(StrMB2Wide(ss.str()));
+
+			final_unique_strings.insert(StrMB2Wide(ss.str()));
 		}
 	}
+
+	std::vector<std::wstring> result(final_unique_strings.begin(), final_unique_strings.end());
 
 	if (has_none) {
 		result.insert(result.begin(), L"(none)");
