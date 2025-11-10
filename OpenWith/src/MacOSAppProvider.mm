@@ -139,7 +139,7 @@ std::vector<CandidateInfo> MacOSAppProvider::GetAppCandidates(const std::vector<
 		NSURL *fileURL = [NSURL fileURLWithPath:path];
 		if (!fileURL) {
 			// File path is invalid, cache as inaccessible
-			_last_uti_profiles.insert({ L"", false });
+			_last_uti_profiles.insert({ std::string(""), false }); // Store empty string for inaccessible
 			continue;
 		}
 
@@ -149,15 +149,15 @@ std::vector<CandidateInfo> MacOSAppProvider::GetAppCandidates(const std::vector<
 		[fileURL getResourceValue:&uti forKey:NSURLTypeIdentifierKey error:&error];
 		if (error || !uti) {
 			// Failed to get UTI (e.g., file not found, permissions), cache as inaccessible
-			_last_uti_profiles.insert({ L"", false });
+			_last_uti_profiles.insert({ std::string(""), false }); // Store empty string for inaccessible
 			continue;
 		}
 
 		// --- Begin: Profile Caching Logic ---
 		// Cache the file profile (UTI and accessible status).
-		// The conversion from UTI to MIME type is deferred to GetMimeTypes()
-		// to avoid performance overhead in this loop.
-		_last_uti_profiles.insert({ StrMB2Wide([uti UTF8String]), true });
+		const char* uti_cstr = [uti UTF8String];
+		std::string uti_std_str = (uti_cstr ? uti_cstr : "");
+		_last_uti_profiles.insert({ uti_std_str, true });
 		// --- End: Profile Caching Logic ---
 
 
@@ -359,7 +359,7 @@ std::vector<std::wstring> MacOSAppProvider::GetMimeTypes()
 
 		// File was accessible, convert its cached UTI to a MIME type.
 		std::wstring result_mime;
-		NSString *uti = [NSString stringWithUTF8String:StrWide2MB(profile.uti).c_str()];
+		NSString *uti = [NSString stringWithUTF8String:profile.uti.c_str()];
 
 		// Use the appropriate API based on the target macOS version.
 #if MAC_OS_X_VERSION_MAX_ALLOWED >= 110000 // UTType is available on macOS 11.0+

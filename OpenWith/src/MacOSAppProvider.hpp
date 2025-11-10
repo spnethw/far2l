@@ -26,7 +26,7 @@ private:
 	// A struct to cache the results of a file type query.
 	// It stores the file's UTI and accessibility state.
 	struct MacFileProfile {
-		std::wstring uti;
+		std::string uti;
 		bool accessible; // True if file existed and UTI was gettable
 
 		// Required for std::unordered_set
@@ -37,7 +37,7 @@ private:
 		// Custom hash function for MacFileProfile.
 		struct Hash {
 			std::size_t operator()(const MacFileProfile& p) const noexcept {
-				std::size_t h1 = std::hash<std::wstring>{}(p.uti);
+				std::size_t h1 = std::hash<std::string>{}(p.uti);
 				std::size_t h2 = std::hash<bool>{}(p.accessible);
 				// Combine hashes
 				std::size_t seed = h1;
