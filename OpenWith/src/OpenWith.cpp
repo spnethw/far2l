@@ -70,12 +70,12 @@ namespace OpenWith {
 			return INVALID_HANDLE_VALUE;
 		}
 
-		if (pi.Plugin && !(pi.Flags & PFLAGS_REALNAMES)) {
-			ShowError(GetMsg(MError), {GetMsg(MNotRealNames)});
+		if (pi.PanelType != PTYPE_FILEPANEL || pi.ItemsNumber <= 0) {
 			return INVALID_HANDLE_VALUE;
 		}
 
-		if (pi.PanelType != PTYPE_FILEPANEL || pi.ItemsNumber <= 0) {
+		if (pi.Plugin && !(pi.Flags & PFLAGS_REALNAMES)) {
+			ShowError(GetMsg(MError), {GetMsg(MNotRealNames)});
 			return INVALID_HANDLE_VALUE;
 		}
 
@@ -198,9 +198,9 @@ namespace OpenWith {
 
 		int exitCode = s_Info.DialogRun(dlg);
 		ConfigureResult result;
+		auto ok_button_index = (int)di.size() - 2;
 
-		// The index of the 'OK' button is determined by its position in the 'di' vector.
-		if (exitCode == (int)di.size() - 2) { // OK was clicked
+		if (exitCode == ok_button_index) {
 			result.settings_saved = true;
 			// Save platform-independent settings
 			s_UseExternalTerminal = (s_Info.SendDlgMessage(dlg, DM_GETCHECK, 1, 0) == BSTATE_CHECKED);
@@ -457,8 +457,11 @@ namespace OpenWith {
 		// Perform the initial fetch and filtering of application candidates.
 		update_candidates();
 
-		int BreakCode = -1;
 		const int BreakKeys[] = {VK_F3, VK_F9, 0};
+		constexpr int KEY_F3_DETAILS = 0;
+		constexpr int KEY_F9_OPTIONS = 1;
+
+		int BreakCode = -1;
 		int active_idx = 0;
 
 		// Main application selection menu loop.
@@ -493,7 +496,7 @@ namespace OpenWith {
 			active_idx = selected_idx;
 			const auto& selected_app = candidates[selected_idx];
 
-			if (BreakCode == 0) { // F3 for Details
+			if (BreakCode == KEY_F3_DETAILS) {
 				std::vector<std::wstring> cmds = provider->ConstructCommandLine(selected_app, pathnames);
 				// Repeat until user either launches the application or closes the dialog to go back.
 				while (true) {
@@ -512,7 +515,7 @@ namespace OpenWith {
 					}
 				}
 
-			} else if (BreakCode == 1) { // F9 for Options.
+			} else if (BreakCode == KEY_F9_OPTIONS) {
 				const auto configure_result = ConfigureImpl();
 
 				// Check if settings were saved AND if a refresh is required. A refresh is needed if any setting that affects
