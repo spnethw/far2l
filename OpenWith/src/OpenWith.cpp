@@ -605,9 +605,10 @@ namespace OpenWith {
 
 	int OpenWithPlugin::GetScreenWidth()
 	{
-		CONSOLE_SCREEN_BUFFER_INFO ConsoleScreenBufferInfo;
-		if (WINPORT(GetConsoleScreenBufferInfo)(NULL, &ConsoleScreenBufferInfo))
-			return ConsoleScreenBufferInfo.dwSize.X;
+		SMALL_RECT rect;
+		if (s_Info.AdvControl(s_Info.ModuleNumber, ACTL_GETFARRECT, &rect, 0)) {
+			return rect.Right - rect.Left + 1;
+		}
 		return 0;
 	}
 
