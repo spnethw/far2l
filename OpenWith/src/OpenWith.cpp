@@ -337,7 +337,7 @@ namespace OpenWith {
 	bool OpenWithPlugin::ShowDetailsDialog(AppProvider* provider, const CandidateInfo& app,
 										   const std::vector<std::wstring>& pathnames,
 										   const std::vector<std::wstring>& cmds,
-										   const std::vector<std::wstring>& unique_mimes)
+										   const std::vector<std::wstring>& unique_mime_profiles)
 	{
 		std::vector<Field> file_info;
 		if (pathnames.size() == 1) {
@@ -349,8 +349,8 @@ namespace OpenWith {
 			file_info.push_back({ GetMsg(MPathname), count_msg });
 		}
 
-		// Use the pre-fetched mime types instead of re-calculating them.
-		file_info.push_back({ GetMsg(MMimeType), JoinStrings(unique_mimes, L"; ") });
+		// Use the pre-fetched mime profiles instead of re-calculating them.
+		file_info.push_back({ GetMsg(MMimeType), JoinStrings(unique_mime_profiles, L"; ") });
 
 		std::wstring all_cmds = JoinStrings(cmds, L"; ");
 		std::vector<Field> application_info = provider->GetCandidateDetails(app);
@@ -421,20 +421,16 @@ namespace OpenWith {
 		// Get a platform-specific application provider.
 		auto provider = AppProvider::CreateAppProvider(&OpenWithPlugin::GetMsg);
 
-		// A cache for MIME types. It will be populated (lazily)
-		// only if the user presses F3 or if no apps are found.
-		std::optional<std::vector<std::wstring>> unique_mimes_cache;
+		// A cache for MIME profiles. It will be populated (lazily) only if the user presses F3 or if no apps are found.
+		std::optional<std::vector<std::wstring>> unique_mime_profiles_cache;
 
 		// Helper lambda to lazily get or populate the MIME profiles cache.
 		// It's called only when the MIME info is actually needed.
 		auto get_unique_mime_profiles = [&]() -> const std::vector<std::wstring>& {
-			// Check if the cache is already populated.
-			if (!unique_mimes_cache.has_value()) {
-				// If not, populate it by calling the expensive provider function.
-				unique_mimes_cache = provider->GetMimeTypes();
+			if (!unique_mime_profiles_cache.has_value()) {
+				unique_mime_profiles_cache = provider->GetMimeTypes();
 			}
-			// Return a const reference to the cached vector.
-			return *unique_mimes_cache;
+			return *unique_mime_profiles_cache;
 		};
 
 		std::vector<CandidateInfo> candidates;
@@ -500,7 +496,7 @@ namespace OpenWith {
 				std::vector<std::wstring> cmds = provider->ConstructCommandLine(selected_app, pathnames);
 				// Repeat until user either launches the application or closes the dialog to go back.
 				while (true) {
-					// Get MIME types (lazily) and pass them to the details dialog.
+					// Get MIME profiles (lazily) and pass them to the details dialog.
 					bool wants_to_launch = ShowDetailsDialog(provider.get(), selected_app, pathnames, cmds, get_unique_mime_profiles());
 					if (!wants_to_launch) {
 						// User clicked "Close", break the inner loop to return to the main menu.
@@ -531,7 +527,7 @@ namespace OpenWith {
 					active_idx = 0;
 
 					// Invalidate the mime cache, as settings affecting it might have changed.
-					unique_mimes_cache.reset();
+					unique_mime_profiles_cache.reset();
 				}
 
 			} else { // Enter to launch.
