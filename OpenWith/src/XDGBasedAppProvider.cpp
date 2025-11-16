@@ -448,14 +448,15 @@ std::vector<std::wstring> XDGBasedAppProvider::GetMimeTypes()
 		} else {
 			std::stringstream ss;
 			ss << "(";
-			for (auto it = unique_mimes_for_profile.begin(); it != unique_mimes_for_profile.end(); ++it) {
-				if (it != unique_mimes_for_profile.begin()) {
+			bool first = true;
+			for (const auto& mime : unique_mimes_for_profile) {
+				if (!first) {
 					ss << ";";
 				}
-				ss << *it;
+				ss << mime;
+				first = false;
 			}
 			ss << ")";
-
 			final_unique_strings.insert(StrMB2Wide(ss.str()));
 		}
 	}
@@ -479,14 +480,16 @@ XDGBasedAppProvider::CandidateMap XDGBasedAppProvider::ResolveMimesToCandidateMa
 	// This map will store the final, unique candidates for this MIME list.
 	CandidateMap unique_candidates;
 
-	// Check for a global default app using 'xdg-mime query default'.
-	std::string global_default_app = GetDefaultApp(prioritized_mimes.empty() ? "" : prioritized_mimes[0]);
+	if (_op_xdg_mime_exists) {
+		// Check for a global default app using 'xdg-mime query default'.
+		std::string global_default_app = GetDefaultApp(prioritized_mimes.empty() ? "" : prioritized_mimes[0]);
 
-	if (!global_default_app.empty()) {
-		const auto& mime_for_default = prioritized_mimes[0];
-		if (!IsAssociationRemoved(mime_for_default, global_default_app)) {
-			int rank = (prioritized_mimes.size() - 0) * Ranking::SPECIFICITY_MULTIPLIER + Ranking::SOURCE_RANK_GLOBAL_DEFAULT;
-			RegisterCandidateById(unique_candidates, global_default_app, rank,  "xdg-mime query default " + mime_for_default);
+		if (!global_default_app.empty()) {
+			const auto& mime_for_default = prioritized_mimes[0];
+			if (!IsAssociationRemoved(mime_for_default, global_default_app)) {
+				int rank = (prioritized_mimes.size() - 0) * Ranking::SPECIFICITY_MULTIPLIER + Ranking::SOURCE_RANK_GLOBAL_DEFAULT;
+				RegisterCandidateById(unique_candidates, global_default_app, rank,  "xdg-mime query default " + mime_for_default);
+			}
 		}
 	}
 
@@ -830,10 +833,15 @@ XDGBasedAppProvider::RawMimeProfile XDGBasedAppProvider::GetRawMimeProfile(const
 
 		if (access(pathname.c_str(), R_OK) == 0) {
 			// Run expensive external tools ONLY for accessible regular files.
-			profile.xdg_mime = MimeTypeFromXdgMimeTool(pathname);
-			profile.file_mime = MimeTypeFromFileTool(pathname);
-			profile.magika_mime = MimeTypeFromMagikaTool(pathname);
-
+			if (_use_xdg_mime_tool && _op_xdg_mime_exists) {
+				profile.xdg_mime = MimeTypeFromXdgMimeTool(pathname);
+			}
+			if (_op_file_tool_enabled_and_exists) {
+				profile.file_mime = MimeTypeFromFileTool(pathname);
+			}
+			if (_op_magika_tool_enabled_and_exists) {
+				profile.magika_mime = MimeTypeFromMagikaTool(pathname);
+			}
 		}
 
 	} else if (S_ISDIR(st.st_mode)) {
@@ -939,8 +947,9 @@ std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const
 			{"gzip", "application/gzip"}
 		};
 
-		auto obtained_types_before_suffix_check = mime_types;
-		for (const auto& mime : obtained_types_before_suffix_check) {
+		const auto size_before_suffixes = mime_types.size();
+		for (size_t i = 0; i < size_before_suffixes; ++i) {
+			const auto mime = mime_types[i];
 			size_t plus_pos = mime.rfind('+');
 			if (plus_pos != std::string::npos && plus_pos < mime.length() - 1) {
 				std::string suffix = mime.substr(plus_pos + 1);
@@ -954,8 +963,9 @@ std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const
 
 	if (_use_generic_mime_fallbacks) {
 		// --- Step 4: Add generic fallback MIME types ---
-		auto obtained_types_before_fallback = mime_types;
-		for (const auto& mime : obtained_types_before_fallback) {
+		const auto size_before_generic_types = mime_types.size();
+		for (size_t i = 0; i < size_before_generic_types; ++i) {
+			const auto mime = mime_types[i];
 			// text/plain is a safe fallback for any text/* type.
 			if (mime.rfind("text/", 0) == 0) {
 				add_unique("text/plain");
@@ -981,35 +991,22 @@ std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const
 
 std::string XDGBasedAppProvider::MimeTypeFromXdgMimeTool(const std::string& pathname)
 {
-	std::string result;
-	if (_op_xdg_mime_enabled_and_exists) {
-		auto escaped_pathname = EscapeArgForShell(pathname);
-		result = RunCommandAndCaptureOutput("xdg-mime query filetype " + escaped_pathname + " 2>/dev/null");
-	}
-	return result;
+	auto escaped_pathname = EscapeArgForShell(pathname);
+	return RunCommandAndCaptureOutput("xdg-mime query filetype " + escaped_pathname + " 2>/dev/null");
 }
 
 
 std::string XDGBasedAppProvider::MimeTypeFromFileTool(const std::string& pathname)
 {
-	std::string result;
-	if(_op_file_tool_enabled_and_exists) {
-		auto escaped_pathname = EscapeArgForShell(pathname);
-		result = RunCommandAndCaptureOutput("file --brief --dereference --mime-type " + escaped_pathname + " 2>/dev/null");
-	}
-	return result;
+	auto escaped_pathname = EscapeArgForShell(pathname);
+	return RunCommandAndCaptureOutput("file --brief --dereference --mime-type " + escaped_pathname + " 2>/dev/null");
 }
 
 
 std::string XDGBasedAppProvider::MimeTypeFromMagikaTool(const std::string& pathname)
 {
-	std::string result;
-	if(_op_magika_tool_enabled_and_exists) {
-		auto escaped_pathname = EscapeArgForShell(pathname);
-		result = RunCommandAndCaptureOutput("magika --no-colors --format %m " + escaped_pathname + " 2>/dev/null");
-	}
-
-	return result;
+	auto escaped_pathname = EscapeArgForShell(pathname);
+	return RunCommandAndCaptureOutput("magika --no-colors --format '%m' " + escaped_pathname + " 2>/dev/null");
 }
 
 
@@ -1242,7 +1239,7 @@ XDGBasedAppProvider::MimeToDesktopEntryIndex XDGBasedAppProvider::FullScanDeskto
 		struct dirent* dir_entry;
 		while ((dir_entry = readdir(dir_stream))) {
 			std::string filename = dir_entry->d_name;
-			if (filename.size() <= 8 || filename.substr(filename.size() - 8) != ".desktop") {
+			if (filename.size() <= 8 || filename.compare(filename.size() - 8, 8, ".desktop") != 0) {
 				continue;
 			}
 
@@ -1366,19 +1363,15 @@ void XDGBasedAppProvider::ParseMimeappsList(const std::string& path, MimeappsLis
 
 		if (current_section == "[Default Applications]") {
 			// Only use the first default if not already set, as higher priority files are parsed first.
-			if (mimeapps_lists_data.defaults.find(key) == mimeapps_lists_data.defaults.end()) {
-				mimeapps_lists_data.defaults[key] = { values[0], path };
-			}
+			mimeapps_lists_data.defaults.insert( { key, {values[0], path} } );
 		} else if (current_section == "[Added Associations]") {
 			auto& vec = mimeapps_lists_data.added[key];
 			for (const auto& v : values) {
-				if (!v.empty()) {
-					vec.push_back({v, path});
-				}
+				vec.push_back({v, path});
 			}
 		} else if (current_section == "[Removed Associations]") {
 			for(const auto& v : values) {
-				if(!v.empty()) mimeapps_lists_data.removed[key].insert(v);
+				mimeapps_lists_data.removed[key].insert(v);
 			}
 		}
 	}
@@ -2083,7 +2076,7 @@ XDGBasedAppProvider::OperationContext::OperationContext(XDGBasedAppProvider& p) 
 
 	// 3. Check for external tool availability *once* for this operation.
 	// This sets the operation-scoped flags for use by MimeTypeFrom... functions.
-	provider._op_xdg_mime_enabled_and_exists = provider._use_xdg_mime_tool && provider.CheckExecutable("xdg-mime");
+	provider._op_xdg_mime_exists = provider.CheckExecutable("xdg-mime");
 	provider._op_file_tool_enabled_and_exists = provider._use_file_tool && provider.CheckExecutable("file");
 	provider._op_magika_tool_enabled_and_exists = provider._use_magika_tool && provider.CheckExecutable("magika");
 
@@ -2122,7 +2115,7 @@ XDGBasedAppProvider::OperationContext::~OperationContext()
 	provider._op_mime_to_desktop_entry_map.reset();
 
 	// Reset the operation-scoped tool availability flags
-	provider._op_xdg_mime_enabled_and_exists = false;
+	provider._op_xdg_mime_exists = false;
 	provider._op_file_tool_enabled_and_exists = false;
 	provider._op_magika_tool_enabled_and_exists = false;
 }

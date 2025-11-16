@@ -165,14 +165,13 @@ namespace OpenWith {
 		di.push_back({ DI_CHECKBOX, 5, ++y, 0, 0, 0, { s_NoWaitForCommandCompletion },  0, 0, GetMsg(MNoWaitForCommandCompletion), 0});
 		di.push_back({ DI_CHECKBOX, 5, ++y, 0, 0, 0, { s_ClearSelection },  0, 0, GetMsg(MClearSelection), 0});
 
-		wchar_t threshold_str[16];
-		swprintf(threshold_str, 15, L"%d", s_ConfirmLaunchThreshold);
+		auto threshold_wstr = std::to_wstring(s_ConfirmLaunchThreshold);
 		const wchar_t* confirm_label = GetMsg(MConfirmLaunchOption);
 		size_t confirm_label_width = s_FSF.StrCellsCount(confirm_label, wcslen(confirm_label));
 
 		y++;
 		di.push_back({ DI_CHECKBOX, 5, y, 0, 0, 0,  { s_ConfirmLaunch }, 0, 0, confirm_label, 0 });
-		di.push_back({ DI_FIXEDIT, (int)(confirm_label_width + 11), y, (int)(confirm_label_width + 14), 0, FALSE, {(DWORD_PTR)L"9999"}, DIF_MASKEDIT, 0, threshold_str, 0});
+		di.push_back({ DI_FIXEDIT, (int)(confirm_label_width + 11), y, (int)(confirm_label_width + 14), 0, FALSE, {(DWORD_PTR)L"9999"}, DIF_MASKEDIT, 0, threshold_wstr.c_str(), 0});
 
 		int first_platform_item_idx = 0;
 
@@ -374,16 +373,9 @@ namespace OpenWith {
 		if (!s_ConfirmLaunch || pathnames.size() <= static_cast<size_t>(s_ConfirmLaunchThreshold)) {
 			return true;
 		}
-
 		wchar_t message[255] = {};
-
 		s_FSF.snprintf(message, ARRAYSIZE(message) - 1, GetMsg(MConfirmLaunchMessage), pathnames.size(), app.name.c_str());
-
-		const wchar_t* items[] = {
-			GetMsg(MConfirmLaunchTitle),
-			message,
-		};
-
+		const wchar_t* items[] = { GetMsg(MConfirmLaunchTitle), message };
 		int res = s_Info.Message(s_Info.ModuleNumber, FMSG_MB_YESNO, nullptr, items, ARRAYSIZE(items), 2);
 		return (res == 0);
 	}
@@ -594,9 +586,9 @@ namespace OpenWith {
 	std::wstring OpenWithPlugin::JoinStrings(const std::vector<std::wstring>& vec, const std::wstring& delimiter)
 	{
 		if (vec.empty()) return L"";
-		std::wstring result;
-		for (size_t i = 0; i < vec.size(); ++i) {
-			if (i > 0) result += delimiter;
+		std::wstring result = vec[0];
+		for (size_t i = 1; i < vec.size(); ++i) {
+			result += delimiter;
 			result += vec[i];
 		}
 		return result;

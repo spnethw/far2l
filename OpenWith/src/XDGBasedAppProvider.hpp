@@ -74,20 +74,17 @@ private:
 		{
 			std::size_t operator()(const RawMimeProfile& s) const noexcept
 			{
-				std::size_t h1 = std::hash<std::string>{}(s.xdg_mime);
-				std::size_t h2 = std::hash<std::string>{}(s.file_mime);
-				std::size_t h3 = std::hash<std::string>{}(s.magika_mime);
-				std::size_t h4 = std::hash<std::string>{}(s.ext_mime);
-				std::size_t h5 = std::hash<std::string>{}(s.stat_mime);
-				std::size_t h6 = std::hash<bool>{}(s.is_regular_file);
+				auto hash_combine = [](std::size_t& seed, std::size_t hash_val) {
+					seed ^= hash_val + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+				};
 
-				// Combine hashes using a simple boost-like hash_combine
-				std::size_t seed = h1;
-				seed ^= h2 + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-				seed ^= h3 + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-				seed ^= h4 + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-				seed ^= h5 + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-				seed ^= h6 + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+				std::size_t seed = std::hash<std::string>{}(s.xdg_mime);
+				hash_combine(seed, std::hash<std::string>{}(s.file_mime));
+				hash_combine(seed, std::hash<std::string>{}(s.magika_mime));
+				hash_combine(seed, std::hash<std::string>{}(s.ext_mime));
+				hash_combine(seed, std::hash<std::string>{}(s.stat_mime));
+				hash_combine(seed, std::hash<bool>{}(s.is_regular_file));
+
 				return seed;
 			}
 		};
@@ -128,7 +125,10 @@ private:
 			if (rank != other.rank) {
 				return rank > other.rank; // primary sort: descending by rank (highest rank first).
 			}
-			return entry && other.entry && entry->name < other.entry->name; // secondary sort: ascending by name
+			if (entry && other.entry) {
+				return entry->name < other.entry->name;	// secondary sort: ascending by name
+			}
+			return entry == nullptr && other.entry != nullptr;
 		}
 	};
 
@@ -169,7 +169,7 @@ private:
 		size_t operator()(const AppUniqueKey& k) const {
 			const auto h1 = std::hash<std::string_view>{}(k.name);
 			const auto h2 = std::hash<std::string_view>{}(k.exec);
-			return h1 ^ (h2 << 1); // Simple combination hash
+			return h1 ^ (h2 + 0x9e3779b9 + (h1 << 6) + (h1 >> 2));
 		}
 	};
 
@@ -295,7 +295,7 @@ private:
 
 	// Tool availability flags, cached for the duration of one GetAppCandidates operation.
 	// They are calculated in OperationContext::OperationContext.
-	bool _op_xdg_mime_enabled_and_exists = false;
+	bool _op_xdg_mime_exists = false;
 	bool _op_file_tool_enabled_and_exists = false;
 	bool _op_magika_tool_enabled_and_exists = false;
 
