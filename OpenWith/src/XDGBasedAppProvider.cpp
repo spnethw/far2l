@@ -461,12 +461,11 @@ std::vector<std::wstring> XDGBasedAppProvider::GetMimeTypes()
 		}
 	}
 
-	std::vector<std::wstring> result(final_unique_strings.begin(), final_unique_strings.end());
-
+	std::vector<std::wstring> result;
 	if (has_none) {
-		result.insert(result.begin(), L"(none)");
+		result.push_back(L"(none)");
 	}
-
+	result.insert(result.end(), final_unique_strings.begin(), final_unique_strings.end());
 	return result;
 }
 
@@ -1415,21 +1414,26 @@ std::optional<DesktopEntry> XDGBasedAppProvider::ParseDesktopFile(const std::str
 	}
 
 	// Validate required fields and application type according to the spec.
-	bool is_application = entries.count("Type") && entries.at("Type") == "Application";
-	bool hidden = entries.count("Hidden") && entries.at("Hidden") == "true";
+	bool is_application = false;
+	if (auto it = entries.find("Type"); it != entries.end() && it->second == "Application") {
+		is_application = true;
+	}
 
-	// Ignore hidden entries.
-	if (hidden) {
+	bool hidden = false;
+	if (auto it = entries.find("Hidden"); it != entries.end() && it->second == "true") {
+		hidden = true;
+	}
+
+	// Ignore hidden entries; application must have Type=Application
+	if (hidden || !is_application) {
 		return std::nullopt;
 	}
 
-	// An application must have Type=Application and a non-empty Exec field.
-	if (!is_application || !entries.count("Exec") || entries.at("Exec").empty()) {
+	//  An application must have a non-empty Exec field.
+	if (auto it = entries.find("Exec"); it == entries.end() || it->second.empty()) {
 		return std::nullopt;
-	}
-	desktop_entry.exec = Trim(entries.at("Exec"));
-	if (desktop_entry.exec.empty()) {
-		return std::nullopt;
+	} else {
+		desktop_entry.exec = it->second;
 	}
 
 	// The Name field is required for a valid desktop entry.
@@ -1441,12 +1445,13 @@ std::optional<DesktopEntry> XDGBasedAppProvider::ParseDesktopFile(const std::str
 	// Extract optional fields with localization support.
 	desktop_entry.generic_name = GetLocalizedValue(entries, "GenericName");
 	desktop_entry.comment = GetLocalizedValue(entries, "Comment");
-	if (entries.count("Categories")) desktop_entry.categories = entries.at("Categories");
-	if (entries.count("TryExec")) desktop_entry.try_exec = entries.at("TryExec");
-	if (entries.count("Terminal")) desktop_entry.terminal = (entries.at("Terminal") == "true");
-	if (entries.count("MimeType")) desktop_entry.mimetype = entries.at("MimeType");
-	if (entries.count("OnlyShowIn")) desktop_entry.only_show_in = entries.at("OnlyShowIn");
-	if (entries.count("NotShowIn")) desktop_entry.not_show_in = entries.at("NotShowIn");
+
+	if (auto it = entries.find("Categories"); it != entries.end()) { desktop_entry.categories = it->second; }
+	if (auto it = entries.find("TryExec"); it != entries.end())    { desktop_entry.try_exec = it->second; }
+	if (auto it = entries.find("Terminal"); it != entries.end())   { desktop_entry.terminal = (it->second == "true"); }
+	if (auto it = entries.find("MimeType"); it != entries.end())   { desktop_entry.mimetype = it->second; }
+	if (auto it = entries.find("OnlyShowIn"); it != entries.end()) { desktop_entry.only_show_in = it->second; }
+	if (auto it = entries.find("NotShowIn"); it != entries.end())  { desktop_entry.not_show_in = it->second; }
 
 	return desktop_entry;
 }
