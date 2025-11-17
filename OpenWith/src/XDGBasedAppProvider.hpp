@@ -138,6 +138,10 @@ private:
 	{
 		std::string desktop_file;
 		std::string source_path;
+
+		HandlerProvenance() = default;
+		HandlerProvenance(const std::string& df, const std::string& sp)
+			: desktop_file(df), source_path(sp) {}
 	};
 
 	// Represents the combined associations from all parsed mimeapps.list files.
@@ -279,7 +283,12 @@ private:
 	// Maps the setting's internal string key (e.g., "UseXdgMimeTool") to the command-line tool
 	// it depends on (e.g., "xdg-mime"). Used by GetPlatformSettings to check tool availability.
 	using ToolKeyMap = std::map<std::string, std::string>;
-	static const ToolKeyMap s_tool_key_map;
+
+	inline static const ToolKeyMap s_tool_key_map = {
+		{ "UseXdgMimeTool", "xdg-mime" },
+		{ "UseFileTool", "file" },
+		{ "UseMagikaTool", "magika" }
+	};
 
 	// --- Operation-Scoped State ---
 	// These fields are managed by the OperationContext RAII helper.

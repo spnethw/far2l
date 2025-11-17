@@ -162,7 +162,7 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 			if (candidates_for_current_profile.empty()) {
 				return {}; // we can stop all work immediately.
 			}
-			candidate_cache[profile] = std::move(candidates_for_current_profile);
+			candidate_cache.try_emplace(profile, std::move(candidates_for_current_profile));
 		}
 
 		// Step 3: Iterative Intersection using the K-sized cache.
@@ -779,7 +779,7 @@ std::vector<CandidateInfo> XDGBasedAppProvider::FormatCandidatesForUI(
 		// If requested (only for single-file lookups), store the association's source
 		// for the F3 details dialog.
 		if (store_source_info) {
-			_last_candidates_source_info[ci.id] = ranked_candidate.source_info;
+			_last_candidates_source_info.try_emplace(ci.id, ranked_candidate.source_info);
 		}
 		result.push_back(ci);
 	}
@@ -1218,11 +1218,13 @@ const std::optional<DesktopEntry>& XDGBasedAppProvider::GetCachedDesktopEntry(co
 		std::string full_path = base_dir + "/" + desktop_file;
 		if (auto entry = ParseDesktopFile(full_path)) {
 			// A valid entry was found and parsed, cache and return it.
-			return _desktop_entry_cache[desktop_file] = std::move(entry);
+			auto [it, inserted] = _desktop_entry_cache.try_emplace(desktop_file, std::move(entry));
+			return it->second;
 		}
 	}
 	// Cache a nullopt if the file is not found anywhere to avoid repeated searches.
-	return _desktop_entry_cache[desktop_file] = std::nullopt;
+	auto [it, inserted] = _desktop_entry_cache.try_emplace(desktop_file, std::nullopt);
+	return it->second;
 }
 
 
@@ -1315,7 +1317,7 @@ void XDGBasedAppProvider::ParseMimeinfoCache(const std::string& path, MimeinfoCa
 				for (const auto& app : apps) {
 					if (!app.empty()) {
 						// We append apps from all cache files; duplicates are okay.
-						existing.push_back({app, path});
+						existing.push_back(HandlerProvenance(app, path));
 					}
 				}
 			}
@@ -1362,11 +1364,11 @@ void XDGBasedAppProvider::ParseMimeappsList(const std::string& path, MimeappsLis
 
 		if (current_section == "[Default Applications]") {
 			// Only use the first default if not already set, as higher priority files are parsed first.
-			mimeapps_lists_data.defaults.insert( { key, {values[0], path} } );
+			mimeapps_lists_data.defaults.try_emplace(key, values[0], path);
 		} else if (current_section == "[Added Associations]") {
 			auto& vec = mimeapps_lists_data.added[key];
 			for (const auto& v : values) {
-				vec.push_back({v, path});
+				vec.push_back(HandlerProvenance(v, path));
 			}
 		} else if (current_section == "[Removed Associations]") {
 			for(const auto& v : values) {
@@ -2124,13 +2126,5 @@ XDGBasedAppProvider::OperationContext::~OperationContext()
 	provider._op_file_tool_enabled_and_exists = false;
 	provider._op_magika_tool_enabled_and_exists = false;
 }
-
-
-// Maps the setting's internal string key to the command-line tool it depends on.
-const XDGBasedAppProvider::ToolKeyMap XDGBasedAppProvider::s_tool_key_map = {
-	{ "UseXdgMimeTool", "xdg-mime" },
-	{ "UseFileTool", "file" },
-	{ "UseMagikaTool", "magika" }
-};
 
 #endif
