@@ -567,7 +567,7 @@ void XDGBasedAppProvider::AppendCandidatesFromMimeinfoCache(const std::vector<st
 {
 	const int total_mimes = prioritized_mimes.size();
 	// This map tracks the best rank for each app to avoid rank demotion by a less-specific MIME type.
-	std::map<std::string, std::pair<int, std::string>> app_best_rank_and_source;
+	std::unordered_map<std::string, std::pair<int, std::string>> app_best_rank_and_source;
 	const auto& mime_to_handlers_map = _op_mime_to_handlers_map.value();
 	// First, find the best possible rank for each application across all matching MIME types.
 	// This prevents an app from getting a low rank for a generic MIME type (e.g., text/plain)
@@ -605,7 +605,7 @@ void XDGBasedAppProvider::AppendCandidatesByFullScan(const std::vector<std::stri
 {
 	const int total_mimes = prioritized_mimes.size();
 	// A map to store the best rank found for each unique application.
-	std::map<const DesktopEntry*, std::pair<int, std::string>> app_best_rank_and_source;
+	std::unordered_map<const DesktopEntry*, std::pair<int, std::string>> app_best_rank_and_source;
 	const auto& mime_to_desktop_entry_map = _op_mime_to_desktop_entry_map.value();
 
 	// Iterate through all prioritized MIME types for the current file.
@@ -1418,7 +1418,7 @@ std::optional<DesktopEntry> XDGBasedAppProvider::ParseDesktopFile(const std::str
 		hidden = true;
 	}
 
-	// Ignore hidden entries; application must have Type=Application
+	// Ignore hidden entries and non-applications
 	if (hidden || !is_application) {
 		return std::nullopt;
 	}
