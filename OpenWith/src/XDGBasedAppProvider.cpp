@@ -908,27 +908,10 @@ std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const
 				}
 
 				// --- Smart reverse lookup (canonical -> alias) using the pre-built map ---
-				// Find aliases for the current canonical MIME type, but filter them
-				// to avoid incorrect associations (e.g., image/* -> text/*).
-
 				auto it_aliases = _op_canonical_to_aliases_map->find(current_mime);
 				if (it_aliases != _op_canonical_to_aliases_map->end()) {
-					size_t canonical_slash_pos = current_mime.find('/');
-					// Proceed only if the canonical MIME type has a valid format (e.g., "type/subtype").
-					if (canonical_slash_pos != std::string::npos) {
-						std::string_view canonical_major_type(current_mime.data(), canonical_slash_pos);
-						for (const auto& alias : it_aliases->second) {
-							size_t alias_slash_pos = alias.find('/');
-							if (alias_slash_pos != std::string::npos) {
-								std::string_view alias_major_type(alias.data(), alias_slash_pos);
-								// Add the alias ONLY if its major type matches the canonical one.
-								// This prevents adding, for example, "text/ico" for "image/vnd.microsoft.icon",
-								// but allows adding "image/x-icon".
-								if (alias_major_type == canonical_major_type) {
-									add_unique(alias);
-								}
-							}
-						}
+					for (const auto& alias : it_aliases->second) {
+						add_unique(alias);
 					}
 				}
 			}
@@ -1535,6 +1518,20 @@ std::unordered_map<std::string, std::string> XDGBasedAppProvider::LoadMimeAliase
 }
 
 
+// Returns a std::string_view of the major part of a MIME type (e.g., "image" from "image/png").
+// Returns an empty view if the MIME type is malformed.
+std::string_view XDGBasedAppProvider::GetMajorMimeType(const std::string& mime)
+{
+	size_t slash_pos = mime.find('/');
+	// Check for invalid formats like "/png", "image", or an empty string.
+	if (slash_pos == std::string::npos || slash_pos == 0) {
+		return {};
+	}
+	// Create a view of the major type part.
+	return std::string_view(mime.data(), slash_pos);
+}
+
+
 // Loads the MIME type inheritance map (child -> parent) from all 'subclasses' files.
 // Files with higher priority (user-specific) override lower-priority (system) ones.
 std::unordered_map<std::string, std::string> XDGBasedAppProvider::LoadMimeSubclasses()
@@ -2072,14 +2069,27 @@ bool XDGBasedAppProvider::IsTraversableDirectory(const std::string& path)
 XDGBasedAppProvider::OperationContext::OperationContext(XDGBasedAppProvider& p) : provider(p)
 {
 	// 1. Load MIME-related databases
+
 	if (provider._load_mimetype_aliases) {
+		// Pass 1: Build the forward (alias -> canonical) map.
 		provider._op_alias_to_canonical_map = provider.LoadMimeAliases();
-		// Build the reverse (canonical -> alias) map once for the entire operation
+
+		// Pass 2: Build the reverse (canonical -> aliases) map.
 		provider._op_canonical_to_aliases_map.emplace();
+		auto& reverse_map = provider._op_canonical_to_aliases_map.value();
+
 		for (const auto& [alias, canonical] : provider._op_alias_to_canonical_map.value()) {
-			provider._op_canonical_to_aliases_map.value()[canonical].push_back(alias);
+			auto alias_major = GetMajorMimeType(alias);
+			auto canonical_major = GetMajorMimeType(canonical);
+			// Add the alias ONLY if its major type matches the canonical one.
+			// This prevents adding, for example, "text/ico" for "image/vnd.microsoft.icon",
+			// but allows adding "image/x-icon".
+			if (!alias_major.empty() && alias_major == canonical_major) {
+				reverse_map[canonical].push_back(alias);
+			}
 		}
 	}
+
 	if (provider._load_mimetype_subclasses) {
 		provider._op_subclass_to_parent_map = provider.LoadMimeSubclasses();
 	}
