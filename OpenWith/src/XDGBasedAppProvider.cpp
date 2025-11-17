@@ -511,9 +511,18 @@ XDGBasedAppProvider::CandidateMap XDGBasedAppProvider::ResolveMimesToCandidateMa
 std::string XDGBasedAppProvider::GetDefaultApp(const std::string& mime_type)
 {
 	if (mime_type.empty()) return "";
+
+	auto it = _op_default_app_cache.find(mime_type);
+	if (it != _op_default_app_cache.end()) {
+		return it->second;
+	}
+
 	std::string escaped_mime = EscapeArgForShell(mime_type);
 	std::string cmd = "xdg-mime query default " + escaped_mime + " 2>/dev/null";
-	return RunCommandAndCaptureOutput(cmd);
+
+	auto default_app = RunCommandAndCaptureOutput(cmd);
+	_op_default_app_cache.try_emplace(mime_type, default_app);
+	return default_app;
 }
 
 
@@ -2087,6 +2096,8 @@ XDGBasedAppProvider::OperationContext::OperationContext(XDGBasedAppProvider& p) 
 	provider._op_file_tool_enabled_and_exists = provider._use_file_tool && provider.CheckExecutable("file");
 	provider._op_magika_tool_enabled_and_exists = provider._use_magika_tool && provider.CheckExecutable("magika");
 
+	provider._op_default_app_cache.clear();
+
 	// 4. Build the primary application lookup cache
 	// We build *either* the mimeinfo.cache or the full mime-to-app index, based on settings.
 	if (provider._use_mimeinfo_cache) {
@@ -2120,6 +2131,8 @@ XDGBasedAppProvider::OperationContext::~OperationContext()
 	provider._op_current_desktop_env.reset();
 	provider._op_mime_to_handlers_map.reset();
 	provider._op_mime_to_desktop_entry_map.reset();
+
+	provider._op_default_app_cache.clear();
 
 	// Reset the operation-scoped tool availability flags
 	provider._op_xdg_mime_exists = false;

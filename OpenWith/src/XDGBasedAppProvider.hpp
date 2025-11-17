@@ -183,7 +183,7 @@ private:
 
 	// --- Searching and ranking candidates logic ---
 	CandidateMap ResolveMimesToCandidateMap(const std::vector<std::string>& prioritized_mimes);
-	static std::string GetDefaultApp(const std::string& mime_type);
+	std::string GetDefaultApp(const std::string& mime_type);
 	void AppendCandidatesFromMimeAppsLists(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates);
 	void AppendCandidatesFromMimeinfoCache(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates);
 	void AppendCandidatesByFullScan(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates);
@@ -311,6 +311,9 @@ private:
 	// One of the following two caches will be populated based on settings.
 	std::optional<MimeinfoCacheData> _op_mime_to_handlers_map;	// from mimeinfo.cache
 	std::optional<MimeToDesktopEntryIndex> _op_mime_to_desktop_entry_map;	// from full .desktop scan
+
+	// Cache for 'xdg-mime query default' results (MIME type -> .desktop file name)
+	std::map<std::string, std::string> _op_default_app_cache;
 
 	// RAII helper to manage the lifecycle of the operation-scoped state.
 	struct OperationContext
