@@ -159,30 +159,26 @@ namespace OpenWith {
 		std::vector<ProviderSetting> old_platform_settings = provider->GetPlatformSettings();
 
 		std::vector<FarDialogItem> di;
-		int y = 1;
-
+		int y = 0;
+		di.push_back({ DI_DOUBLEBOX, 3, ++y, 0, 0, FALSE, {}, 0, 0, GetMsg(MConfigTitle), 0 });
 		di.push_back({ DI_CHECKBOX, 5, ++y, 0, 0, TRUE, { s_UseExternalTerminal }, 0, 0, GetMsg(MUseExternalTerminal), 0 });
 		di.push_back({ DI_CHECKBOX, 5, ++y, 0, 0, 0, { s_NoWaitForCommandCompletion },  0, 0, GetMsg(MNoWaitForCommandCompletion), 0});
 		di.push_back({ DI_CHECKBOX, 5, ++y, 0, 0, 0, { s_ClearSelection },  0, 0, GetMsg(MClearSelection), 0});
 
-		wchar_t threshold_str[16];
-		swprintf(threshold_str, 15, L"%d", s_ConfirmLaunchThreshold);
+		auto threshold_wstr = std::to_wstring(s_ConfirmLaunchThreshold);
 		const wchar_t* confirm_label = GetMsg(MConfirmLaunchOption);
 		size_t confirm_label_width = s_FSF.StrCellsCount(confirm_label, wcslen(confirm_label));
 
 		y++;
 		di.push_back({ DI_CHECKBOX, 5, y, 0, 0, 0,  { s_ConfirmLaunch }, 0, 0, confirm_label, 0 });
-		di.push_back({ DI_FIXEDIT, (int)(confirm_label_width + 11), y, (int)(confirm_label_width + 14), 0, FALSE, {(DWORD_PTR)L"9999"}, DIF_MASKEDIT, 0, threshold_str, 0});
+		di.push_back({ DI_FIXEDIT, (int)(confirm_label_width + 11), y, (int)(confirm_label_width + 14), 0, FALSE, {(DWORD_PTR)L"9999"}, DIF_MASKEDIT, 0, threshold_wstr.c_str(), 0});
 
 		int first_platform_item_idx = 0;
 
 		if (!old_platform_settings.empty()) {
 			di.push_back({ DI_TEXT, 5, ++y, 0, 0, FALSE, {}, DIF_SEPARATOR, 0, L"", 0 });
 
-			// Pre-calculates the final dialog index of the first platform checkbox.
-			// di.size() is the index where the item is currently pushed, and the '+ 1' accounts
-			// for the DI_DOUBLEBOX header that will later be inserted at index 0, shifting all subsequent elements.
-			first_platform_item_idx = (int)di.size() + 1;
+			first_platform_item_idx = (int)di.size();
 
 			for (const auto& setting : old_platform_settings) {
 				di.push_back({ DI_CHECKBOX, 5, ++y, 0, 0, FALSE, { setting.value }, setting.disabled ? DIF_DISABLE : DIF_NONE, 0, setting.display_name.c_str(), 0 });
@@ -196,11 +192,13 @@ namespace OpenWith {
 		di.push_back({ DI_BUTTON, 0, y, 0, 0, FALSE, {}, DIF_CENTERGROUP, 0, GetMsg(MCancel), 0 });
 
 		int dialog_height = y + 3;
-		int dialog_width = 70;
+		constexpr int DIALOG_WIDTH = 70;
 
-		di.insert(di.begin(), { DI_DOUBLEBOX, 3, 1, dialog_width - 4, dialog_height - 2, FALSE, {}, 0, 0, GetMsg(MConfigTitle), 0 });
+		// Update DI_DOUBLEBOX dynamically calculated coordinates
+		di[0].X2 = DIALOG_WIDTH - 4;
+		di[0].Y2 = dialog_height - 2;
 
-		HANDLE dlg = s_Info.DialogInit(s_Info.ModuleNumber, -1, -1, dialog_width, dialog_height, L"ConfigurationDialog", di.data(), di.size(), 0, 0, nullptr, 0);
+		HANDLE dlg = s_Info.DialogInit(s_Info.ModuleNumber, -1, -1, DIALOG_WIDTH, dialog_height, L"ConfigurationDialog", di.data(), di.size(), 0, 0, nullptr, 0);
 		if (dlg == INVALID_HANDLE_VALUE) {
 			return {};
 		}
@@ -374,16 +372,9 @@ namespace OpenWith {
 		if (!s_ConfirmLaunch || pathnames.size() <= static_cast<size_t>(s_ConfirmLaunchThreshold)) {
 			return true;
 		}
-
 		wchar_t message[255] = {};
-
 		s_FSF.snprintf(message, ARRAYSIZE(message) - 1, GetMsg(MConfirmLaunchMessage), pathnames.size(), app.name.c_str());
-
-		const wchar_t* items[] = {
-			GetMsg(MConfirmLaunchTitle),
-			message,
-		};
-
+		const wchar_t* items[] = { GetMsg(MConfirmLaunchTitle), message };
 		int res = s_Info.Message(s_Info.ModuleNumber, FMSG_MB_YESNO, nullptr, items, ARRAYSIZE(items), 2);
 		return (res == 0);
 	}
@@ -594,9 +585,9 @@ namespace OpenWith {
 	std::wstring OpenWithPlugin::JoinStrings(const std::vector<std::wstring>& vec, const std::wstring& delimiter)
 	{
 		if (vec.empty()) return L"";
-		std::wstring result;
-		for (size_t i = 0; i < vec.size(); ++i) {
-			if (i > 0) result += delimiter;
+		std::wstring result = vec[0];
+		for (size_t i = 1; i < vec.size(); ++i) {
+			result += delimiter;
 			result += vec[i];
 		}
 		return result;
