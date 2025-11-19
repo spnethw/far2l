@@ -90,7 +90,7 @@ std::vector<ProviderSetting> XDGBasedAppProvider::GetPlatformSettings()
 			// If a corresponding tool name is found, check for the executable's existence.
 			// The option is disabled if the tool is not found on the system.
 			const std::string& tool_name = it->second;
-			is_disabled = !CheckExecutable(tool_name);
+			is_disabled = !IsExecutableAvailable(tool_name);
 		}
 
 		settings.push_back({
@@ -137,7 +137,7 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 		auto profile = GetRawMimeProfile(StrWide2MB(pathnames[0]));
 		_last_unique_mime_profiles.insert(profile); // Cache the single profile
 		auto prioritized_mimes = ExpandAndPrioritizeMimeTypes(profile);
-		final_candidates = ResolveMimeTypesToCandidateMap(prioritized_mimes);
+		final_candidates = FindApplicationsForMimeChain(prioritized_mimes);
 	}
 	else
 	{
@@ -157,7 +157,7 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 
 		for (const auto& profile : _last_unique_mime_profiles) {
 			auto prioritized_mimes = ExpandAndPrioritizeMimeTypes(profile);
-			auto candidates_for_current_profile = ResolveMimeTypesToCandidateMap(prioritized_mimes);
+			auto candidates_for_current_profile = FindApplicationsForMimeChain(prioritized_mimes);
 			// Fail-fast optimization: If any profile has zero candidates, the final intersection will be empty.
 			if (candidates_for_current_profile.empty()) {
 				return {}; // we can stop all work immediately.
@@ -474,7 +474,7 @@ std::vector<std::wstring> XDGBasedAppProvider::GetMimeTypes()
 // ****************************** Searching and ranking candidates logic ******************************
 
 // Resolves MIME types to a map of unique candidates.
-XDGBasedAppProvider::CandidateMap XDGBasedAppProvider::ResolveMimeTypesToCandidateMap(const std::vector<std::string>& prioritized_mimes)
+XDGBasedAppProvider::CandidateMap XDGBasedAppProvider::FindApplicationsForMimeChain(const std::vector<std::string>& prioritized_mimes)
 {
 	// This map will store the final, unique candidates for this MIME list.
 	CandidateMap unique_candidates;
@@ -672,7 +672,7 @@ void XDGBasedAppProvider::RegisterCandidateFromObject(CandidateMap& unique_candi
 											int rank, const std::string& source_info)
 {
 	// Optionally validate the TryExec key to ensure the executable exists.
-	if (_validate_try_exec && !entry.try_exec.empty() && !CheckExecutable(entry.try_exec)) {
+	if (_validate_try_exec && !entry.try_exec.empty() && !IsExecutableAvailable(entry.try_exec)) {
 		return;
 	}
 
@@ -879,12 +879,12 @@ XDGBasedAppProvider::RawMimeProfile XDGBasedAppProvider::GetRawMimeProfile(const
 std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const RawMimeProfile& profile)
 {
 	std::vector<std::string> mimes;
-	std::unordered_set<std::string> seen;
+	std::unordered_set<std::string> seen_mimes;
 
 	// Helper to add a MIME type only if it's valid and not already present.
 	auto add_unique = [&](std::string mime) {
 		mime = Trim(mime);
-		if (!mime.empty() && mime.find('/') != std::string::npos && seen.insert(mime).second) {
+		if (!mime.empty() && mime.find('/') != std::string::npos && seen_mimes.insert(mime).second) {
 			mimes.push_back(std::move(mime));
 		}
 	};
@@ -1359,9 +1359,8 @@ void XDGBasedAppProvider::ParseMimeappsList(const std::string& path, MimeappsLis
 			// Only use the first default if not already set, as higher priority files are parsed first.
 			mimeapps_lists_data.defaults.try_emplace(mime, desktop_files[0], path);
 		} else if (current_section == "[Added Associations]") {
-			auto& vec = mimeapps_lists_data.added[mime];
 			for (const auto& desktop_file : desktop_files) {
-				vec.push_back(HandlerProvenance(desktop_file, path));
+				mimeapps_lists_data.added[mime].push_back(HandlerProvenance(desktop_file, path));
 			}
 		} else if (current_section == "[Removed Associations]") {
 			for(const auto& desktop_file : desktop_files) {
@@ -1684,7 +1683,7 @@ std::vector<std::string> XDGBasedAppProvider::GetMimeDatabaseSearchPaths()
 std::vector<std::string> XDGBasedAppProvider::TokenizeExecString(const std::string& exec_str)
 {
 	// Pass 1: Handle general GKeyFile string escapes.
-	const std::string unescaped_str = UnescapeGeneralString(exec_str);
+	const std::string unescaped_str = UnescapeGKeyFileString(exec_str);
 
 	// Pass 2: Tokenize the result.
 	std::vector<std::string> tokens;
@@ -1737,7 +1736,7 @@ std::vector<std::string> XDGBasedAppProvider::TokenizeExecString(const std::stri
 
 // Performs the first-pass un-escaping for a raw string from a .desktop file.
 // This handles general GKeyFile-style escape sequences like '\\' -> '\', '\s' -> ' ', etc.
-std::string XDGBasedAppProvider::UnescapeGeneralString(const std::string& raw_str)
+std::string XDGBasedAppProvider::UnescapeGKeyFileString(const std::string& raw_str)
 {
 	std::string result;
 	result.reserve(raw_str.length());
@@ -1892,7 +1891,7 @@ std::string XDGBasedAppProvider::PathToUri(const std::string& path)
 
 // Checks if an executable exists and is runnable.
 // If the path contains a slash, it's checked directly. Otherwise, it's searched in $PATH.
-bool XDGBasedAppProvider::CheckExecutable(const std::string& path)
+bool XDGBasedAppProvider::IsExecutableAvailable(const std::string& path)
 {
 	if (path.empty()) {
 		return false;
@@ -2103,9 +2102,9 @@ XDGBasedAppProvider::OperationContext::OperationContext(XDGBasedAppProvider& p) 
 
 	// 3. Check for external tool availability *once* for this operation.
 	// This sets the operation-scoped flags for use by MimeTypeFrom... functions.
-	provider._op_xdg_mime_exists = provider.CheckExecutable("xdg-mime");
-	provider._op_file_tool_enabled_and_exists = provider._use_file_tool && provider.CheckExecutable("file");
-	provider._op_magika_tool_enabled_and_exists = provider._use_magika_tool && provider.CheckExecutable("magika");
+	provider._op_xdg_mime_exists = provider.IsExecutableAvailable("xdg-mime");
+	provider._op_file_tool_enabled_and_exists = provider._use_file_tool && provider.IsExecutableAvailable("file");
+	provider._op_magika_tool_enabled_and_exists = provider._use_magika_tool && provider.IsExecutableAvailable("magika");
 
 	provider._op_default_app_cache.clear();
 

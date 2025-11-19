@@ -182,7 +182,7 @@ private:
 	using MimeinfoCacheData = std::unordered_map<std::string, std::vector<HandlerProvenance>>;
 
 	// --- Searching and ranking candidates logic ---
-	CandidateMap ResolveMimeTypesToCandidateMap(const std::vector<std::string>& prioritized_mimes);
+	CandidateMap FindApplicationsForMimeChain(const std::vector<std::string>& prioritized_mimes);
 	std::string GetDefaultApp(const std::string& mime);
 	void AppendCandidatesFromMimeAppsLists(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates);
 	void AppendCandidatesFromMimeinfoCache(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates);
@@ -221,13 +221,13 @@ private:
 
 	// --- Command line constructing ---
 	static std::vector<std::string> TokenizeExecString(const std::string& exec_str);
-	static std::string UnescapeGeneralString(const std::string& raw_str);
+	static std::string UnescapeGKeyFileString(const std::string& raw_str);
 	static bool ExpandFieldCodes(const DesktopEntry& candidate, const std::string& pathname, const std::string& unescaped, std::vector<std::string>& out_args, bool treat_urls_as_paths);
 	static bool HasFieldCode(const std::string& exec, const std::string& codes_to_find);
 	static std::string PathToUri(const std::string& path);
 
 	// --- System & Environment Helpers ---
-	static bool CheckExecutable(const std::string& path);
+	static bool IsExecutableAvailable(const std::string& path);
 	static std::string GetEnv(const char* var, const char* default_val = "");
 	static std::string RunCommandAndCaptureOutput(const std::string& cmd);
 
