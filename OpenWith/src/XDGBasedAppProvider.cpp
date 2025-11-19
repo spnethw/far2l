@@ -138,8 +138,8 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 
 		auto profile = GetRawMimeProfile(StrWide2MB(pathnames[0]));
 		_last_unique_mime_profiles.insert(profile); // Cache the single profile
-		auto prioritized_mimes = ExpandAndPrioritizeMimeTypes(profile);
-		final_candidates = FindApplicationsForMimeChain(prioritized_mimes);
+		auto expanded_mimes = ExpandAndPrioritizeMimeTypes(profile);
+		final_candidates = FindApplicationsForMimeChain(expanded_mimes);
 
 	} else {
 
@@ -158,8 +158,8 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 		}
 
 		for (const auto& profile : _last_unique_mime_profiles) {
-			auto prioritized_mimes_for_profile = ExpandAndPrioritizeMimeTypes(profile);
-			auto candidates_for_profile = FindApplicationsForMimeChain(prioritized_mimes_for_profile);
+			auto expanded_mimes_for_profile = ExpandAndPrioritizeMimeTypes(profile);
+			auto candidates_for_profile = FindApplicationsForMimeChain(expanded_mimes_for_profile);
 			// Fail-fast optimization: If any profile has zero candidates, the final intersection will be empty.
 			if (candidates_for_profile.empty()) {
 				return {}; // we can stop all work immediately.
@@ -485,32 +485,32 @@ std::vector<std::wstring> XDGBasedAppProvider::GetMimeTypes()
 // ****************************** Searching and ranking candidates logic ******************************
 
 // Resolves MIME types to a map of unique candidates.
-XDGBasedAppProvider::CandidateMap XDGBasedAppProvider::FindApplicationsForMimeChain(const std::vector<std::string>& prioritized_mimes)
+XDGBasedAppProvider::CandidateMap XDGBasedAppProvider::FindApplicationsForMimeChain(const std::vector<std::string>& expanded_mimes)
 {
 	// This map will store the final, unique candidates for this MIME list.
 	CandidateMap unique_candidates;
 
 	if (_op_xdg_mime_exists) {
 		// Check for a global default app using 'xdg-mime query default'.
-		const auto mime_for_default = prioritized_mimes.empty() ? "" : prioritized_mimes[0];
+		const auto mime_for_default = expanded_mimes.empty() ? "" : expanded_mimes[0];
 		std::string desktop_file = GetDefaultApp(mime_for_default);
 		if (!desktop_file.empty()) {
 			if (!IsAssociationRemoved(mime_for_default, desktop_file)) {
-				int rank = (prioritized_mimes.size() - 0) * Ranking::SPECIFICITY_MULTIPLIER + Ranking::SOURCE_RANK_GLOBAL_DEFAULT;
+				int rank = (expanded_mimes.size() - 0) * Ranking::SPECIFICITY_MULTIPLIER + Ranking::SOURCE_RANK_GLOBAL_DEFAULT;
 				RegisterCandidateById(unique_candidates, desktop_file, rank,  "xdg-mime query default " + mime_for_default);
 			}
 		}
 	}
 
-	AppendCandidatesFromMimeAppsLists(prioritized_mimes, unique_candidates);
+	AppendCandidatesFromMimeAppsLists(expanded_mimes, unique_candidates);
 
 	// Find candidates using the cache prepared by OperationContext.
 	if (_op_mime_to_handlers_map.has_value()) {
 		// Use the results from mimeinfo.cache (it was successfully loaded and was not empty).
-		AppendCandidatesFromMimeinfoCache(prioritized_mimes, unique_candidates);
+		AppendCandidatesFromMimeinfoCache(expanded_mimes, unique_candidates);
 	} else {
 		// Use the full scan index (either because caching was disabled, or as a fallback).
-		AppendCandidatesByFullScan(prioritized_mimes, unique_candidates);
+		AppendCandidatesByFullScan(expanded_mimes, unique_candidates);
 	}
 
 	return unique_candidates;
@@ -537,13 +537,13 @@ std::string XDGBasedAppProvider::GetDefaultApp(const std::string& mime)
 
 
 // Finds candidates from the parsed mimeapps.list files. This is a high-priority source.
-void XDGBasedAppProvider::AppendCandidatesFromMimeAppsLists(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates)
+void XDGBasedAppProvider::AppendCandidatesFromMimeAppsLists(const std::vector<std::string>& expanded_mimes, CandidateMap& unique_candidates)
 {
-	const int total_mimes = prioritized_mimes.size();
+	const int total_mimes = expanded_mimes.size();
 	const auto& mimeapps_lists_data = _op_mimeapps_lists_data.value();
 
 	for (int i = 0; i < total_mimes; ++i) {
-		const auto& mime = prioritized_mimes[i];
+		const auto& mime = expanded_mimes[i];
 		// Rank based on MIME type specificity. The more specific, the higher the rank.
 		int mime_specificity_rank = (total_mimes - i);
 
@@ -573,9 +573,9 @@ void XDGBasedAppProvider::AppendCandidatesFromMimeAppsLists(const std::vector<st
 
 
 // Finds candidates from the pre-generated mimeinfo.cache file for performance.
-void XDGBasedAppProvider::AppendCandidatesFromMimeinfoCache(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates)
+void XDGBasedAppProvider::AppendCandidatesFromMimeinfoCache(const std::vector<std::string>& expanded_mimes, CandidateMap& unique_candidates)
 {
-	const int total_mimes = prioritized_mimes.size();
+	const int total_mimes = expanded_mimes.size();
 
 	// Map tracking the highest score found for each application ID to avoid rank demotion by a less-specific MIME type.
 	std::unordered_map<std::string, AssociationScore> best_score_by_app_id;
@@ -586,7 +586,7 @@ void XDGBasedAppProvider::AppendCandidatesFromMimeinfoCache(const std::vector<st
 	// This prevents an app from getting a low rank for a generic MIME type (e.g., text/plain)
 	// if it has already been matched with a high-rank specific MIME type.
 	for (int i = 0; i < total_mimes; ++i) {
-		const auto& mime = prioritized_mimes[i];
+		const auto& mime = expanded_mimes[i];
 		auto it_cache = mime_to_handlers_map.find(mime);
 		if (it_cache != mime_to_handlers_map.end()) {
 			// Calculate rank using the tiered formula.
@@ -614,18 +614,18 @@ void XDGBasedAppProvider::AppendCandidatesFromMimeinfoCache(const std::vector<st
 
 
 // Finds candidates by looking up the pre-built mime-to-app index. Used when _use_mimeinfo_cache is false.
-void XDGBasedAppProvider::AppendCandidatesByFullScan(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates)
+void XDGBasedAppProvider::AppendCandidatesByFullScan(const std::vector<std::string>& expanded_mimes, CandidateMap& unique_candidates)
 {
-	const int total_mimes = prioritized_mimes.size();
+	const int total_mimes = expanded_mimes.size();
 
 	// Map tracking the highest score found for each DesktopEntry pointer to avoid rank demotion by a less-specific MIME type.
 	std::unordered_map<const DesktopEntry*, AssociationScore> best_score_by_entry;
 
 	const auto& mime_to_desktop_entry_map = _op_mime_to_desktop_entry_map.value();
 
-	// Iterate through all prioritized MIME types for the current file.
+	// Iterate through all expanded MIME types for the current file.
 	for (int i = 0; i < total_mimes; ++i) {
-		const auto& mime = prioritized_mimes[i];
+		const auto& mime = expanded_mimes[i];
 
 		// Find this MIME type in the pre-built mime-to-app index.
 		auto it_index = mime_to_desktop_entry_map.find(mime);

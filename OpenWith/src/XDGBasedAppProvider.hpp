@@ -190,11 +190,11 @@ private:
 	using MimeinfoCacheData = std::unordered_map<std::string, std::vector<HandlerProvenance>>;
 
 	// --- Searching and ranking candidates logic ---
-	CandidateMap FindApplicationsForMimeChain(const std::vector<std::string>& prioritized_mimes);
+	CandidateMap FindApplicationsForMimeChain(const std::vector<std::string>& expanded_mimes);
 	std::string GetDefaultApp(const std::string& mime);
-	void AppendCandidatesFromMimeAppsLists(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates);
-	void AppendCandidatesFromMimeinfoCache(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates);
-	void AppendCandidatesByFullScan(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates);
+	void AppendCandidatesFromMimeAppsLists(const std::vector<std::string>& expanded_mimes, CandidateMap& unique_candidates);
+	void AppendCandidatesFromMimeinfoCache(const std::vector<std::string>& expanded_mimes, CandidateMap& unique_candidates);
+	void AppendCandidatesByFullScan(const std::vector<std::string>& expanded_mimes, CandidateMap& unique_candidates);
 	void RegisterCandidateById(CandidateMap& unique_candidates, const std::string& desktop_file, int rank, const std::string& source_info);
 	void RegisterCandidateFromObject(CandidateMap& unique_candidates, const DesktopEntry& entry, int rank, const std::string& source_info);
 	void AddOrUpdateCandidate(CandidateMap& unique_candidates, const DesktopEntry& entry, int rank, const std::string& source_info);
