@@ -565,9 +565,12 @@ void XDGBasedAppProvider::AppendCandidatesFromMimeAppsLists(const std::vector<st
 void XDGBasedAppProvider::AppendCandidatesFromMimeinfoCache(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates)
 {
 	const int total_mimes = prioritized_mimes.size();
-	// This map tracks the best rank for each app to avoid rank demotion by a less-specific MIME type.
-	std::unordered_map<std::string, std::pair<int, std::string>> app_best_rank_and_source;
+
+	// Map tracking the highest score found for each application ID to avoid rank demotion by a less-specific MIME type.
+	std::unordered_map<std::string, AssociationScore> best_score_by_app_id;
+
 	const auto& mime_to_handlers_map = _op_mime_to_handlers_map.value();
+
 	// First, find the best possible rank for each application across all matching MIME types.
 	// This prevents an app from getting a low rank for a generic MIME type (e.g., text/plain)
 	// if it has already been matched with a high-rank specific MIME type.
@@ -582,19 +585,19 @@ void XDGBasedAppProvider::AppendCandidatesFromMimeinfoCache(const std::vector<st
 				if (desktop_file.empty()) continue;
 				if (IsAssociationRemoved(mime, desktop_file)) continue;
 				std::string source_info = handler_provenance.source_path + StrWide2MB(m_GetMsg(MFor)) + mime;
-				auto [it, inserted] = app_best_rank_and_source.try_emplace(desktop_file, std::make_pair(rank, source_info));
-				// If not inserted (key existed), update only if the new rank is better.
-				if (!inserted && rank > it->second.first) {
-					it->second.first = rank;
-					it->second.second = source_info;
+				auto [it, inserted] = best_score_by_app_id.try_emplace(desktop_file, rank, source_info);
+				// Update only if the new rank is higher than the existing one.
+				if (!inserted && rank > it->second.rank) {
+					it->second.rank = rank;
+					it->second.source_info = source_info;
 				}
 			}
 		}
 	}
 
-	// Now, process each application with its best-found rank.
-	for (const auto& [desktop_file, rank_and_source] : app_best_rank_and_source) {
-		RegisterCandidateById(unique_candidates, desktop_file, rank_and_source.first, rank_and_source.second);
+	// Register each application using its highest calculated rank.
+	for (const auto& [desktop_file, score] : best_score_by_app_id) {
+		RegisterCandidateById(unique_candidates, desktop_file, score.rank, score.source_info);
 	}
 }
 
@@ -603,8 +606,10 @@ void XDGBasedAppProvider::AppendCandidatesFromMimeinfoCache(const std::vector<st
 void XDGBasedAppProvider::AppendCandidatesByFullScan(const std::vector<std::string>& prioritized_mimes, CandidateMap& unique_candidates)
 {
 	const int total_mimes = prioritized_mimes.size();
-	// A map to store the best rank found for each unique application.
-	std::unordered_map<const DesktopEntry*, std::pair<int, std::string>> app_best_rank_and_source;
+
+	// Map tracking the highest score found for each DesktopEntry pointer to avoid rank demotion by a less-specific MIME type.
+	std::unordered_map<const DesktopEntry*, AssociationScore> best_score_by_entry;
+
 	const auto& mime_to_desktop_entry_map = _op_mime_to_desktop_entry_map.value();
 
 	// Iterate through all prioritized MIME types for the current file.
@@ -631,19 +636,19 @@ void XDGBasedAppProvider::AppendCandidatesByFullScan(const std::vector<std::stri
 
 			std::string source_info = StrWide2MB(m_GetMsg(MFullScanFor)) + mime;
 
-			// Try to insert the app with its rank. If it already exists, update its rank only if the new one is higher.
-			auto [it, inserted] = app_best_rank_and_source.try_emplace(entry_ptr, std::make_pair(rank, source_info));
-			if (!inserted && rank > it->second.first) {
-				it->second.first = rank;
-				it->second.second = source_info;
+			auto [it, inserted] = best_score_by_entry.try_emplace(entry_ptr, rank, source_info);
+			// Update only if the new rank is higher than the existing one.
+			if (!inserted && rank > it->second.rank) {
+				it->second.rank = rank;
+				it->second.source_info = source_info;
 			}
 		}
 	}
 
-	// Now, register each unique candidate with its best-found rank.
-	for (const auto& [entry_ptr, rank_and_source] : app_best_rank_and_source) {
+	// Register each application using its highest calculated rank.
+	for (const auto& [entry_ptr, score] : best_score_by_entry) {
 		// Call the registration helper directly, passing the dereferenced entry to avoid a redundant cache lookup.
-		RegisterCandidateFromObject(unique_candidates, *entry_ptr, rank_and_source.first, rank_and_source.second);
+		RegisterCandidateFromObject(unique_candidates, *entry_ptr, score.rank, score.source_info);
 	}
 }
 

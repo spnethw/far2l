@@ -144,6 +144,14 @@ private:
 			: desktop_file(df), source_path(sp) {}
 	};
 
+	// Tracks ranking score and provenance info to identify the highest-ranked association.
+	struct AssociationScore
+	{
+		int rank;
+		std::string source_info;
+		AssociationScore(int r, std::string s) : rank(r), source_info(std::move(s)) {}
+	};
+
 	// Represents the combined associations from all parsed mimeapps.list files.
 	struct MimeappsListsData
 	{
