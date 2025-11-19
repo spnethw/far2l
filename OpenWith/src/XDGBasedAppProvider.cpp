@@ -132,15 +132,17 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 
 	CandidateMap final_candidates;
 
-	// --- Case 1: Handle the simple single-file ---
 	if (pathnames.size() == 1) {
+
+		// --- Case 1: Handle the simple single-file ---
+
 		auto profile = GetRawMimeProfile(StrWide2MB(pathnames[0]));
 		_last_unique_mime_profiles.insert(profile); // Cache the single profile
 		auto prioritized_mimes = ExpandAndPrioritizeMimeTypes(profile);
 		final_candidates = FindApplicationsForMimeChain(prioritized_mimes);
-	}
-	else
-	{
+
+	} else {
+
 		// --- Case 2: Logic for Multiple Files ---
 
 		// Step 1: Group N files into K unique "MIME profiles".
@@ -156,13 +158,13 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 		}
 
 		for (const auto& profile : _last_unique_mime_profiles) {
-			auto prioritized_mimes = ExpandAndPrioritizeMimeTypes(profile);
-			auto candidates_for_current_profile = FindApplicationsForMimeChain(prioritized_mimes);
+			auto prioritized_mimes_for_profile = ExpandAndPrioritizeMimeTypes(profile);
+			auto candidates_for_profile = FindApplicationsForMimeChain(prioritized_mimes_for_profile);
 			// Fail-fast optimization: If any profile has zero candidates, the final intersection will be empty.
-			if (candidates_for_current_profile.empty()) {
+			if (candidates_for_profile.empty()) {
 				return {}; // we can stop all work immediately.
 			}
-			candidate_cache.try_emplace(profile, std::move(candidates_for_current_profile));
+			candidate_cache.try_emplace(profile, std::move(candidates_for_profile));
 		}
 
 		// Step 3: Iterative Intersection using the K-sized cache.
@@ -186,29 +188,38 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 		// Use the map that will hold the final intersected results
 		final_candidates = std::move(candidate_cache.at(base_profile));
 
-		// Step 3c: Iteratively intersect with candidates from all *other* profiles. This loop runs (K - 1) times.
-		for (const auto& current_profile : _last_unique_mime_profiles) {
-			if (current_profile == base_profile) {
-				continue;	// skip the profile we already used as the baseline.
+		// Step 3c: Iteratively intersect with candidates from all *other* profiles.
+		// We treat other profiles as filters: if an app isn't there, it doesn't survive.
+		for (const auto& filter_profile : _last_unique_mime_profiles) {
+			if (filter_profile == base_profile) {
+				continue;
 			}
 
-			// Get a reference to the *cached map* for the current profile.
-			CandidateMap& candidates_for_current_profile = candidate_cache.at(current_profile);
+			// Get the candidate map from the profile we are checking against.
+			const CandidateMap& filter_candidates = candidate_cache.at(filter_profile);
 
-			// Iterate through our master list (`final_candidates`) and remove any app that cannot handle the current profile.
-			for (auto it = final_candidates.begin(); it != final_candidates.end(); ) {
-				// Search directly in the cached map for the other profile.
-				auto find_it = candidates_for_current_profile.find(it->first);
-				if (find_it == candidates_for_current_profile.end()) {
-					// This app is not in the list for the current profile, so remove it.
-					it = final_candidates.erase(it);
+			// Iterate through our "survivors" list (`final_candidates`).
+			for (auto survivor_it = final_candidates.begin(); survivor_it != final_candidates.end(); ) {
+
+				const auto& survivor_key = survivor_it->first;
+				auto& survivor_candidate = survivor_it->second;
+
+				auto filter_match_it = filter_candidates.find(survivor_key);
+
+				if (filter_match_it == filter_candidates.end()) {
+					// The app is missing in the filter profile, so it doesn't support all files.
+					// It fails the intersection test -> remove it.
+					survivor_it = final_candidates.erase(survivor_it);
 				} else {
-					// The app is valid. Update its rank if this profile provides a better one.
-					const RankedCandidate& current_candidate = find_it->second;
-					if (current_candidate.rank > it->second.rank) {
-						it->second.rank = current_candidate.rank;
+					// The app exists in both lists. It survives this round.
+					// Check if the match in the filter profile offers a better (higher) rank.
+					const RankedCandidate& filter_candidate = filter_match_it->second;
+
+					if (filter_candidate.rank > survivor_candidate.rank) {
+						survivor_candidate.rank = filter_candidate.rank;
 					}
-					++it;
+
+					++survivor_it;
 				}
 			}
 
@@ -219,7 +230,7 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 		}
 	}
 
-	// --- Step 4: Common Post-processing (for both 1 and >1 file cases) ---
+	// --- Common Post-processing (for both 1 and >1 file cases) ---
 
 	// Convert the final map to a vector and sort it
 	auto final_candidates_sorted = BuildSortedRankedCandidatesList(final_candidates);
