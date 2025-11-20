@@ -383,29 +383,24 @@ std::vector<Field> XDGBasedAppProvider::GetCandidateDetails(const CandidateInfo&
 		details.push_back({m_GetMsg(MSource), StrMB2Wide(it_source->second)});
 	}
 
-	details.push_back({L"Name =", StrMB2Wide(entry.name)});
-	if (!entry.generic_name.empty()) {
-		details.push_back({L"GenericName =", StrMB2Wide(entry.generic_name)});
-	}
-	if (!entry.comment.empty()) {
-		details.push_back({L"Comment =", StrMB2Wide(entry.comment)});
-	}
-	if (!entry.categories.empty()) {
-		details.push_back({L"Categories =", StrMB2Wide(entry.categories)});
-	}
-	details.push_back({L"Exec =", StrMB2Wide(entry.exec)});
-	if (!entry.try_exec.empty()) {
-		details.push_back({L"TryExec =", StrMB2Wide(entry.try_exec)});
-	}
-	details.push_back({L"Terminal =", entry.terminal ? L"true" : L"false"});
-	if (!entry.mimetype.empty()) {
-		details.push_back({L"MimeType =", StrMB2Wide(entry.mimetype)});
-	}
-	if (!entry.not_show_in.empty()) {
-		details.push_back({L"NotShowIn =", StrMB2Wide(entry.not_show_in)});
-	}
-	if (!entry.only_show_in.empty()) {
-		details.push_back({L"OnlyShowIn =", StrMB2Wide(entry.only_show_in)});
+	static const std::pair<const wchar_t*, std::string DesktopEntry::*> key_value_map[] = {
+		{ L"Name =",        &DesktopEntry::name },
+		{ L"GenericName =", &DesktopEntry::generic_name },
+		{ L"Comment =",     &DesktopEntry::comment },
+		{ L"Categories =",  &DesktopEntry::categories },
+		{ L"Exec =",        &DesktopEntry::exec },
+		{ L"TryExec =",     &DesktopEntry::try_exec },
+		{ L"Terminal =",    &DesktopEntry::terminal },
+		{ L"MimeType =",    &DesktopEntry::mimetype },
+		{ L"NotShowIn =",   &DesktopEntry::not_show_in },
+		{ L"OnlyShowIn =",  &DesktopEntry::only_show_in }
+	};
+
+	for (const auto& [label, member_ptr] : key_value_map) {
+		const std::string& val = std::invoke(member_ptr, entry);
+		if (!val.empty()) {
+			details.push_back({ label, StrMB2Wide(val) });
+		}
 	}
 
 	return details;
@@ -801,8 +796,8 @@ std::vector<CandidateInfo> XDGBasedAppProvider::FormatCandidatesForUI(
 CandidateInfo XDGBasedAppProvider::ConvertDesktopEntryToCandidateInfo(const DesktopEntry& desktop_entry)
 {
 	CandidateInfo candidate;
-	candidate.terminal = desktop_entry.terminal;
-	candidate.name = StrMB2Wide(desktop_entry.name);
+	candidate.terminal = (desktop_entry.terminal == "true");
+	candidate.name = StrMB2Wide(UnescapeGKeyFileString(desktop_entry.name));
 
 	// The ID is the basename of the .desktop file (e.g., "firefox.desktop").
 	// This is used for lookups and to handle overrides correctly.
@@ -883,10 +878,18 @@ std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const
 	std::vector<std::string> mimes;
 	std::unordered_set<std::string> seen_mimes;
 
+	static const std::string s_octet_stream = "application/octet-stream";
+	bool octet_stream_detected = false;
+
 	// Helper to add a MIME type only if it's valid and not already present.
 	auto add_unique = [&](std::string mime) {
 		mime = Trim(mime);
-		if (!mime.empty() && mime.find('/') != std::string::npos && seen_mimes.insert(mime).second) {
+		if (mime.empty()) return;
+		if (mime == s_octet_stream) {
+			octet_stream_detected = true;
+			return;
+		}
+		if (mime.find('/') != std::string::npos && seen_mimes.insert(mime).second) {
 			mimes.push_back(std::move(mime));
 		}
 	};
@@ -934,10 +937,9 @@ std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const
 		}
 	}
 
+	// --- Step 3: Add base types for structured syntaxes (e.g., +xml, +zip) ---
+	// This is a reliable fallback that works even if the subclass hierarchy is incomplete in the system's MIME database.
 	if (_resolve_structured_suffixes) {
-
-		// --- Step 3: Add base types for structured syntaxes (e.g., +xml, +zip) ---
-		// This is a reliable fallback that works even if the subclass hierarchy is incomplete in the system's MIME database.
 
 		static const std::map<std::string, std::string> s_suffix_to_base_mime = {
 			{"xml", "application/xml"},
@@ -960,8 +962,9 @@ std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const
 		}
 	}
 
+	// --- Step 4: Add generic fallback MIME types ---
 	if (_use_generic_mime_fallbacks) {
-		// --- Step 4: Add generic fallback MIME types ---
+
 		const auto size_before_generic_types = mimes.size();
 		for (size_t i = 0; i < size_before_generic_types; ++i) {
 			const auto mime = mimes[i];
@@ -977,10 +980,10 @@ std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const
 		}
 	}
 
-	if (_show_universal_handlers) {
-		// --- Step 5: Add the ultimate fallback for any binary data ---
-		if (profile.is_regular_file) {
-			add_unique("application/octet-stream");
+	// --- Step 5: Add the ultimate fallback for any binary data ---
+	if (profile.is_regular_file) {
+		if (_show_universal_handlers || octet_stream_detected) {
+			mimes.push_back(s_octet_stream);
 		}
 	}
 
@@ -1439,12 +1442,20 @@ std::optional<DesktopEntry> XDGBasedAppProvider::ParseDesktopFile(const std::str
 	desktop_entry.generic_name = GetLocalizedValue(entries, "GenericName");
 	desktop_entry.comment = GetLocalizedValue(entries, "Comment");
 
-	if (auto it = entries.find("Categories"); it != entries.end()) { desktop_entry.categories = it->second; }
-	if (auto it = entries.find("TryExec"); it != entries.end())    { desktop_entry.try_exec = it->second; }
-	if (auto it = entries.find("Terminal"); it != entries.end())   { desktop_entry.terminal = (it->second == "true"); }
-	if (auto it = entries.find("MimeType"); it != entries.end())   { desktop_entry.mimetype = it->second; }
-	if (auto it = entries.find("OnlyShowIn"); it != entries.end()) { desktop_entry.only_show_in = it->second; }
-	if (auto it = entries.find("NotShowIn"); it != entries.end())  { desktop_entry.not_show_in = it->second; }
+	static const std::pair<const char*, std::string DesktopEntry::*> key_value_map[] = {
+		{ "Categories", &DesktopEntry::categories },
+		{ "TryExec",    &DesktopEntry::try_exec },
+		{ "Terminal",   &DesktopEntry::terminal },
+		{ "MimeType",   &DesktopEntry::mimetype },
+		{ "OnlyShowIn", &DesktopEntry::only_show_in },
+		{ "NotShowIn",  &DesktopEntry::not_show_in }
+	};
+
+	for (const auto& [key, member_ptr] : key_value_map) {
+		if (auto it = entries.find(key); it != entries.end()) {
+			std::invoke(member_ptr, desktop_entry) = it->second;
+		}
+	}
 
 	return desktop_entry;
 }

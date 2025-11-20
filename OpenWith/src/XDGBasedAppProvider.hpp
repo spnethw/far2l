@@ -27,7 +27,7 @@ struct DesktopEntry
 	std::string mimetype;
 	std::string only_show_in;
 	std::string not_show_in;
-	bool terminal = false;
+	std::string terminal;
 };
 
 
