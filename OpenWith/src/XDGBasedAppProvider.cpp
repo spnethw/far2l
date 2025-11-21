@@ -252,42 +252,22 @@ std::vector<std::wstring> XDGBasedAppProvider::ConstructCommandLine(const Candid
 
 	std::vector<std::wstring> result_commands;
 
-	// Helper to assemble a single command string
-	auto assemble_cmd = [&](const std::vector<std::wstring>& current_files) {
-		std::string full_cmd;
-		bool first_arg = true;
-
-		for (const auto& arg : entry.parsed_args) {
-			auto expanded_tokens = ExpandArgument(arg, current_files, entry);
-			for (const auto& token : expanded_tokens) {
-				if (!first_arg) full_cmd += " ";
-				full_cmd += token;
-				first_arg = false;
-			}
-		}
-
-		// Fallback for Implicit mode: append files to the end
-		if (entry.exec_mode == ExecMode::Implicit) {
-			for (const auto& file : current_files) {
-				if (!first_arg) full_cmd += " ";
-				full_cmd += EscapeArgForShell(FormatPath(file, false, _treat_urls_as_paths));
-				first_arg = false;
-			}
-		}
-
-		if (!full_cmd.empty()) {
-			result_commands.push_back(StrMB2Wide(full_cmd));
-		}
-	};
-
+	// Select strategy based on the Exec key codes (%f vs %F)
 	if (entry.exec_mode == ExecMode::Single) {
-		// Generate N commands, one for each file
+		// Single mode (%f, %u): Generate N commands, one for each file.
+			result_commands.reserve(pathnames.size());
 		for (const auto& file : pathnames) {
-			assemble_cmd({file});
+			std::wstring cmd = AssembleSingleCommand(entry, {file});
+			if (!cmd.empty()) {
+				result_commands.push_back(std::move(cmd));
+			}
 		}
 	} else {
-		// Generate 1 command containing all files (Multi or Implicit)
-		assemble_cmd(pathnames);
+		// Multi mode (%F, %U) or Implicit: Generate 1 command containing all files.
+			std::wstring cmd = AssembleSingleCommand(entry, pathnames);
+		if (!cmd.empty()) {
+			result_commands.push_back(std::move(cmd));
+		}
 	}
 
 	return result_commands;
@@ -1722,85 +1702,140 @@ void XDGBasedAppProvider::EnsureExecParsed(const DesktopEntry& entry)
 }
 
 
-// Expands a single Exec argument token into one or more final shell arguments.
-// Handles field code replacement (%f, %F, %c, etc.) and strictly follows spec regarding quoted args.
-std::vector<std::string> XDGBasedAppProvider::ExpandArgument(const ExecArg& arg,
-															 const std::vector<std::wstring>& files,
-															 const DesktopEntry& entry)
+std::wstring XDGBasedAppProvider::AssembleSingleCommand(const DesktopEntry& entry, const std::vector<std::wstring>& files_for_cmd) const
 {
-	// Quoted arguments are treated as literals (no code expansion) and just need shell escaping.
+	std::string full_cmd_mb;
+	bool first_arg = true;
+
+	// Step 1: Iterate over parsed tokens from the Exec key
+	for (const auto& arg : entry.parsed_args) {
+		// Expand the argument token (handles field codes and quoting)
+		auto expanded_tokens = ExpandExecArg(arg, files_for_cmd, entry);
+
+		for (const auto& token : expanded_tokens) {
+			if (!first_arg) full_cmd_mb += " ";
+			full_cmd_mb += token;
+			first_arg = false;
+		}
+	}
+
+	// Step 2: Handle Implicit mode; fallback (appending files to the end) if no field codes are present
+
+	if (entry.exec_mode == ExecMode::Implicit) {
+		for (const auto& file : files_for_cmd) {
+			if (!first_arg) full_cmd_mb += " ";
+			// Implicit mode always uses native paths, escaped for the shell
+			full_cmd_mb += EscapeArgForShell(FormatPath(file, PathFormat::NativePath));
+			first_arg = false;
+		}
+	}
+
+	return StrMB2Wide(full_cmd_mb);
+}
+
+
+std::vector<std::string> XDGBasedAppProvider::ExpandExecArg(const ExecArg& arg, const std::vector<std::wstring>& files, const DesktopEntry& entry) const
+{
+	// XDG Rule: Field codes must not be expanded inside quoted arguments.
 	if (arg.quoted) {
 		return { EscapeArgForShell(arg.value) };
 	}
 
 	const std::string& val = arg.value;
 
-	// Handle standalone list codes %F and %U
+	// Case 1: List field codes (%F, %U).
+	// These expand to multiple arguments, one for each file.
 	if (val == "%F" || val == "%U") {
 		std::vector<std::string> result;
-		bool as_uri = (val == "%U");
+		result.reserve(files.size());
+
+		PathFormat fmt = (val == "%U") ? PathFormat::FileUri : PathFormat::NativePath;
+
 		for (const auto& file : files) {
-			std::string raw_path = FormatPath(file, as_uri, _treat_urls_as_paths);
-			result.push_back(EscapeArgForShell(raw_path));
+			std::string processed_path = FormatPath(file, fmt);
+			result.push_back(EscapeArgForShell(processed_path));
 		}
 		return result;
 	}
 
-	// Inline expansion for %f, %u, %c, %k and deprecated codes
+	// Case 2: String substitution codes (%f, %u, %c, %k, ...).
+	// These expand to a single argument string.
 	std::string res;
 	size_t len = val.length();
 
 	for (size_t i = 0; i < len; ++i) {
+		// If character is not % or is the last character, copy literally
 		if (val[i] != '%' || i + 1 >= len) {
 			res += val[i];
 			continue;
 		}
 
-		char code = val[++i]; // Advance to the character after %
+		char code = val[++i]; // Advance to the code character
+
 		switch (code) {
 		case '%':
-			res += '%'; // Literal %
+			res += '%'; // literal percent sign "%%" -> "%".
 			break;
+
 		case 'f':
-		case 'u':
-			// In Single mode, 'files' contains the specific file for this command instance.
-			// In Multi/Implicit mode, we use the first file as a fallback if this code appears.
+		case 'u': {
+			// Single file code.
+			// In Single mode, 'files' has exactly 1 element.
+			// In Multi/Implicit mode, we use the first file as a fallback if a single code is encountered.
 			if (!files.empty()) {
-				res += FormatPath(files[0], (code == 'u'), _treat_urls_as_paths);
+				PathFormat fmt = (code == 'u') ? PathFormat::FileUri : PathFormat::NativePath;
+				res += FormatPath(files[0], fmt);
 			}
 			break;
+		}
+
 		case 'c':
-			res += entry.name;
+			res += entry.name; // translated Name.
 			break;
+
 		case 'k':
-			res += entry.desktop_file;
+			res += entry.desktop_file; // location of the desktop file.
 			break;
+
 		case 'i':
-			// The Icon key is not fully supported; ignore argument if present.
+			// The Icon code expands to two arguments (--icon IconName).
+			// We ignore it for safety and simplicity.
 			return {};
+
+			// Deprecated codes are explicitly ignored/removed.
 		case 'd': case 'D': case 'n': case 'N': case 'v': case 'm':
-			// Deprecated codes are ignored (removed from the string)
 			break;
+
 		default:
-			// Invalid/unknown code: treat as literal sequence
+			// Unknown/invalid code: treat as a literal sequence (e.g., %z).
 			res += '%';
 			res += code;
 			break;
 		}
 	}
 
-	if (res.empty()) return {};
+	if (res.empty()) {
+		return {};
+	}
+
+	// The result of the expansion must be escaped for the shell.
 	return { EscapeArgForShell(res) };
 }
 
 
-// Formats a wide path into a string (either URI or local path), without shell escaping.
-std::string XDGBasedAppProvider::FormatPath(const std::wstring& wpath, bool as_uri, bool treat_urls_as_paths)
+std::string XDGBasedAppProvider::FormatPath(const std::wstring& wpath, PathFormat format) const
 {
 	std::string path = StrWide2MB(wpath);
-	if (as_uri && !treat_urls_as_paths) {
+
+	// Check user override: force native paths even if URI is requested
+	if (format == PathFormat::FileUri && _treat_urls_as_paths) {
+		format = PathFormat::NativePath;
+	}
+
+	if (format == PathFormat::FileUri) {
 		return PathToUri(path);
 	}
+
 	return path;
 }
 

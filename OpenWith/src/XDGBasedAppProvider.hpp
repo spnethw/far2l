@@ -244,12 +244,19 @@ private:
 
 	// --- Command line constructing ---
 
+	enum class PathFormat
+	{
+		NativePath, // e.g., /home/user/file.txt
+		FileUri     // e.g., file:///home/user/file.txt
+	};
+
 	static std::string UnescapeGKeyFileString(const std::string& raw_str);
 	static std::string PathToUri(const std::string& path);
 	static std::vector<ExecArg> ParseExecArguments(const std::string& exec_str);
 	static void EnsureExecParsed(const DesktopEntry& entry);
-	static std::string FormatPath(const std::wstring& wpath, bool as_uri, bool treat_urls_as_paths);
-	std::vector<std::string> ExpandArgument(const ExecArg& arg, const std::vector<std::wstring>& files, const DesktopEntry& entry);
+	std::wstring AssembleSingleCommand(const DesktopEntry& entry, const std::vector<std::wstring>& files_for_cmd) const;
+	std::string FormatPath(const std::wstring& wpath, PathFormat format) const;
+	std::vector<std::string> ExpandExecArg(const ExecArg& arg, const std::vector<std::wstring>& files, const DesktopEntry& entry) const;
 
 	// --- System & Environment Helpers ---
 	static bool IsExecutableAvailable(const std::string& path);
