@@ -13,6 +13,15 @@
 #include <map>
 #include <tuple>
 
+// Execution mode determined from Exec key field codes
+enum class ExecMode { Implicit, Single, Multi };
+
+// Parsed argument token from Exec key
+struct ExecArg
+{
+	std::string value;
+	bool quoted = false;
+};
 
 // Represents the parsed data from a .desktop file, according to the XDG specification.
 struct DesktopEntry
@@ -28,6 +37,12 @@ struct DesktopEntry
 	std::string only_show_in;
 	std::string not_show_in;
 	std::string terminal;
+
+	// Mutable cache for lazy parsing.
+	// Marked mutable to allow updates even via const references.
+	mutable bool exec_parsed = false;
+	mutable ExecMode exec_mode = ExecMode::Implicit;
+	mutable std::vector<ExecArg> parsed_args;
 };
 
 
@@ -228,11 +243,13 @@ private:
 	static std::vector<std::string> GetMimeDatabaseSearchPaths();
 
 	// --- Command line constructing ---
-	static std::vector<std::string> TokenizeExecString(const std::string& exec);
+
 	static std::string UnescapeGKeyFileString(const std::string& raw_str);
-	static bool ExpandFieldCodes(const DesktopEntry& candidate, const std::string& pathname, const std::string& unescaped, std::vector<std::string>& out_args, bool treat_urls_as_paths);
-	static bool HasFieldCode(const std::string& exec, const std::string& codes_to_find);
 	static std::string PathToUri(const std::string& path);
+	static std::vector<ExecArg> ParseExecArguments(const std::string& exec_str);
+	static void EnsureExecParsed(const DesktopEntry& entry);
+	static std::string FormatPath(const std::wstring& wpath, bool as_uri, bool treat_urls_as_paths);
+	std::vector<std::string> ExpandArgument(const ExecArg& arg, const std::vector<std::wstring>& files, const DesktopEntry& entry);
 
 	// --- System & Environment Helpers ---
 	static bool IsExecutableAvailable(const std::string& path);

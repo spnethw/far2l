@@ -226,137 +226,71 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 }
 
 
-// Constructs command lines according to the Exec= key in the .desktop file.
-// It handles field codes for multi-file (%F, %U) and single-file (%f, %u) apps,
-// generating one or multiple command lines respectively.
 std::vector<std::wstring> XDGBasedAppProvider::ConstructCommandLine(const CandidateInfo& candidate, const std::vector<std::wstring>& pathnames)
 {
 	if (pathnames.empty()) {
 		return {};
 	}
 
-	// Retrieve the full DesktopEntry from the cache, using the ID (basename)
 	std::string desktop_file_name = StrWide2MB(candidate.id);
 	auto it = _desktop_entry_cache.find(desktop_file_name);
 	if (it == _desktop_entry_cache.end() || !it->second.has_value()) {
 		return {};
 	}
-	const DesktopEntry& desktop_entry = it->second.value();
+	const DesktopEntry& entry = it->second.value();
 
-	if (desktop_entry.exec.empty()) {
+	if (entry.exec.empty()) {
 		return {};
 	}
 
-	// Tokenize the Exec= string, handling quotes and escapes
-	std::vector<std::string> tokens = TokenizeExecString(desktop_entry.exec);
-	if (tokens.empty()) {
+	// Ensure the Exec key is parsed (lazy evaluation)
+	EnsureExecParsed(entry);
+
+	if (entry.parsed_args.empty()) {
 		return {};
 	}
 
-	bool has_multi_file_code = false;
-	bool has_single_file_code = false;
-	for (const auto& token : tokens) {
-		if (token.find('%') != std::string::npos) {
-			if (token.find('F') != std::string::npos || token.find('U') != std::string::npos) {
-				has_multi_file_code = true;
-			}
-			if (token.find('f') != std::string::npos || token.find('u') != std::string::npos) {
-				has_single_file_code = true;
-			}
-		}
-	}
+	std::vector<std::wstring> result_commands;
 
-	// If an app supports multi-file codes, single-file codes should be ignored.
-	// If no file codes are present, paths are appended, implying multi-file support.
-	bool use_multi_file_logic = has_multi_file_code || (!has_multi_file_code && !has_single_file_code);
+	// Helper to assemble a single command string
+	auto assemble_cmd = [&](const std::vector<std::wstring>& current_files) {
+		std::string full_cmd;
+		bool first_arg = true;
 
-	if (use_multi_file_logic) {
-		// Case 1: App supports multiple files. Generate ONE command line.
-		std::vector<std::string> final_args;
-		final_args.reserve(tokens.size() + pathnames.size());
-
-		// Use the first file as a context for expanding non-list field codes like %c or a standalone %f.
-		std::string first_pathname = StrWide2MB(pathnames[0]);
-
-		for (const std::string& token : tokens) {
-			// A single token can contain multiple codes, but only one list code (%F or %U).
-			if (token.find("%F") != std::string::npos) {
-				for (const auto& wpathname : pathnames) {
-					final_args.push_back(StrWide2MB(wpathname));
-				}
-			} else if (token.find("%U") != std::string::npos) {
-				for (const auto& wpathname : pathnames) {
-					if (_treat_urls_as_paths) { // compatibility mode?
-						final_args.push_back(StrWide2MB(wpathname));
-					} else {
-						final_args.push_back(PathToUri(StrWide2MB(wpathname)));
-					}
-				}
-			} else {
-				// Expand other codes like %f, %u, %c using the first file as context.
-				std::vector<std::string> expanded;
-				if (!ExpandFieldCodes(desktop_entry, first_pathname, token, expanded, _treat_urls_as_paths)) {
-					return {}; // Invalid field code.
-				}
-				final_args.insert(final_args.end(), expanded.begin(), expanded.end());
+		for (const auto& arg : entry.parsed_args) {
+			auto expanded_tokens = ExpandArgument(arg, current_files, entry);
+			for (const auto& token : expanded_tokens) {
+				if (!first_arg) full_cmd += " ";
+				full_cmd += token;
+				first_arg = false;
 			}
 		}
 
-		// If no file codes were present at all, append all files at the end.
-		if (!has_multi_file_code && !has_single_file_code) {
-			for (const auto& wpathname : pathnames) {
-				final_args.push_back(StrWide2MB(wpathname));
+		// Fallback for Implicit mode: append files to the end
+		if (entry.exec_mode == ExecMode::Implicit) {
+			for (const auto& file : current_files) {
+				if (!first_arg) full_cmd += " ";
+				full_cmd += EscapeArgForShell(FormatPath(file, false, _treat_urls_as_paths));
+				first_arg = false;
 			}
 		}
 
-		if (final_args.empty()) {
-			return {};
+		if (!full_cmd.empty()) {
+			result_commands.push_back(StrMB2Wide(full_cmd));
 		}
+	};
 
-		// Reconstruct the single command line, escaping each argument.
-		std::string cmd;
-		for (size_t i = 0; i < final_args.size(); ++i) {
-			if (i > 0) cmd.push_back(' ');
-			cmd += EscapeArgForShell(final_args[i]);
+	if (entry.exec_mode == ExecMode::Single) {
+		// Generate N commands, one for each file
+		for (const auto& file : pathnames) {
+			assemble_cmd({file});
 		}
-		return { StrMB2Wide(cmd) };
-
 	} else {
-
-		// Case 2: App only supports single files (%f, %u). Generate MULTIPLE command lines.
-		std::vector<std::wstring> final_commands;
-		final_commands.reserve(pathnames.size());
-
-		for (const auto& wpathname : pathnames) {
-			std::vector<std::string> current_args;
-			current_args.reserve(tokens.size());
-			std::string pathname_mb = StrWide2MB(wpathname);
-
-			for (const std::string& token : tokens) {
-				std::vector<std::string> expanded;
-				// Expand all codes using the current file as context.
-				if (!ExpandFieldCodes(desktop_entry, pathname_mb, token, expanded, _treat_urls_as_paths)) {
-					// Skip this file on error, but don't fail the whole operation.
-					current_args.clear();
-					break;
-				}
-				current_args.insert(current_args.end(), expanded.begin(), expanded.end());
-			}
-
-			if (current_args.empty()) {
-				continue;
-			}
-
-			// Reconstruct one command line per file, escaping each argument.
-			std::string cmd;
-			for (size_t i = 0; i < current_args.size(); ++i) {
-				if (i > 0) cmd.push_back(' ');
-				cmd += EscapeArgForShell(current_args[i]);
-			}
-			final_commands.push_back(StrMB2Wide(cmd));
-		}
-		return final_commands;
+		// Generate 1 command containing all files (Multi or Implicit)
+		assemble_cmd(pathnames);
 	}
+
+	return result_commands;
 }
 
 
@@ -794,16 +728,14 @@ CandidateInfo XDGBasedAppProvider::ConvertDesktopEntryToCandidateInfo(const Desk
 	CandidateInfo candidate;
 	candidate.terminal = (desktop_entry.terminal == "true");
 	candidate.name = StrMB2Wide(UnescapeGKeyFileString(desktop_entry.name));
-
-	// The ID is the basename of the .desktop file (e.g., "firefox.desktop").
-	// This is used for lookups and to handle overrides correctly.
 	candidate.id = StrMB2Wide(GetBaseName(desktop_entry.desktop_file));
 
-	const std::string& exec = desktop_entry.exec;
+	// Trigger lazy parsing to determine the mode.
+	EnsureExecParsed(desktop_entry);
 
-	bool has_multi_file_code = HasFieldCode(exec, "FU");
-	bool has_single_file_code = HasFieldCode(exec, "fu");
-	candidate.multi_file_aware = has_multi_file_code || (!has_multi_file_code && !has_single_file_code);
+	// Single mode requires launching multiple instances, so it is not "multi file aware"
+	// in the sense of accepting a list. Multi and Implicit modes are.
+	candidate.multi_file_aware = (desktop_entry.exec_mode != ExecMode::Single);
 
 	return candidate;
 }
@@ -1684,59 +1616,192 @@ std::vector<std::string> XDGBasedAppProvider::GetMimeDatabaseSearchPaths()
 
 // ****************************** Command line constructing ******************************
 
-// Tokenizes the Exec= string into a vector of arguments, handling quotes and escapes
-// as defined by the Desktop Entry Specification.
-std::vector<std::string> XDGBasedAppProvider::TokenizeExecString(const std::string& exec)
+// Parses the Exec key string into tokens according to the Desktop Entry Specification.
+// Handles strict quoting rules: arguments must be quoted in whole, and specific escapes apply inside quotes.
+std::vector<ExecArg> XDGBasedAppProvider::ParseExecArguments(const std::string& exec_str)
 {
-	// Pass 1: Handle general GKeyFile string escapes.
-	const std::string unescaped_exec = UnescapeGKeyFileString(exec);
+	std::vector<ExecArg> args;
+	if (exec_str.empty()) return args;
 
-	// Pass 2: Tokenize the result.
-	std::vector<std::string> tokens;
 	std::string current_token;
 	bool in_quotes = false;
+	bool is_token_quoted = false;
+	bool escape_next = false;
 
-	for (size_t i = 0; i < unescaped_exec.length(); ++i) {
-		char c = unescaped_exec[i];
+	for (char c : exec_str) {
+		if (escape_next) {
+			// Inside quotes, only ` " $ \ require escaping
+			// Other characters following a backslash are preserved literally.
+			if (in_quotes && (c != '`' && c != '"' && c != '$' && c != '\\')) {
+				current_token += '\\';
+			}
+			current_token += c;
+			escape_next = false;
+			continue;
+		}
+
+		if (c == '\\') {
+			escape_next = true;
+			continue;
+		}
 
 		if (in_quotes) {
 			if (c == '"') {
-				in_quotes = false; // end of quoted section
-			} else if (c == '\\') {
-				// Handle escaped characters inside a quoted section.
-				if (i + 1 < unescaped_exec.length()) {
-					// The spec mentions `\"`, `\``, `\$`, and `\\`.
-					// A robust implementation simply un-escapes the next character.
-					current_token += unescaped_exec[++i];
-				} else {
-					// A trailing backslash is treated as a literal.
-					current_token += c;
-				}
+				in_quotes = false;
 			} else {
 				current_token += c;
 			}
-		} else { // not in a quoted section
-			if (isspace(c)) { // use isspace for both ' ' and '\t'
-				// A whitespace character separates arguments.
-				if (!current_token.empty()) {
-					tokens.push_back(current_token);
+		} else {
+			if (c == '"') {
+				in_quotes = true;
+				is_token_quoted = true;
+			} else if (c == ' ') {
+				// Space separates arguments outside of quotes
+				if (!current_token.empty() || is_token_quoted) {
+					args.push_back({current_token, is_token_quoted});
 					current_token.clear();
+					is_token_quoted = false;
 				}
-			} else if (c == '"') {
-				in_quotes = true; // start of a quoted section
 			} else {
-				// Append regular character to the current token.
 				current_token += c;
 			}
 		}
 	}
 
-	// Add the final token if the string didn't end with a separator.
-	if (!current_token.empty()) {
-		tokens.push_back(current_token);
+	if (!current_token.empty() || is_token_quoted) {
+		args.push_back({current_token, is_token_quoted});
 	}
 
-	return tokens;
+	return args;
+}
+
+
+// Lazy evaluator: Parses the Exec string only if it hasn't been parsed yet.
+// Populates the mutable cache fields in DesktopEntry.
+void XDGBasedAppProvider::EnsureExecParsed(const DesktopEntry& entry)
+{
+	if (entry.exec_parsed) {
+		return;
+	}
+
+	// 1. Unescape GKeyFile sequences (\s, \n, etc.)
+	std::string unescaped = UnescapeGKeyFileString(entry.exec);
+
+	// 2. Tokenize
+	entry.parsed_args = ParseExecArguments(unescaped);
+
+	// 3. Determine Execution Mode
+	entry.exec_mode = ExecMode::Implicit;
+
+	for (const auto& arg : entry.parsed_args) {
+		// Field codes must not be used inside a quoted argument
+		if (arg.quoted) continue;
+
+		// %F and %U must be standalone arguments
+		if (arg.value == "%F" || arg.value == "%U") {
+			entry.exec_mode = ExecMode::Multi;
+			break; // Multi mode takes precedence
+		}
+
+		// Check for %f or %u if we haven't found Multi mode yet.
+		if (entry.exec_mode != ExecMode::Multi) {
+			for (size_t i = 0; i < arg.value.length(); ++i) {
+				if (arg.value[i] == '%' && i + 1 < arg.value.length()) {
+					char c = arg.value[i+1];
+					if (c == '%') { i++; continue; } // Skip literal %%
+					if (c == 'f' || c == 'u') {
+						entry.exec_mode = ExecMode::Single;
+						break;
+					}
+				}
+			}
+		}
+	}
+
+	entry.exec_parsed = true;
+}
+
+
+// Expands a single Exec argument token into one or more final shell arguments.
+// Handles field code replacement (%f, %F, %c, etc.) and strictly follows spec regarding quoted args.
+std::vector<std::string> XDGBasedAppProvider::ExpandArgument(const ExecArg& arg,
+															 const std::vector<std::wstring>& files,
+															 const DesktopEntry& entry)
+{
+	// Quoted arguments are treated as literals (no code expansion) and just need shell escaping.
+	if (arg.quoted) {
+		return { EscapeArgForShell(arg.value) };
+	}
+
+	const std::string& val = arg.value;
+
+	// Handle standalone list codes %F and %U
+	if (val == "%F" || val == "%U") {
+		std::vector<std::string> result;
+		bool as_uri = (val == "%U");
+		for (const auto& file : files) {
+			std::string raw_path = FormatPath(file, as_uri, _treat_urls_as_paths);
+			result.push_back(EscapeArgForShell(raw_path));
+		}
+		return result;
+	}
+
+	// Inline expansion for %f, %u, %c, %k and deprecated codes
+	std::string res;
+	size_t len = val.length();
+
+	for (size_t i = 0; i < len; ++i) {
+		if (val[i] != '%' || i + 1 >= len) {
+			res += val[i];
+			continue;
+		}
+
+		char code = val[++i]; // Advance to the character after %
+		switch (code) {
+		case '%':
+			res += '%'; // Literal %
+			break;
+		case 'f':
+		case 'u':
+			// In Single mode, 'files' contains the specific file for this command instance.
+			// In Multi/Implicit mode, we use the first file as a fallback if this code appears.
+			if (!files.empty()) {
+				res += FormatPath(files[0], (code == 'u'), _treat_urls_as_paths);
+			}
+			break;
+		case 'c':
+			res += entry.name;
+			break;
+		case 'k':
+			res += entry.desktop_file;
+			break;
+		case 'i':
+			// The Icon key is not fully supported; ignore argument if present.
+			return {};
+		case 'd': case 'D': case 'n': case 'N': case 'v': case 'm':
+			// Deprecated codes are ignored (removed from the string)
+			break;
+		default:
+			// Invalid/unknown code: treat as literal sequence
+			res += '%';
+			res += code;
+			break;
+		}
+	}
+
+	if (res.empty()) return {};
+	return { EscapeArgForShell(res) };
+}
+
+
+// Formats a wide path into a string (either URI or local path), without shell escaping.
+std::string XDGBasedAppProvider::FormatPath(const std::wstring& wpath, bool as_uri, bool treat_urls_as_paths)
+{
+	std::string path = StrWide2MB(wpath);
+	if (as_uri && !treat_urls_as_paths) {
+		return PathToUri(path);
+	}
+	return path;
 }
 
 
@@ -1775,99 +1840,6 @@ std::string XDGBasedAppProvider::UnescapeGKeyFileString(const std::string& raw_s
 }
 
 
-// Expands XDG Desktop Entry field codes (%f, %u, %c, etc.).
-// This function correctly distinguishes between field codes that expect a local
-// file path (%f, %F) and those that expect a URI (%u, %U).
-bool XDGBasedAppProvider::ExpandFieldCodes(const DesktopEntry& candidate,
-										   const std::string& pathname,
-										   const std::string& unescaped,
-										   std::vector<std::string>& out_args,
-										   bool treat_urls_as_paths)
-{
-	std::string cur;
-	for (size_t i = 0; i < unescaped.size(); ++i) {
-		char c = unescaped[i];
-		if (c == '%') {
-			if (i + 1 >= unescaped.size()) return false; // Dangling '%' is an error.
-			char code = unescaped[i + 1];
-			++i;
-			switch (code) {
-			case 'f': case 'F': // %f, %F expect a local path.
-				cur += pathname;
-				break;
-			case 'u': case 'U': // %u, %U expect a URI.
-				if (treat_urls_as_paths) { // compatibility mode?
-					cur += pathname;
-				} else {
-					cur += PathToUri(pathname);
-				}
-				break;
-			case 'c': // The application's name (from the Name= key).
-				cur += candidate.name;
-				break;
-			case '%': // A literal '%' character.
-				cur.push_back('%');
-				break;
-			// Deprecated and unused field codes are silently ignored
-			case 'n': case 'd': case 'D': case 't': case 'T': case 'v': case 'm':
-			case 'k': case 'i':
-				break;
-			default:
-				// Any other field code is invalid.
-				return false;
-			}
-		} else {
-			cur.push_back(c);
-		}
-	}
-	if (!cur.empty()) out_args.push_back(cur);
-	return true;
-}
-
-
-// Searches the Exec string for any field code characters specified in 'codes_to_find'.
-// This function correctly handles escaped '%%' sequences according to the XDG specification.
-bool XDGBasedAppProvider::HasFieldCode(const std::string& exec, const std::string& codes_to_find)
-{
-	size_t pos = 0;
-	// Find the next occurrence of '%' starting from the current position.
-	while ((pos = exec.find('%', pos)) != std::string::npos) {
-		// Ensure there is a character following the '%'. A trailing '%' is not a field code.
-		if (pos + 1 >= exec.size()) {
-			break;
-		}
-
-		const char next_char = exec[pos + 1];
-
-		// If the character following '%' is not one of the codes we are looking for,
-		// it might be '%%' or another irrelevant code. Skip it and continue searching.
-		if (codes_to_find.find(next_char) == std::string::npos) {
-			pos++;
-			continue;
-		}
-
-		// A potential field code (e.g., %F) has been found. Now, we must check if it's escaped.
-		// Count the number of consecutive '%' characters immediately preceding our find.
-		size_t preceding_percents = 0;
-		size_t check_pos = pos;
-		while (check_pos > 0 && exec[check_pos - 1] == '%') {
-			preceding_percents++;
-			check_pos--;
-		}
-
-		// If the number of preceding '%' is even (0, 2, 4...), the current '%' is not escaped
-		// and thus starts a valid field code (e.g., %F, %%%F).
-		if (preceding_percents % 2 == 0) {
-			return true;
-		}
-
-		// If the number is odd, the current '%' is part of an escaped sequence (e.g., %%F, %%%%F).
-		// We must ignore it and continue the search from the next character.
-		pos++;
-	}
-
-	return false;
-}
 
 
 // Converts absolute local filepath to a file:// URI.
