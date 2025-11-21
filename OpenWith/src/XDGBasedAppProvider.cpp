@@ -232,8 +232,17 @@ std::vector<std::wstring> XDGBasedAppProvider::ConstructCommandLine(const Candid
 		return {};
 	}
 
-	std::string desktop_file_name = StrWide2MB(candidate.id);
-	auto it = _desktop_entry_cache.find(desktop_file_name);
+	// Convert inputs to UTF-8 once at the boundary to avoid repeated conversions during processing.
+	std::string desktop_id = StrWide2MB(candidate.id);
+
+	std::vector<std::string> files_utf8;
+	files_utf8.reserve(pathnames.size());
+	for (const auto& w_path : pathnames) {
+		files_utf8.push_back(StrWide2MB(w_path));
+	}
+
+	// Retrieve the DesktopEntry from cache.
+	auto it = _desktop_entry_cache.find(desktop_id);
 	if (it == _desktop_entry_cache.end() || !it->second.has_value()) {
 		return {};
 	}
@@ -243,7 +252,7 @@ std::vector<std::wstring> XDGBasedAppProvider::ConstructCommandLine(const Candid
 		return {};
 	}
 
-	// Ensure the Exec key is parsed (lazy evaluation)
+	// Ensure the Exec key is parsed (lazy evaluation).
 	EnsureExecParsed(entry);
 
 	if (entry.parsed_args.empty()) {
@@ -252,21 +261,21 @@ std::vector<std::wstring> XDGBasedAppProvider::ConstructCommandLine(const Candid
 
 	std::vector<std::wstring> result_commands;
 
-	// Select strategy based on the Exec key codes (%f vs %F)
 	if (entry.exec_mode == ExecMode::Single) {
-		// Single mode (%f, %u): Generate N commands, one for each file.
-			result_commands.reserve(pathnames.size());
-		for (const auto& file : pathnames) {
-			std::wstring cmd = AssembleSingleCommand(entry, {file});
-			if (!cmd.empty()) {
-				result_commands.push_back(std::move(cmd));
+		// Single mode (%f, %u): Generate one command per file.
+		result_commands.reserve(files_utf8.size());
+		for (const auto& file : files_utf8) {
+			// Pass a single-element vector to the assembler.
+			std::string cmd_utf8 = AssembleCommand(entry, {file});
+			if (!cmd_utf8.empty()) {
+				result_commands.push_back(StrMB2Wide(cmd_utf8));
 			}
 		}
 	} else {
-		// Multi mode (%F, %U) or Implicit: Generate 1 command containing all files.
-			std::wstring cmd = AssembleSingleCommand(entry, pathnames);
-		if (!cmd.empty()) {
-			result_commands.push_back(std::move(cmd));
+		// Multi (%F, %U) or Implicit mode: Generate a single command for all files.
+		std::string cmd_utf8 = AssembleCommand(entry, files_utf8);
+		if (!cmd_utf8.empty()) {
+			result_commands.push_back(StrMB2Wide(cmd_utf8));
 		}
 	}
 
@@ -1656,44 +1665,46 @@ std::vector<ExecArg> XDGBasedAppProvider::ParseExecArguments(const std::string& 
 }
 
 
-// Lazy evaluator: Parses the Exec string only if it hasn't been parsed yet.
-// Populates the mutable cache fields in DesktopEntry.
 void XDGBasedAppProvider::EnsureExecParsed(const DesktopEntry& entry)
 {
 	if (entry.exec_parsed) {
 		return;
 	}
 
-	// 1. Unescape GKeyFile sequences (\s, \n, etc.)
+	// 1. Unescape sequences.
 	std::string unescaped = UnescapeGKeyFileString(entry.exec);
 
-	// 2. Tokenize
+	// 2. Tokenize.
 	entry.parsed_args = ParseExecArguments(unescaped);
 
-	// 3. Determine Execution Mode
+	// 3. Determine Execution Mode.
 	entry.exec_mode = ExecMode::Implicit;
 
 	for (const auto& arg : entry.parsed_args) {
-		// Field codes must not be used inside a quoted argument
+		// Field codes are ignored inside quoted arguments.
 		if (arg.quoted) continue;
 
-		// %F and %U must be standalone arguments
+		// Check for Multi mode codes (%F, %U).
 		if (arg.value == "%F" || arg.value == "%U") {
 			entry.exec_mode = ExecMode::Multi;
-			break; // Multi mode takes precedence
+			break; // Multi mode takes precedence.
 		}
 
-		// Check for %f or %u if we haven't found Multi mode yet.
+		// Check for Single mode codes (%f, %u) if Multi mode is not yet detected.
+		// We must search for %f or %u, ensuring we don't match literal %%f.
 		if (entry.exec_mode != ExecMode::Multi) {
-			for (size_t i = 0; i < arg.value.length(); ++i) {
-				if (arg.value[i] == '%' && i + 1 < arg.value.length()) {
-					char c = arg.value[i+1];
-					if (c == '%') { i++; continue; } // Skip literal %%
-					if (c == 'f' || c == 'u') {
+			size_t pos = 0;
+			while ((pos = arg.value.find('%', pos)) != std::string::npos) {
+				if (pos + 1 < arg.value.length()) {
+					char next = arg.value[pos + 1];
+					if (next == 'f' || next == 'u') {
 						entry.exec_mode = ExecMode::Single;
 						break;
 					}
+					// Skip escaped percent "%%".
+					if (next == '%') pos++;
 				}
+				pos++;
 			}
 		}
 	}
@@ -1702,112 +1713,101 @@ void XDGBasedAppProvider::EnsureExecParsed(const DesktopEntry& entry)
 }
 
 
-std::wstring XDGBasedAppProvider::AssembleSingleCommand(const DesktopEntry& entry, const std::vector<std::wstring>& files_for_cmd) const
+std::string XDGBasedAppProvider::AssembleCommand(const DesktopEntry& entry, const std::vector<std::string>& files) const
 {
-	std::string full_cmd_mb;
-	bool first_arg = true;
+	std::string cmd;
 
-	// Step 1: Iterate over parsed tokens from the Exec key
+	bool first = true;
 	for (const auto& arg : entry.parsed_args) {
-		// Expand the argument token (handles field codes and quoting)
-		auto expanded_tokens = ExpandExecArg(arg, files_for_cmd, entry);
+		// Expand tokens (e.g., %F -> file1 file2 ...).
+		auto tokens = ExpandArg(arg, files, entry);
 
-		for (const auto& token : expanded_tokens) {
-			if (!first_arg) full_cmd_mb += " ";
-			full_cmd_mb += token;
-			first_arg = false;
+		for (const auto& token : tokens) {
+			if (!first) cmd += ' ';
+			cmd += token;
+			first = false;
 		}
 	}
 
-	// Step 2: Handle Implicit mode; fallback (appending files to the end) if no field codes are present
-
+	// Handle Implicit mode: append files to the end if no field codes were present.
 	if (entry.exec_mode == ExecMode::Implicit) {
-		for (const auto& file : files_for_cmd) {
-			if (!first_arg) full_cmd_mb += " ";
-			// Implicit mode always uses native paths, escaped for the shell
-			full_cmd_mb += EscapeArgForShell(FormatPath(file, PathFormat::NativePath));
-			first_arg = false;
+		for (const auto& file : files) {
+			if (!first) cmd += ' ';
+			// Implicit mode always implies native paths.
+			cmd += EscapeArgForShell(FormatPath(file, PathFormat::Native));
+			first = false;
 		}
 	}
 
-	return StrMB2Wide(full_cmd_mb);
+	return cmd;
 }
 
 
-std::vector<std::string> XDGBasedAppProvider::ExpandExecArg(const ExecArg& arg, const std::vector<std::wstring>& files, const DesktopEntry& entry) const
+std::vector<std::string> XDGBasedAppProvider::ExpandArg(const ExecArg& arg, const std::vector<std::string>& files, const DesktopEntry& entry) const
 {
-	// XDG Rule: Field codes must not be expanded inside quoted arguments.
-	if (arg.quoted) {
+	// Optimization: If quoted or contains no '%', no expansion is needed.
+	if (arg.quoted || arg.value.find('%') == std::string::npos) {
 		return { EscapeArgForShell(arg.value) };
 	}
 
 	const std::string& val = arg.value;
 
-	// Case 1: List field codes (%F, %U).
-	// These expand to multiple arguments, one for each file.
+	// Handle List Codes (%F, %U).
 	if (val == "%F" || val == "%U") {
 		std::vector<std::string> result;
 		result.reserve(files.size());
-
-		PathFormat fmt = (val == "%U") ? PathFormat::FileUri : PathFormat::NativePath;
+		PathFormat fmt = (val == "%U") ? PathFormat::Uri : PathFormat::Native;
 
 		for (const auto& file : files) {
-			std::string processed_path = FormatPath(file, fmt);
-			result.push_back(EscapeArgForShell(processed_path));
+			// 'file' is already UTF-8, format and escape it.
+			result.push_back(EscapeArgForShell(FormatPath(file, fmt)));
 		}
 		return result;
 	}
 
-	// Case 2: String substitution codes (%f, %u, %c, %k, ...).
-	// These expand to a single argument string.
+	// Handle String Codes (%f, %u, %c, etc.).
 	std::string res;
-	size_t len = val.length();
 
-	for (size_t i = 0; i < len; ++i) {
-		// If character is not % or is the last character, copy literally
-		if (val[i] != '%' || i + 1 >= len) {
+	for (size_t i = 0; i < val.size(); ++i) {
+		if (val[i] != '%' || i + 1 >= val.size()) {
 			res += val[i];
 			continue;
 		}
 
-		char code = val[++i]; // Advance to the code character
+		char code = val[++i]; // Advance to code character.
 
 		switch (code) {
 		case '%':
-			res += '%'; // literal percent sign "%%" -> "%".
+			res += '%';
 			break;
 
 		case 'f':
-		case 'u': {
-			// Single file code.
-			// In Single mode, 'files' has exactly 1 element.
-			// In Multi/Implicit mode, we use the first file as a fallback if a single code is encountered.
+		case 'u':
+			// In Single mode, 'files' has 1 element.
+			// In Multi/Implicit, use the first file as fallback.
 			if (!files.empty()) {
-				PathFormat fmt = (code == 'u') ? PathFormat::FileUri : PathFormat::NativePath;
+				PathFormat fmt = (code == 'u') ? PathFormat::Uri : PathFormat::Native;
 				res += FormatPath(files[0], fmt);
 			}
 			break;
-		}
 
 		case 'c':
-			res += entry.name; // translated Name.
+			res += entry.name;
 			break;
 
 		case 'k':
-			res += entry.desktop_file; // location of the desktop file.
+			res += entry.desktop_file;
 			break;
 
 		case 'i':
-			// The Icon code expands to two arguments (--icon IconName).
-			// We ignore it for safety and simplicity.
-			return {};
+			return {}; // Ignore icon code.
 
-			// Deprecated codes are explicitly ignored/removed.
+		// Ignore deprecated codes.
 		case 'd': case 'D': case 'n': case 'N': case 'v': case 'm':
 			break;
 
 		default:
-			// Unknown/invalid code: treat as a literal sequence (e.g., %z).
+			// Unknown code -> treat as literal.
 			res += '%';
 			res += code;
 			break;
@@ -1818,25 +1818,22 @@ std::vector<std::string> XDGBasedAppProvider::ExpandExecArg(const ExecArg& arg, 
 		return {};
 	}
 
-	// The result of the expansion must be escaped for the shell.
 	return { EscapeArgForShell(res) };
 }
 
 
-std::string XDGBasedAppProvider::FormatPath(const std::wstring& wpath, PathFormat format) const
+std::string XDGBasedAppProvider::FormatPath(std::string_view path, PathFormat format) const
 {
-	std::string path = StrWide2MB(wpath);
-
-	// Check user override: force native paths even if URI is requested
-	if (format == PathFormat::FileUri && _treat_urls_as_paths) {
-		format = PathFormat::NativePath;
+	// Apply user override setting.
+	if (format == PathFormat::Uri && _treat_urls_as_paths) {
+		format = PathFormat::Native;
 	}
 
-	if (format == PathFormat::FileUri) {
+	if (format == PathFormat::Uri) {
 		return PathToUri(path);
 	}
 
-	return path;
+	return std::string(path);
 }
 
 
@@ -1875,10 +1872,8 @@ std::string XDGBasedAppProvider::UnescapeGKeyFileString(const std::string& raw_s
 }
 
 
-
-
 // Converts absolute local filepath to a file:// URI.
-std::string XDGBasedAppProvider::PathToUri(const std::string& path)
+std::string XDGBasedAppProvider::PathToUri(std::string_view path)
 {
 	std::stringstream uri_stream;
 	uri_stream << "file://";

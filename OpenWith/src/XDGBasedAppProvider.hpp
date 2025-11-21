@@ -246,17 +246,17 @@ private:
 
 	enum class PathFormat
 	{
-		NativePath, // e.g., /home/user/file.txt
-		FileUri     // e.g., file:///home/user/file.txt
+		Native, // e.g. /home/user/file.txt
+		Uri     // e.g. file:///home/user/file.txt
 	};
 
 	static std::string UnescapeGKeyFileString(const std::string& raw_str);
-	static std::string PathToUri(const std::string& path);
+	static std::string PathToUri(std::string_view path);
 	static std::vector<ExecArg> ParseExecArguments(const std::string& exec_str);
 	static void EnsureExecParsed(const DesktopEntry& entry);
-	std::wstring AssembleSingleCommand(const DesktopEntry& entry, const std::vector<std::wstring>& files_for_cmd) const;
-	std::string FormatPath(const std::wstring& wpath, PathFormat format) const;
-	std::vector<std::string> ExpandExecArg(const ExecArg& arg, const std::vector<std::wstring>& files, const DesktopEntry& entry) const;
+	std::string AssembleCommand(const DesktopEntry& entry, const std::vector<std::string>& files) const;
+	std::vector<std::string> ExpandArg(const ExecArg& arg, const std::vector<std::string>& files, const DesktopEntry& entry) const;
+	std::string FormatPath(std::string_view path, PathFormat format) const;
 
 	// --- System & Environment Helpers ---
 	static bool IsExecutableAvailable(const std::string& path);
