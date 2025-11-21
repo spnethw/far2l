@@ -415,7 +415,6 @@ std::vector<std::wstring> XDGBasedAppProvider::GetMimeTypes()
 
 	for (const auto& profile : _last_unique_mime_profiles)
 	{
-
 		std::set<std::string> unique_mimes_for_profile;
 
 		if (!profile.xdg_mime.empty()) {
@@ -441,9 +440,7 @@ std::vector<std::wstring> XDGBasedAppProvider::GetMimeTypes()
 			ss << "(";
 			bool first = true;
 			for (const auto& mime : unique_mimes_for_profile) {
-				if (!first) {
-					ss << ";";
-				}
+				if (!first) { ss << ";"; }
 				ss << mime;
 				first = false;
 			}
@@ -1902,46 +1899,27 @@ std::string XDGBasedAppProvider::PathToUri(const std::string& path)
 // If the path contains a slash, it's checked directly. Otherwise, it's searched in $PATH.
 bool XDGBasedAppProvider::IsExecutableAvailable(const std::string& path)
 {
-	if (path.empty()) {
-		return false;
-	}
+	if (path.empty()) return false;
 
-	// If the path contains a slash, it's an absolute or relative path.
-	// In that case we do not search $PATH, but check it directly.
+	auto check = [](const std::string& p) {
+		struct stat st;
+		return stat(p.c_str(), &st) == 0 && S_ISREG(st.st_mode) && access(p.c_str(), X_OK) == 0;
+	};
+
 	if (path.find('/') != std::string::npos) {
-		return access(path.c_str(), X_OK) == 0;
+		return check(path);
 	}
 
-	// Otherwise, it's a command name and we must find it in $PATH.
-	const char* path_env = getenv("PATH");
-	if (!path_env) {
-		// If $PATH is not set, search is impossible.
-		return false;
-	}
-
-	std::string path_env_str(path_env);
-	if (path_env_str.empty()) {
-		return false;
-	}
-
-	std::istringstream path_stream(path_env_str);
-	std::string dir;
-
-	while (std::getline(path_stream, dir, ':')) {
-		// Skip empty components in $PATH for safety,
-		// to avoid checking the current working directory.
-		if (dir.empty()) {
-			continue;
-		}
-
-		std::string full_path = dir + '/' + path;
-		if (access(full_path.c_str(), X_OK) == 0) {
-			// File found and has execute permission.
-			return true;
+	if (const char* env_path = getenv("PATH")) {
+		std::istringstream ss(env_path);
+		std::string dir;
+		while (std::getline(ss, dir, ':')) {
+			if (!dir.empty() && check(dir + '/' + path)) {
+				return true;
+			}
 		}
 	}
 
-	// Command not found in any of the $PATH directories.
 	return false;
 }
 
