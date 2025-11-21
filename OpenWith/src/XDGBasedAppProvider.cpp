@@ -1682,10 +1682,10 @@ void XDGBasedAppProvider::EnsureExecParsed(const DesktopEntry& entry)
 
 	for (const auto& arg : entry.parsed_args) {
 		// Field codes are ignored inside quoted arguments.
-		if (arg.quoted) continue;
+		if (arg.was_quoted) continue;
 
 		// Check for Multi mode codes (%F, %U).
-		if (arg.value == "%F" || arg.value == "%U") {
+		if (arg.pattern == "%F" || arg.pattern == "%U") {
 			entry.exec_mode = ExecMode::Multi;
 			break; // Multi mode takes precedence.
 		}
@@ -1694,9 +1694,9 @@ void XDGBasedAppProvider::EnsureExecParsed(const DesktopEntry& entry)
 		// We must search for %f or %u, ensuring we don't match literal %%f.
 		if (entry.exec_mode != ExecMode::Multi) {
 			size_t pos = 0;
-			while ((pos = arg.value.find('%', pos)) != std::string::npos) {
-				if (pos + 1 < arg.value.length()) {
-					char next = arg.value[pos + 1];
+			while ((pos = arg.pattern.find('%', pos)) != std::string::npos) {
+				if (pos + 1 < arg.pattern.length()) {
+					char next = arg.pattern[pos + 1];
 					if (next == 'f' || next == 'u') {
 						entry.exec_mode = ExecMode::Single;
 						break;
