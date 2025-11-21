@@ -383,7 +383,7 @@ std::vector<Field> XDGBasedAppProvider::GetCandidateDetails(const CandidateInfo&
 		details.push_back({m_GetMsg(MSource), StrMB2Wide(it_source->second)});
 	}
 
-	static const std::pair<const wchar_t*, std::string DesktopEntry::*> key_value_map[] = {
+	static const std::pair<const wchar_t*, std::string DesktopEntry::*> kv_map[] = {
 		{ L"Name =",        &DesktopEntry::name },
 		{ L"GenericName =", &DesktopEntry::generic_name },
 		{ L"Comment =",     &DesktopEntry::comment },
@@ -396,8 +396,8 @@ std::vector<Field> XDGBasedAppProvider::GetCandidateDetails(const CandidateInfo&
 		{ L"OnlyShowIn =",  &DesktopEntry::only_show_in }
 	};
 
-	for (const auto& [label, member_ptr] : key_value_map) {
-		const std::string& val = std::invoke(member_ptr, entry);
+	for (const auto& [label, member_ptr] : kv_map) {
+		const std::string& val = entry.*member_ptr;
 		if (!val.empty()) {
 			details.push_back({ label, StrMB2Wide(val) });
 		}
@@ -1442,7 +1442,7 @@ std::optional<DesktopEntry> XDGBasedAppProvider::ParseDesktopFile(const std::str
 	desktop_entry.generic_name = GetLocalizedValue(entries, "GenericName");
 	desktop_entry.comment = GetLocalizedValue(entries, "Comment");
 
-	static const std::pair<const char*, std::string DesktopEntry::*> key_value_map[] = {
+	static const std::pair<const char*, std::string DesktopEntry::*> kv_map[] = {
 		{ "Categories", &DesktopEntry::categories },
 		{ "TryExec",    &DesktopEntry::try_exec },
 		{ "Terminal",   &DesktopEntry::terminal },
@@ -1451,9 +1451,9 @@ std::optional<DesktopEntry> XDGBasedAppProvider::ParseDesktopFile(const std::str
 		{ "NotShowIn",  &DesktopEntry::not_show_in }
 	};
 
-	for (const auto& [key, member_ptr] : key_value_map) {
+	for (const auto& [key, member_ptr] : kv_map) {
 		if (auto it = entries.find(key); it != entries.end()) {
-			std::invoke(member_ptr, desktop_entry) = it->second;
+			desktop_entry.*member_ptr = it->second;
 		}
 	}
 
