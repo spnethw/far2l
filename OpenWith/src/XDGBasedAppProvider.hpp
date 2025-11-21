@@ -17,10 +17,10 @@
 enum class ExecMode { Implicit, Single, Multi };
 
 // Parsed argument token from Exec key
-struct ExecArg
+struct ExecToken
 {
-	std::string value;
-	bool quoted = false;
+	std::string pattern;
+	bool was_quoted = false;
 };
 
 // Represents the parsed data from a .desktop file, according to the XDG specification.
@@ -42,7 +42,7 @@ struct DesktopEntry
 	// Marked mutable to allow updates even via const references.
 	mutable bool exec_parsed = false;
 	mutable ExecMode exec_mode = ExecMode::Implicit;
-	mutable std::vector<ExecArg> parsed_args;
+	mutable std::vector<ExecToken> parsed_args;
 };
 
 
@@ -252,10 +252,10 @@ private:
 
 	static std::string UnescapeGKeyFileString(const std::string& raw_str);
 	static std::string PathToUri(std::string_view path);
-	static std::vector<ExecArg> ParseExecArguments(const std::string& exec_str);
+	static std::vector<ExecToken> ParseExecArguments(const std::string& raw_exec_value);
 	static void EnsureExecParsed(const DesktopEntry& entry);
 	std::string AssembleCommand(const DesktopEntry& entry, const std::vector<std::string>& files) const;
-	std::vector<std::string> ExpandArg(const ExecArg& arg, const std::vector<std::string>& files, const DesktopEntry& entry) const;
+	std::vector<std::string> ExpandToken(const ExecToken& template_token, const std::vector<std::string>& files, const DesktopEntry& entry) const;
 	std::string FormatPath(std::string_view path, PathFormat format) const;
 
 	// --- System & Environment Helpers ---

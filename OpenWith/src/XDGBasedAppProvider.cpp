@@ -1607,24 +1607,24 @@ std::vector<std::string> XDGBasedAppProvider::GetMimeDatabaseSearchPaths()
 
 // Parses the Exec key string into tokens according to the Desktop Entry Specification.
 // Handles strict quoting rules: arguments must be quoted in whole, and specific escapes apply inside quotes.
-std::vector<ExecArg> XDGBasedAppProvider::ParseExecArguments(const std::string& exec_str)
+std::vector<ExecToken> XDGBasedAppProvider::ParseExecArguments(const std::string& raw_exec_value)
 {
-	std::vector<ExecArg> args;
-	if (exec_str.empty()) return args;
+	std::vector<ExecToken> args;
+	if (raw_exec_value.empty()) return args;
 
-	std::string current_token;
+	std::string token_builder;
 	bool in_quotes = false;
 	bool is_token_quoted = false;
 	bool escape_next = false;
 
-	for (char c : exec_str) {
+	for (char c : raw_exec_value) {
 		if (escape_next) {
 			// Inside quotes, only ` " $ \ require escaping
 			// Other characters following a backslash are preserved literally.
 			if (in_quotes && (c != '`' && c != '"' && c != '$' && c != '\\')) {
-				current_token += '\\';
+				token_builder += '\\';
 			}
-			current_token += c;
+			token_builder += c;
 			escape_next = false;
 			continue;
 		}
@@ -1638,7 +1638,7 @@ std::vector<ExecArg> XDGBasedAppProvider::ParseExecArguments(const std::string& 
 			if (c == '"') {
 				in_quotes = false;
 			} else {
-				current_token += c;
+				token_builder += c;
 			}
 		} else {
 			if (c == '"') {
@@ -1646,19 +1646,19 @@ std::vector<ExecArg> XDGBasedAppProvider::ParseExecArguments(const std::string& 
 				is_token_quoted = true;
 			} else if (c == ' ') {
 				// Space separates arguments outside of quotes
-				if (!current_token.empty() || is_token_quoted) {
-					args.push_back({current_token, is_token_quoted});
-					current_token.clear();
+				if (!token_builder.empty() || is_token_quoted) {
+					args.push_back({token_builder, is_token_quoted});
+					token_builder.clear();
 					is_token_quoted = false;
 				}
 			} else {
-				current_token += c;
+				token_builder += c;
 			}
 		}
 	}
 
-	if (!current_token.empty() || is_token_quoted) {
-		args.push_back({current_token, is_token_quoted});
+	if (!token_builder.empty() || is_token_quoted) {
+		args.push_back({token_builder, is_token_quoted});
 	}
 
 	return args;
@@ -1672,10 +1672,10 @@ void XDGBasedAppProvider::EnsureExecParsed(const DesktopEntry& entry)
 	}
 
 	// 1. Unescape sequences.
-	std::string unescaped = UnescapeGKeyFileString(entry.exec);
+	std::string unescaped_exec = UnescapeGKeyFileString(entry.exec);
 
 	// 2. Tokenize.
-	entry.parsed_args = ParseExecArguments(unescaped);
+	entry.parsed_args = ParseExecArguments(unescaped_exec);
 
 	// 3. Determine Execution Mode.
 	entry.exec_mode = ExecMode::Implicit;
@@ -1715,48 +1715,48 @@ void XDGBasedAppProvider::EnsureExecParsed(const DesktopEntry& entry)
 
 std::string XDGBasedAppProvider::AssembleCommand(const DesktopEntry& entry, const std::vector<std::string>& files) const
 {
-	std::string cmd;
+	std::string command_line;
 
-	bool first = true;
+	bool is_first_token = true;
 	for (const auto& arg : entry.parsed_args) {
 		// Expand tokens (e.g., %F -> file1 file2 ...).
-		auto tokens = ExpandArg(arg, files, entry);
+		auto tokens = ExpandToken(arg, files, entry);
 
 		for (const auto& token : tokens) {
-			if (!first) cmd += ' ';
-			cmd += token;
-			first = false;
+			if (!is_first_token) command_line += ' ';
+			command_line += token;
+			is_first_token = false;
 		}
 	}
 
 	// Handle Implicit mode: append files to the end if no field codes were present.
 	if (entry.exec_mode == ExecMode::Implicit) {
 		for (const auto& file : files) {
-			if (!first) cmd += ' ';
+			if (!is_first_token) command_line += ' ';
 			// Implicit mode always implies native paths.
-			cmd += EscapeArgForShell(FormatPath(file, PathFormat::Native));
-			first = false;
+			command_line += EscapeArgForShell(FormatPath(file, PathFormat::Native));
+			is_first_token = false;
 		}
 	}
 
-	return cmd;
+	return command_line;
 }
 
 
-std::vector<std::string> XDGBasedAppProvider::ExpandArg(const ExecArg& arg, const std::vector<std::string>& files, const DesktopEntry& entry) const
+std::vector<std::string> XDGBasedAppProvider::ExpandToken(const ExecToken& template_token, const std::vector<std::string>& files, const DesktopEntry& entry) const
 {
 	// Optimization: If quoted or contains no '%', no expansion is needed.
-	if (arg.quoted || arg.value.find('%') == std::string::npos) {
-		return { EscapeArgForShell(arg.value) };
+	if (template_token.was_quoted || template_token.pattern.find('%') == std::string::npos) {
+		return { EscapeArgForShell(template_token.pattern) };
 	}
 
-	const std::string& val = arg.value;
+	const std::string& pattern = template_token.pattern;
 
 	// Handle List Codes (%F, %U).
-	if (val == "%F" || val == "%U") {
+	if (pattern == "%F" || pattern == "%U") {
 		std::vector<std::string> result;
 		result.reserve(files.size());
-		PathFormat fmt = (val == "%U") ? PathFormat::Uri : PathFormat::Native;
+		PathFormat fmt = (pattern == "%U") ? PathFormat::Uri : PathFormat::Native;
 
 		for (const auto& file : files) {
 			// 'file' is already UTF-8, format and escape it.
@@ -1766,19 +1766,19 @@ std::vector<std::string> XDGBasedAppProvider::ExpandArg(const ExecArg& arg, cons
 	}
 
 	// Handle String Codes (%f, %u, %c, etc.).
-	std::string res;
+	std::string expanded_token;
 
-	for (size_t i = 0; i < val.size(); ++i) {
-		if (val[i] != '%' || i + 1 >= val.size()) {
-			res += val[i];
+	for (size_t i = 0; i < pattern.size(); ++i) {
+		if (pattern[i] != '%' || i + 1 >= pattern.size()) {
+			expanded_token += pattern[i];
 			continue;
 		}
 
-		char code = val[++i]; // Advance to code character.
+		char code = pattern[++i]; // Advance to code character.
 
 		switch (code) {
 		case '%':
-			res += '%';
+			expanded_token += '%';
 			break;
 
 		case 'f':
@@ -1787,16 +1787,16 @@ std::vector<std::string> XDGBasedAppProvider::ExpandArg(const ExecArg& arg, cons
 			// In Multi/Implicit, use the first file as fallback.
 			if (!files.empty()) {
 				PathFormat fmt = (code == 'u') ? PathFormat::Uri : PathFormat::Native;
-				res += FormatPath(files[0], fmt);
+				expanded_token += FormatPath(files[0], fmt);
 			}
 			break;
 
 		case 'c':
-			res += entry.name;
+			expanded_token += entry.name;
 			break;
 
 		case 'k':
-			res += entry.desktop_file;
+			expanded_token += entry.desktop_file;
 			break;
 
 		case 'i':
@@ -1808,17 +1808,17 @@ std::vector<std::string> XDGBasedAppProvider::ExpandArg(const ExecArg& arg, cons
 
 		default:
 			// Unknown code -> treat as literal.
-			res += '%';
-			res += code;
+			expanded_token += '%';
+			expanded_token += code;
 			break;
 		}
 	}
 
-	if (res.empty()) {
+	if (expanded_token.empty()) {
 		return {};
 	}
 
-	return { EscapeArgForShell(res) };
+	return { EscapeArgForShell(expanded_token) };
 }
 
 
