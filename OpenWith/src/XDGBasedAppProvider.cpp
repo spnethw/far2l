@@ -243,13 +243,12 @@ std::vector<std::wstring> XDGBasedAppProvider::ConstructCommandLine(const Candid
 	}
 	const DesktopEntry& desktop_entry = it->second.value();
 
-	std::string exec_mb = desktop_entry.exec;
-	if (exec_mb.empty()) {
+	if (desktop_entry.exec.empty()) {
 		return {};
 	}
 
 	// Tokenize the Exec= string, handling quotes and escapes
-	std::vector<std::string> tokens = TokenizeExecString(exec_mb);
+	std::vector<std::string> tokens = TokenizeExecString(desktop_entry.exec);
 	if (tokens.empty()) {
 		return {};
 	}
@@ -669,7 +668,7 @@ void XDGBasedAppProvider::RegisterCandidateFromObject(CandidateMap& unique_candi
 											int rank, const std::string& source_info)
 {
 	// Optionally validate the TryExec key to ensure the executable exists.
-	if (_validate_try_exec && !entry.try_exec.empty() && !IsExecutableAvailable(entry.try_exec)) {
+	if (_validate_try_exec && !entry.try_exec.empty() && !IsExecutableAvailable(UnescapeGKeyFileString(entry.try_exec))) {
 		return;
 	}
 
@@ -1690,28 +1689,28 @@ std::vector<std::string> XDGBasedAppProvider::GetMimeDatabaseSearchPaths()
 
 // Tokenizes the Exec= string into a vector of arguments, handling quotes and escapes
 // as defined by the Desktop Entry Specification.
-std::vector<std::string> XDGBasedAppProvider::TokenizeExecString(const std::string& exec_str)
+std::vector<std::string> XDGBasedAppProvider::TokenizeExecString(const std::string& exec)
 {
 	// Pass 1: Handle general GKeyFile string escapes.
-	const std::string unescaped_str = UnescapeGKeyFileString(exec_str);
+	const std::string unescaped_exec = UnescapeGKeyFileString(exec);
 
 	// Pass 2: Tokenize the result.
 	std::vector<std::string> tokens;
 	std::string current_token;
 	bool in_quotes = false;
 
-	for (size_t i = 0; i < unescaped_str.length(); ++i) {
-		char c = unescaped_str[i];
+	for (size_t i = 0; i < unescaped_exec.length(); ++i) {
+		char c = unescaped_exec[i];
 
 		if (in_quotes) {
 			if (c == '"') {
 				in_quotes = false; // end of quoted section
 			} else if (c == '\\') {
 				// Handle escaped characters inside a quoted section.
-				if (i + 1 < unescaped_str.length()) {
+				if (i + 1 < unescaped_exec.length()) {
 					// The spec mentions `\"`, `\``, `\$`, and `\\`.
 					// A robust implementation simply un-escapes the next character.
-					current_token += unescaped_str[++i];
+					current_token += unescaped_exec[++i];
 				} else {
 					// A trailing backslash is treated as a literal.
 					current_token += c;

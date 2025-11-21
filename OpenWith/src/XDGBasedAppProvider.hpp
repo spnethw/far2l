@@ -228,7 +228,7 @@ private:
 	static std::vector<std::string> GetMimeDatabaseSearchPaths();
 
 	// --- Command line constructing ---
-	static std::vector<std::string> TokenizeExecString(const std::string& exec_str);
+	static std::vector<std::string> TokenizeExecString(const std::string& exec);
 	static std::string UnescapeGKeyFileString(const std::string& raw_str);
 	static bool ExpandFieldCodes(const DesktopEntry& candidate, const std::string& pathname, const std::string& unescaped, std::vector<std::string>& out_args, bool treat_urls_as_paths);
 	static bool HasFieldCode(const std::string& exec, const std::string& codes_to_find);
