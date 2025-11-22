@@ -490,7 +490,7 @@ namespace OpenWith {
 			const auto& selected_app = candidates[selected_idx];
 
 			if (break_code == KEY_F3_DETAILS) {
-				std::vector<std::wstring> cmds = provider->ConstructCommandLine(selected_app, pathnames);
+				std::vector<std::wstring> cmds = provider->GenerateLaunchCommands(selected_app, pathnames);
 				// Repeat until user either launches the application or closes the dialog to go back.
 				while (true) {
 					// Get MIME profiles (lazily) and pass them to the details dialog.
@@ -529,7 +529,7 @@ namespace OpenWith {
 
 			} else { // Enter to launch.
 				if (AskForLaunchConfirmation(selected_app, pathnames)) {
-					std::vector<std::wstring> cmds = provider->ConstructCommandLine(selected_app, pathnames);
+					std::vector<std::wstring> cmds = provider->GenerateLaunchCommands(selected_app, pathnames);
 					LaunchApplication(selected_app, cmds);
 					return; // Exit the plugin after a successful launch.
 				}

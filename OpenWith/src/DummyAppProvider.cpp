@@ -15,7 +15,7 @@ std::vector<CandidateInfo> DummyAppProvider::GetAppCandidates(const std::vector<
 }
 
 
-std::vector<std::wstring> DummyAppProvider::ConstructCommandLine(const CandidateInfo& candidate, const std::vector<std::wstring>& pathnames)
+std::vector<std::wstring> DummyAppProvider::GenerateLaunchCommands(const CandidateInfo& candidate, const std::vector<std::wstring>& pathnames)
 {
 	return {};
 }

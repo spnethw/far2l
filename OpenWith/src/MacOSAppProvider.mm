@@ -288,7 +288,7 @@ std::vector<CandidateInfo> MacOSAppProvider::GetAppCandidates(const std::vector<
 
 
 // Constructs a single command line using the 'open' utility, which natively handles multiple files.
-std::vector<std::wstring> MacOSAppProvider::ConstructCommandLine(const CandidateInfo& candidate, const std::vector<std::wstring>& pathnames) {
+std::vector<std::wstring> MacOSAppProvider::GenerateLaunchCommands(const CandidateInfo& candidate, const std::vector<std::wstring>& pathnames) {
     if (candidate.id.empty() || pathnames.empty()) {
         return {};
     }
