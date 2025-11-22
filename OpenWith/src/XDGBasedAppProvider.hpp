@@ -13,38 +13,6 @@
 #include <map>
 #include <tuple>
 
-// Execution mode determined from Exec key field codes
-enum class ExecMode { Implicit, Single, Multi };
-
-// Parsed argument token from Exec key
-struct ExecToken
-{
-	std::string pattern;
-	bool was_quoted = false;
-};
-
-// Represents the parsed data from a .desktop file, according to the XDG specification.
-struct DesktopEntry
-{
-	std::string desktop_file;
-	std::string name;
-	std::string generic_name;
-	std::string comment;
-	std::string categories;
-	std::string exec;
-	std::string try_exec;
-	std::string mimetype;
-	std::string only_show_in;
-	std::string not_show_in;
-	std::string terminal;
-
-	// Mutable cache for lazy parsing.
-	// Marked mutable to allow updates even via const references.
-	mutable bool exec_parsed = false;
-	mutable ExecMode exec_mode = ExecMode::Implicit;
-	mutable std::vector<ExecToken> parsed_args;
-};
-
 
 class XDGBasedAppProvider : public AppProvider
 {
@@ -52,8 +20,8 @@ class XDGBasedAppProvider : public AppProvider
 public:
 
 	explicit XDGBasedAppProvider(TMsgGetter msg_getter);
-	std::vector<CandidateInfo> GetAppCandidates(const std::vector<std::wstring>& pathnames) override;
-	std::vector<std::wstring> ConstructCommandLine(const CandidateInfo& candidate, const std::vector<std::wstring>& pathnames) override;
+	std::vector<CandidateInfo> GetAppCandidates(const std::vector<std::wstring>& pathnames_wide) override;
+	std::vector<std::wstring> GenerateLaunchCommands(const CandidateInfo& candidate, const std::vector<std::wstring>& pathnames_wide) override;
 	std::vector<std::wstring> GetMimeTypes() override;
 	std::vector<Field> GetCandidateDetails(const CandidateInfo& candidate) override;
 
@@ -64,6 +32,57 @@ public:
 	void SavePlatformSettings() override;
 
 private:
+
+	// ******************************************************************************
+	// Group 1: Core XDG Desktop Entry Types
+	// Structures representing the content and logic of .desktop files.
+	// ******************************************************************************
+
+
+	// Defines how the application expects arguments based on Field Codes in the Exec key.
+	enum class ExecutionModel
+	{
+		LegacyImplicit, // no field codes found; append files to the end of the command.
+		PerFile,        // %f or %u found; launch a separate process for each file.
+		FileList        // %F or %U found; pass all files as a list to a single process.
+	};
+
+
+	// Represents a parsed argument template from the Exec key, potentially containing field codes.
+	struct CommandArgumentTemplate
+	{
+		std::string raw_value;
+		bool is_quoted_literal = false; // if true, field codes inside this argument must be ignored.
+	};
+
+
+	// Represents a parsed .desktop file from the XDG specifications.
+	struct DesktopEntry
+	{
+		std::string desktop_file;
+		std::string name;
+		std::string generic_name;
+		std::string comment;
+		std::string categories;
+		std::string exec;
+		std::string try_exec;
+		std::string mimetype;
+		std::string only_show_in;
+		std::string not_show_in;
+		std::string terminal;
+
+		// Mutable cache for lazy parsing.
+		mutable bool exec_parsed = false;
+		mutable ExecutionModel execution_model = ExecutionModel::LegacyImplicit;
+		mutable std::vector<CommandArgumentTemplate> command_line_template;
+	};
+
+
+	// ******************************************************************************
+	// Group 2: MIME Detection Types
+	// Structures used for identifying file types before application lookup.
+	// ******************************************************************************
+
 
 	// Represents the "raw" MIME profile of a file, derived from all available detection tools before any expansion.
 	struct RawMimeProfile
@@ -106,6 +125,43 @@ private:
 	};
 
 
+	// ******************************************************************************
+	// Group 3: Association Database Types
+	// Structures representing parsed data from mimeapps.list, mimeinfo.cache, etc.
+	// ******************************************************************************
+
+
+	// This struct represents a single association rule and links a handler's .desktop file
+	// to the configuration file (e.g., mimeapps.list or mimeinfo.cache) that specified the rule.
+	struct HandlerProvenance
+	{
+		std::string desktop_file;
+		std::string source_path;
+
+		HandlerProvenance() = default;
+		HandlerProvenance(const std::string& df, const std::string& sp)
+			: desktop_file(df), source_path(sp) {}
+	};
+
+
+	// Represents the combined associations from all parsed mimeapps.list files.
+	struct MimeappsListsData
+	{
+		// MIME type -> default application from [Default Applications].
+		std::unordered_map<std::string, HandlerProvenance> defaults;
+		// MIME type -> list of apps from [Added Associations].
+		std::unordered_map<std::string, std::vector<HandlerProvenance>> added;
+		// MIME type -> set of apps from [Removed Associations].
+		std::unordered_map<std::string, std::unordered_set<std::string>> removed;
+	};
+
+
+	// ******************************************************************************
+	// Group 4: Ranking & Candidate Identification
+	// Structures used in the logic for selecting and sorting the best applications.
+	// ******************************************************************************
+
+
 	// Constants for the tiered ranking system.
 	struct Ranking
 	{
@@ -120,14 +176,6 @@ private:
 		static constexpr int SOURCE_RANK_CACHE_OR_SCAN = 2;    // mimeinfo.cache or full .desktop scan
 	};
 
-	// A helper struct to define a platform setting, linking its INI key,
-	// localized UI display name, its corresponding class member variable, and default value.
-	struct PlatformSettingDefinition {
-		std::string key;
-		LanguageID  display_name_id;
-		bool XDGBasedAppProvider::* member_variable;
-		bool default_value;
-	};
 
 	// Holds a non-owning pointer to a cached DesktopEntry and its calculated rank.
 	struct RankedCandidate
@@ -147,17 +195,6 @@ private:
 		}
 	};
 
-	// This struct represents a single association rule and links a handler's .desktop file
-	// to the configuration file (e.g., mimeapps.list or mimeinfo.cache) that specified the rule.
-	struct HandlerProvenance
-	{
-		std::string desktop_file;
-		std::string source_path;
-
-		HandlerProvenance() = default;
-		HandlerProvenance(const std::string& df, const std::string& sp)
-			: desktop_file(df), source_path(sp) {}
-	};
 
 	// Tracks ranking score and provenance info to identify the highest-ranked association.
 	struct AssociationScore
@@ -167,16 +204,6 @@ private:
 		AssociationScore(int r, std::string s) : rank(r), source_info(std::move(s)) {}
 	};
 
-	// Represents the combined associations from all parsed mimeapps.list files.
-	struct MimeappsListsData
-	{
-		// MIME type -> default application from [Default Applications].
-		std::unordered_map<std::string, HandlerProvenance> defaults;
-		// MIME type -> list of apps from [Added Associations].
-		std::unordered_map<std::string, std::vector<HandlerProvenance>> added;
-		// MIME type -> set of apps from [Removed Associations].
-		std::unordered_map<std::string, std::unordered_set<std::string>> removed;
-	};
 
 	// A key for the unique_candidates map to distinguish between different applications
 	// that might have the same name but different Exec commands (e.g., from different .desktop files).
@@ -190,6 +217,7 @@ private:
 		}
 	};
 
+
 	// Custom hash function for AppUniqueKey.
 	struct AppUniqueKeyHash
 	{
@@ -200,9 +228,60 @@ private:
 		}
 	};
 
+
+	// ******************************************************************************
+	// Group 5: Plugin Internal Configuration
+	// ******************************************************************************
+
+
+	// A helper struct to define a platform setting, linking its INI key,
+	// localized UI display name, its corresponding class member variable, and default value.
+	struct PlatformSettingDefinition {
+		std::string key;
+		LanguageID  display_name_id;
+		bool XDGBasedAppProvider::* member_variable;
+		bool default_value;
+	};
+
+
+	// ******************************************************************************
+	// Group 6: Command Line Construction Helpers
+	// ******************************************************************************
+
+
+	enum class PathFormat
+	{
+		Native, // e.g. /home/user/file.txt
+		Uri     // e.g. file:///home/user/file.txt
+	};
+
+
+	// ******************************************************************************
+	// Group 7: Lifecycle & State Management
+	// ******************************************************************************
+
+
+	// RAII helper to manage the lifecycle of the operation-scoped state.
+	struct OperationContext
+	{
+		XDGBasedAppProvider& provider;
+		OperationContext(XDGBasedAppProvider& p);
+		~OperationContext();
+	};
+	friend struct OperationContext;
+
+
+	// ******************************************************************************
+	// ALIASES
+	// ******************************************************************************
+
 	using CandidateMap = std::unordered_map<AppUniqueKey, RankedCandidate, AppUniqueKeyHash>;
 	using MimeToDesktopEntryIndex = std::unordered_map<std::string, std::vector<const DesktopEntry*>>;
 	using MimeinfoCacheData = std::unordered_map<std::string, std::vector<HandlerProvenance>>;
+
+	// ******************************************************************************
+	// METHODS
+	// ******************************************************************************
 
 	// --- Searching and ranking candidates logic ---
 	CandidateMap DiscoverCandidatesForExpandedMimes(const std::vector<std::string>& expanded_mimes);
@@ -227,13 +306,13 @@ private:
 	std::string GuessMimeTypeByExtension(const std::string& pathname);
 
 	// --- XDG Database Parsing & Caching ---
-	const std::optional<DesktopEntry>& GetCachedDesktopEntry(const std::string& desktop_file);
+	const std::optional<XDGBasedAppProvider::DesktopEntry>& GetCachedDesktopEntry(const std::string& desktop_file);
 	MimeToDesktopEntryIndex FullScanDesktopFiles(const std::vector<std::string>& search_paths);
 	static MimeinfoCacheData ParseAllMimeinfoCacheFiles(const std::vector<std::string>& search_paths);
 	static void ParseMimeinfoCache(const std::string& path, MimeinfoCacheData& mimeinfo_cache_data);
 	static MimeappsListsData ParseMimeappsLists(const std::vector<std::string>& paths);
 	static void ParseMimeappsList(const std::string& path, MimeappsListsData& mimeapps_lists_data);
-	static std::optional<DesktopEntry> ParseDesktopFile(const std::string& path);
+	static std::optional<XDGBasedAppProvider::DesktopEntry> ParseDesktopFile(const std::string& path);
 	static std::string GetLocalizedValue(const std::unordered_map<std::string, std::string>& values, const std::string& base_key);
 	static std::unordered_map<std::string, std::string> LoadMimeAliases();
 	static std::string_view GetMajorMimeType(const std::string& mime);
@@ -242,21 +321,14 @@ private:
 	static std::vector<std::string> GetMimeappsListSearchPaths();
 	static std::vector<std::string> GetMimeDatabaseSearchPaths();
 
-	// --- Command line constructing ---
-
-	enum class PathFormat
-	{
-		Native, // e.g. /home/user/file.txt
-		Uri     // e.g. file:///home/user/file.txt
-	};
-
-	static std::string UnescapeGKeyFileString(const std::string& raw_str);
+	// --- Launch command constructing ---
+	std::string AssembleLaunchCommand(const DesktopEntry& entry, const std::vector<std::string>& files) const;
+	std::vector<std::string> ExpandArgumentTemplate(const CommandArgumentTemplate& arg_template, const std::vector<std::string>& files, const DesktopEntry& entry) const;
+	static void AnalyzeExecLine(const DesktopEntry& entry);
+	static std::vector<XDGBasedAppProvider::CommandArgumentTemplate> TokenizeExecString(const std::string& unescaped_exec);
 	static std::string PathToUri(std::string_view path);
-	static std::vector<ExecToken> ParseExecArguments(const std::string& raw_exec_value);
-	static void EnsureExecParsed(const DesktopEntry& entry);
-	std::string AssembleCommand(const DesktopEntry& entry, const std::vector<std::string>& files) const;
-	std::vector<std::string> ExpandToken(const ExecToken& template_token, const std::vector<std::string>& files, const DesktopEntry& entry) const;
 	std::string FormatPath(std::string_view path, PathFormat format) const;
+	static std::string UnescapeGKeyFileString(const std::string& raw_str);
 
 	// --- System & Environment Helpers ---
 	static bool IsExecutableAvailable(const std::string& path);
@@ -271,6 +343,9 @@ private:
 	static bool IsReadableFile(const std::string& path);
 	static bool IsTraversableDirectory(const std::string& path);
 
+	// ******************************************************************************
+	// DATA MEMBERS
+	// ******************************************************************************
 
 	// WARNING: This cache is a std::map on purpose.
 	// It owns all DesktopEntry objects for the duration of a GetAppCandidates call.
@@ -311,7 +386,7 @@ private:
 	std::vector<PlatformSettingDefinition> _platform_settings_definitions;
 
 	// A pre-calculated lookup map (Key -> MemberPtr) for efficient updates in SetPlatformSettings.
-	std::map<std::wstring, bool XDGBasedAppProvider::*> _key_to_member_map;
+	std::map<std::wstring, bool XDGBasedAppProvider::*> _key_wide_to_member_map;
 
 	// Maps the setting's internal string key (e.g., "UseXdgMimeTool") to the command-line tool
 	// it depends on (e.g., "xdg-mime"). Used by GetPlatformSettings to check tool availability.
@@ -347,15 +422,6 @@ private:
 
 	// Cache for 'xdg-mime query default' results (MIME type -> .desktop file name)
 	std::map<std::string, std::string> _op_default_app_cache;
-
-	// RAII helper to manage the lifecycle of the operation-scoped state.
-	struct OperationContext
-	{
-		XDGBasedAppProvider& provider;
-		OperationContext(XDGBasedAppProvider& p);
-		~OperationContext();
-	};
-	friend struct OperationContext;
 };
 
 #endif
