@@ -52,7 +52,7 @@ private:
 	struct CommandArgumentTemplate
 	{
 		std::string raw_value;
-		bool is_quoted_literal = false; // if true, field codes inside this argument must be ignored.
+		bool contains_quoted_part = false; // if true, field codes inside this argument must be ignored.
 	};
 
 
@@ -72,7 +72,7 @@ private:
 		std::string terminal;
 
 		// Mutable cache for lazy parsing.
-		mutable bool exec_parsed = false;
+		mutable bool is_exec_parsed = false;
 		mutable ExecutionModel execution_model = ExecutionModel::LegacyImplicit;
 		mutable std::vector<CommandArgumentTemplate> command_line_template;
 	};
@@ -324,10 +324,10 @@ private:
 	// --- Launch command constructing ---
 	std::string AssembleLaunchCommand(const DesktopEntry& entry, const std::vector<std::string>& files) const;
 	std::vector<std::string> ExpandArgumentTemplate(const CommandArgumentTemplate& arg_template, const std::vector<std::string>& files, const DesktopEntry& entry) const;
-	static void AnalyzeExecLine(const DesktopEntry& entry);
+	static void AnalyzeExecLine(const DesktopEntry& desktop_entry);
 	static std::vector<XDGBasedAppProvider::CommandArgumentTemplate> TokenizeExecString(const std::string& unescaped_exec);
 	static std::string PathToUri(std::string_view path);
-	std::string FormatPath(std::string_view path, PathFormat format) const;
+	std::string FormatPath(std::string_view path, PathFormat path_format) const;
 	static std::string UnescapeGKeyFileString(const std::string& raw_str);
 
 	// --- System & Environment Helpers ---

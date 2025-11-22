@@ -310,20 +310,19 @@ std::vector<Field> XDGBasedAppProvider::GetCandidateDetails(const CandidateInfo&
 		details.push_back({m_GetMsg(MSource), StrMB2Wide(it_source->second)});
 	}
 
-	static const std::pair<const wchar_t*, std::string DesktopEntry::*> kv_map[] = {
-		{ L"Name =",        &DesktopEntry::name },
-		{ L"GenericName =", &DesktopEntry::generic_name },
-		{ L"Comment =",     &DesktopEntry::comment },
-		{ L"Categories =",  &DesktopEntry::categories },
-		{ L"Exec =",        &DesktopEntry::exec },
-		{ L"TryExec =",     &DesktopEntry::try_exec },
-		{ L"Terminal =",    &DesktopEntry::terminal },
-		{ L"MimeType =",    &DesktopEntry::mimetype },
-		{ L"NotShowIn =",   &DesktopEntry::not_show_in },
-		{ L"OnlyShowIn =",  &DesktopEntry::only_show_in }
-	};
-
-	for (const auto& [label_wide, member_ptr] : kv_map) {
+	for (const auto& [label_wide, member_ptr] : {
+			 std::pair{L"Name =",        &DesktopEntry::name},
+			 std::pair{L"GenericName =", &DesktopEntry::generic_name},
+			 std::pair{L"Comment =",     &DesktopEntry::comment},
+			 std::pair{L"Categories =",  &DesktopEntry::categories},
+			 std::pair{L"Exec =",        &DesktopEntry::exec},
+			 std::pair{L"TryExec =",     &DesktopEntry::try_exec},
+			 std::pair{L"Terminal =",    &DesktopEntry::terminal},
+			 std::pair{L"MimeType =",    &DesktopEntry::mimetype},
+			 std::pair{L"NotShowIn =",   &DesktopEntry::not_show_in},
+			 std::pair{L"OnlyShowIn =",  &DesktopEntry::only_show_in}
+		 })
+	{
 		const std::string& val = entry.*member_ptr;
 		if (!val.empty()) {
 			details.push_back({ label_wide, StrMB2Wide(val) });
@@ -338,7 +337,7 @@ std::vector<Field> XDGBasedAppProvider::GetCandidateDetails(const CandidateInfo&
 // that were collected during the last GetAppCandidates() call.
 std::vector<std::wstring> XDGBasedAppProvider::GetMimeTypes()
 {
-	std::set<std::wstring> unique_representations;
+	std::set<std::wstring> unique_representations_wide;
 	bool has_none = false;
 
 	for (const auto& profile : _last_unique_mime_profiles)
@@ -367,16 +366,16 @@ std::vector<std::wstring> XDGBasedAppProvider::GetMimeTypes()
 				first = false;
 			}
 			ss << ")";
-			unique_representations.insert(StrMB2Wide(ss.str()));
+			unique_representations_wide.insert(StrMB2Wide(ss.str()));
 		}
 	}
 
-	std::vector<std::wstring> result_representations;
+	std::vector<std::wstring> result_representations_wide;
 	if (has_none) {
-		result_representations.push_back(L"(none)");
+		result_representations_wide.push_back(L"(none)");
 	}
-	result_representations.insert(result_representations.end(), unique_representations.begin(), unique_representations.end());
-	return result_representations;
+	result_representations_wide.insert(result_representations_wide.end(), unique_representations_wide.begin(), unique_representations_wide.end());
+	return result_representations_wide;
 }
 
 
@@ -1359,16 +1358,15 @@ std::optional<XDGBasedAppProvider::DesktopEntry> XDGBasedAppProvider::ParseDeskt
 	desktop_entry.generic_name = GetLocalizedValue(entries, "GenericName");
 	desktop_entry.comment = GetLocalizedValue(entries, "Comment");
 
-	static const std::pair<const char*, std::string DesktopEntry::*> kv_map[] = {
-		{ "Categories", &DesktopEntry::categories },
-		{ "TryExec",    &DesktopEntry::try_exec },
-		{ "Terminal",   &DesktopEntry::terminal },
-		{ "MimeType",   &DesktopEntry::mimetype },
-		{ "OnlyShowIn", &DesktopEntry::only_show_in },
-		{ "NotShowIn",  &DesktopEntry::not_show_in }
-	};
-
-	for (const auto& [key, member_ptr] : kv_map) {
+	for (const auto& [key, member_ptr] : {
+			 std::pair{"Categories", &DesktopEntry::categories},
+			 std::pair{"TryExec",    &DesktopEntry::try_exec},
+			 std::pair{"Terminal",   &DesktopEntry::terminal},
+			 std::pair{"MimeType",   &DesktopEntry::mimetype},
+			 std::pair{"OnlyShowIn", &DesktopEntry::only_show_in},
+			 std::pair{"NotShowIn",  &DesktopEntry::not_show_in}
+		 })
+	{
 		if (auto it = entries.find(key); it != entries.end()) {
 			desktop_entry.*member_ptr = it->second;
 		}
@@ -1607,30 +1605,30 @@ std::vector<std::string> XDGBasedAppProvider::GetMimeDatabaseSearchPaths()
 
 // Constructs a final, shell-safe command line string for a specific invocation.
 // This function handles argument expansion and the fallback logic for implicit file passing.
-std::string XDGBasedAppProvider::AssembleLaunchCommand(const DesktopEntry& entry, const std::vector<std::string>& files) const
+std::string XDGBasedAppProvider::AssembleLaunchCommand(const DesktopEntry& desktop_entry, const std::vector<std::string>& files) const
 {
 	std::string command_line;
 
-	bool is_first_token = true;
-	for (const auto& arg_template : entry.command_line_template) {
-		// Expand the template argument (e.g., "--output=%f" or just "%F") into actual arguments.
-		auto tokens = ExpandArgumentTemplate(arg_template, files, entry);
+	auto append_argument = [&](const std::string& argument) {
+		if (!command_line.empty()) {
+			command_line += ' ';
+		}
+		command_line += argument;
+	};
 
-		for (const auto& token : tokens) {
-			if (!is_first_token) command_line += ' ';
-			command_line += token;
-			is_first_token = false;
+	// 1. Process the explicit command line template from the .desktop Exec key.
+	for (const auto& arg_template : desktop_entry.command_line_template) {
+		// ExpandArgumentTemplate handles %-codes and quoting rules.
+		for (const auto& expanded_arg : ExpandArgumentTemplate(arg_template, files, desktop_entry)) {
+			append_argument(expanded_arg);
 		}
 	}
 
-	// Handle LegacyImplicit mode: if the Exec key contains no recognized field codes,
-	// append the file paths to the end of the command.
-	if (entry.execution_model == ExecutionModel::LegacyImplicit) {
+	// 2. If no %f/%F/%u/%U codes were found, append the file paths to the end of the command.
+	if (desktop_entry.execution_model == ExecutionModel::LegacyImplicit) {
 		for (const auto& file : files) {
-			if (!is_first_token) command_line += ' ';
-			// Implicit mode always uses native paths (no URI scheme) and requires shell escaping.
-			command_line += EscapeArgForShell(FormatPath(file, PathFormat::Native));
-			is_first_token = false;
+			// Legacy apps typically expect native paths (not URIs) and require shell escaping.
+			append_argument(EscapeArgForShell(FormatPath(file, PathFormat::Native)));
 		}
 	}
 
@@ -1642,7 +1640,7 @@ std::string XDGBasedAppProvider::AssembleLaunchCommand(const DesktopEntry& entry
 std::vector<std::string> XDGBasedAppProvider::ExpandArgumentTemplate(const CommandArgumentTemplate& arg_template, const std::vector<std::string>& files, const DesktopEntry& entry) const
 {
 	// Optimization: If the argument was quoted or contains no '%', treated it as a literal.
-	if (arg_template.is_quoted_literal || arg_template.raw_value.find('%') == std::string::npos) {
+	if (arg_template.contains_quoted_part || arg_template.raw_value.find('%') == std::string::npos) {
 		return { EscapeArgForShell(arg_template.raw_value) };
 	}
 
@@ -1653,10 +1651,10 @@ std::vector<std::string> XDGBasedAppProvider::ExpandArgumentTemplate(const Comma
 	if (pattern == "%F" || pattern == "%U") {
 		std::vector<std::string> result;
 		result.reserve(files.size());
-		PathFormat fmt = (pattern == "%U") ? PathFormat::Uri : PathFormat::Native;
+		auto path_format = (pattern == "%U") ? PathFormat::Uri : PathFormat::Native;
 
 		for (const auto& file : files) {
-			result.push_back(EscapeArgForShell(FormatPath(file, fmt)));
+			result.push_back(EscapeArgForShell(FormatPath(file, path_format)));
 		}
 		return result;
 	}
@@ -1687,8 +1685,8 @@ std::vector<std::string> XDGBasedAppProvider::ExpandArgumentTemplate(const Comma
 			// In PerFile mode, 'files' contains exactly one element.
 			// In other modes, use the first file as a fallback to avoid empty substitution.
 			if (!files.empty()) {
-				PathFormat fmt = (code == 'u') ? PathFormat::Uri : PathFormat::Native;
-				expanded_token += FormatPath(files[0], fmt);
+				auto path_format = (code == 'u') ? PathFormat::Uri : PathFormat::Native;
+				expanded_token += FormatPath(files[0], path_format);
 			}
 			break;
 
@@ -1729,42 +1727,42 @@ std::vector<std::string> XDGBasedAppProvider::ExpandArgumentTemplate(const Comma
 
 // Performs lazy analysis of the Exec string: unescapes GKeyFile sequences, tokenizes,
 // and scans for Field Codes to determine the ExecutionModel.
-void XDGBasedAppProvider::AnalyzeExecLine(const DesktopEntry& entry)
+void XDGBasedAppProvider::AnalyzeExecLine(const DesktopEntry& desktop_entry)
 {
-	if (entry.exec_parsed) {
+	if (desktop_entry.is_exec_parsed) {
 		return;
 	}
 
 	// 1. Unescape string values (e.g., \s, \n) as per GKeyFile format rules.
 	// Note: This must happen *before* parsing arguments and quotes.
-	std::string unescaped_exec = UnescapeGKeyFileString(entry.exec);
+	std::string unescaped_exec = UnescapeGKeyFileString(desktop_entry.exec);
 
 	// 2. Tokenize the command line adhering to the specific quoting rules.
-	entry.command_line_template = TokenizeExecString(unescaped_exec);
+	desktop_entry.command_line_template = TokenizeExecString(unescaped_exec);
 
 	// 3. Determine the ExecutionModel by scanning for specific field codes (%f, %F, etc.).
-	entry.execution_model = ExecutionModel::LegacyImplicit;
+	desktop_entry.execution_model = ExecutionModel::LegacyImplicit;
 
-	for (const auto& arg : entry.command_line_template) {
+	for (const auto& arg_template : desktop_entry.command_line_template) {
 		// Spec: Field codes must not be used inside a quoted argument.
-		if (arg.is_quoted_literal) continue;
+		if (arg_template.is_quoted_literal) continue;
 
 		// Check for FileList codes (%F, %U). These take precedence as they define
 		// the ability to handle multiple arguments natively.
-		if (arg.raw_value == "%F" || arg.raw_value == "%U") {
-			entry.execution_model = ExecutionModel::FileList;
+		if (arg_template.raw_value == "%F" || arg_template.raw_value == "%U") {
+			desktop_entry.execution_model = ExecutionModel::FileList;
 			break;
 		}
 
 		// Check for PerFile codes (%f, %u).
 		// We only set this if FileList wasn't already detected.
-		if (entry.execution_model != ExecutionModel::FileList) {
+		if (desktop_entry.execution_model != ExecutionModel::FileList) {
 			size_t pos = 0;
-			while ((pos = arg.raw_value.find('%', pos)) != std::string::npos) {
-				if (pos + 1 < arg.raw_value.length()) {
-					char next = arg.raw_value[pos + 1];
+			while ((pos = arg_template.raw_value.find('%', pos)) != std::string::npos) {
+				if (pos + 1 < arg_template.raw_value.length()) {
+					char next = arg_template.raw_value[pos + 1];
 					if (next == 'f' || next == 'u') {
-						entry.execution_model = ExecutionModel::PerFile;
+						desktop_entry.execution_model = ExecutionModel::PerFile;
 						break;
 					}
 					// Skip escaped percent "%%" to avoid false positives.
@@ -1775,36 +1773,36 @@ void XDGBasedAppProvider::AnalyzeExecLine(const DesktopEntry& entry)
 		}
 	}
 
-	entry.exec_parsed = true;
+	desktop_entry.is_exec_parsed = true;
 }
 
 
 // Parses the 'Exec' key string into a sequence of argument templates.
 std::vector<XDGBasedAppProvider::CommandArgumentTemplate> XDGBasedAppProvider::TokenizeExecString(const std::string& unescaped_exec)
 {
-	std::vector<CommandArgumentTemplate> args;
-	if (unescaped_exec.empty()) return args;
+	std::vector<CommandArgumentTemplate> tokens;
+	if (unescaped_exec.empty()) return tokens;
 
-	std::string current_arg_builder;
+	std::string token_buffer;
 	bool in_double_quotes = false;
-	bool is_quoted_literal = false;
-	bool escape_next_char = false;
+	bool contains_quoted_part = false;
+	bool escape_pending = false;
 
 	for (char c : unescaped_exec) {
-		if (escape_next_char) {
+		if (escape_pending) {
 			// Spec: Inside double quotes, only ` " $ \ characters are escaped.
 			// Any other character following a backslash is treated as a literal sequence (backslash + char).
 			// Outside quotes, the backslash itself is always consumed as an escape character.
 			if (in_double_quotes && (c != '`' && c != '"' && c != '$' && c != '\\')) {
-				current_arg_builder += '\\';
+				token_buffer += '\\';
 			}
-			current_arg_builder += c;
-			escape_next_char = false;
+			token_buffer += c;
+			escape_pending = false;
 			continue;
 		}
 
 		if (c == '\\') {
-			escape_next_char = true;
+			escape_pending = true;
 			continue;
 		}
 
@@ -1812,31 +1810,31 @@ std::vector<XDGBasedAppProvider::CommandArgumentTemplate> XDGBasedAppProvider::T
 			if (c == '"') {
 				in_double_quotes = false;
 			} else {
-				current_arg_builder += c;
+				token_buffer += c;
 			}
 		} else {
 			if (c == '"') {
 				in_double_quotes = true;
-				is_quoted_literal = true;
+				contains_quoted_part = true;
 			} else if (c == ' ') {
 				// Spec: Arguments are separated by a space.
-				if (!current_arg_builder.empty() || is_quoted_literal) {
-					args.push_back({std::move(current_arg_builder), is_quoted_literal});
-					current_arg_builder.clear();
-					is_quoted_literal = false;
+				if (!token_buffer.empty() || contains_quoted_part) {
+					tokens.push_back({std::move(token_buffer), contains_quoted_part});
+					token_buffer.clear();
+					contains_quoted_part = false;
 				}
 			} else {
-				current_arg_builder += c;
+				token_buffer += c;
 			}
 		}
 	}
 
 	// Flush the final argument.
-	if (!current_arg_builder.empty() || is_quoted_literal) {
-		args.push_back({std::move(current_arg_builder), is_quoted_literal});
+	if (!token_buffer.empty() || contains_quoted_part) {
+		tokens.push_back({std::move(token_buffer), contains_quoted_part});
 	}
 
-	return args;
+	return tokens;
 }
 
 
@@ -1862,14 +1860,9 @@ std::string XDGBasedAppProvider::PathToUri(std::string_view path)
 }
 
 
-std::string XDGBasedAppProvider::FormatPath(std::string_view path, PathFormat format) const
+std::string XDGBasedAppProvider::FormatPath(std::string_view path, PathFormat path_format) const
 {
-	// Apply user override setting.
-	if (format == PathFormat::Uri && _treat_urls_as_paths) {
-		format = PathFormat::Native;
-	}
-
-	if (format == PathFormat::Uri) {
+	if (path_format == PathFormat::Uri && !_treat_urls_as_paths) {
 		return PathToUri(path);
 	}
 
