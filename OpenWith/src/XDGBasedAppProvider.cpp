@@ -1637,9 +1637,9 @@ std::string XDGBasedAppProvider::AssembleLaunchCommand(const DesktopEntry& deskt
 
 
 // Expands a single argument template by substituting Field Codes with actual data.
-std::vector<std::string> XDGBasedAppProvider::ExpandArgumentTemplate(const CommandArgumentTemplate& arg_template, const std::vector<std::string>& files, const DesktopEntry& entry) const
+std::vector<std::string> XDGBasedAppProvider::ExpandArgumentTemplate(const CommandArgumentTemplate& arg_template, const std::vector<std::string>& files, const DesktopEntry& desktop_entry) const
 {
-	// Optimization: If the argument was quoted or contains no '%', treated it as a literal.
+	// Optimization: If the argument was quoted or contains no '%', treat it as a literal.
 	if (arg_template.is_quoted_literal || arg_template.raw_value.find('%') == std::string::npos) {
 		return { EscapeArgForShell(arg_template.raw_value) };
 	}
@@ -1651,7 +1651,7 @@ std::vector<std::string> XDGBasedAppProvider::ExpandArgumentTemplate(const Comma
 	if (pattern == "%F" || pattern == "%U") {
 		std::vector<std::string> result;
 		result.reserve(files.size());
-		auto path_format = (pattern == "%U") ? PathFormat::Uri : PathFormat::Native;
+		const auto path_format = (pattern == "%U") ? PathFormat::Uri : PathFormat::Native;
 
 		for (const auto& file : files) {
 			result.push_back(EscapeArgForShell(FormatPath(file, path_format)));
@@ -1661,7 +1661,10 @@ std::vector<std::string> XDGBasedAppProvider::ExpandArgumentTemplate(const Comma
 
 	// Handle String Codes (%f, %u, %c, etc.).
 	// These expand into a single argument string, potentially concatenating data.
+
+	const std::string context_file = files.empty() ? std::string() : files.front();
 	std::string expanded_token;
+
 	// Reserve buffer space to minimize reallocations.
 	expanded_token.reserve(pattern.size() + 64);
 
@@ -1680,32 +1683,28 @@ std::vector<std::string> XDGBasedAppProvider::ExpandArgumentTemplate(const Comma
 			break;
 
 		case 'f':
+			expanded_token += FormatPath(context_file, PathFormat::Native);
+			break;
+
 		case 'u':
-			// Replace with the single file path.
-			// In PerFile mode, 'files' contains exactly one element.
-			// In other modes, use the first file as a fallback to avoid empty substitution.
-			if (!files.empty()) {
-				auto path_format = (code == 'u') ? PathFormat::Uri : PathFormat::Native;
-				expanded_token += FormatPath(files[0], path_format);
-			}
+			expanded_token += FormatPath(context_file, PathFormat::Uri);
 			break;
 
 		case 'c':
-			expanded_token += entry.name;
+			expanded_token += UnescapeGKeyFileString(desktop_entry.name);
 			break;
 
 		case 'k':
-			expanded_token += entry.desktop_file;
+			expanded_token += desktop_entry.desktop_file;
 			break;
 
 		case 'i':
 			// The %i code is supposed to expand to two arguments: "--icon" and the Icon key value.
-			// This is complex to handle within a single string substitution logic and is
-			// typically optional. We ignore it here to prevent generating invalid commands.
+			// We don't support icons, so we remove the entire argument.
 			return {};
 
-			// Deprecated codes: The spec states these should be removed and ignored.
 		case 'd': case 'D': case 'n': case 'N': case 'v': case 'm':
+			// Deprecated codes: The spec states these should be removed and ignored.
 			break;
 
 		default:
@@ -1873,6 +1872,8 @@ std::string XDGBasedAppProvider::PathToUri(std::string_view path)
 }
 
 
+// Formats a filesystem path as either a native string or a file:// URI,
+// respecting the requested format and the '_treat_urls_as_paths' setting.
 std::string XDGBasedAppProvider::FormatPath(std::string_view path, PathFormat path_format) const
 {
 	if (path_format == PathFormat::Uri && !_treat_urls_as_paths) {
