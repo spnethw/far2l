@@ -52,7 +52,7 @@ private:
 	struct CommandArgumentTemplate
 	{
 		std::string raw_value;
-		bool contains_quoted_part = false; // if true, field codes inside this argument must be ignored.
+		bool is_quoted_literal = false; // if true, field codes inside this argument must be ignored.
 	};
 
 

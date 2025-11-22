@@ -1640,7 +1640,7 @@ std::string XDGBasedAppProvider::AssembleLaunchCommand(const DesktopEntry& deskt
 std::vector<std::string> XDGBasedAppProvider::ExpandArgumentTemplate(const CommandArgumentTemplate& arg_template, const std::vector<std::string>& files, const DesktopEntry& entry) const
 {
 	// Optimization: If the argument was quoted or contains no '%', treated it as a literal.
-	if (arg_template.contains_quoted_part || arg_template.raw_value.find('%') == std::string::npos) {
+	if (arg_template.is_quoted_literal || arg_template.raw_value.find('%') == std::string::npos) {
 		return { EscapeArgForShell(arg_template.raw_value) };
 	}
 
@@ -1780,20 +1780,39 @@ void XDGBasedAppProvider::AnalyzeExecLine(const DesktopEntry& desktop_entry)
 // Parses the 'Exec' key string into a sequence of argument templates.
 std::vector<XDGBasedAppProvider::CommandArgumentTemplate> XDGBasedAppProvider::TokenizeExecString(const std::string& unescaped_exec)
 {
+	if (unescaped_exec.empty()) return {};
+
 	std::vector<CommandArgumentTemplate> tokens;
-	if (unescaped_exec.empty()) return tokens;
+	tokens.reserve(4);
 
 	std::string token_buffer;
-	bool in_double_quotes = false;
-	bool contains_quoted_part = false;
+	token_buffer.reserve(32);
+
 	bool escape_pending = false;
+	bool is_inside_quotes = false;
+
+	// Tracks if the current token involved quotes. This allows distinguishing
+	// an explicit empty string ("") from a mere whitespace delimiter.
+	bool contains_quoted_part = false;
+
+	auto flush_token = [&]() {
+		// Spec: Arguments are separated by a space.
+		// The check ensures that:
+		// 1. Consecutive spaces are treated as a single delimiter (ignored).
+		// 2. Explicit empty strings (e.g. "") are preserved as valid empty arguments.
+		if (!token_buffer.empty() || contains_quoted_part) {
+			tokens.push_back({std::move(token_buffer), contains_quoted_part});
+			token_buffer.clear();
+			contains_quoted_part = false;
+		}
+	};
 
 	for (char c : unescaped_exec) {
 		if (escape_pending) {
 			// Spec: Inside double quotes, only ` " $ \ characters are escaped.
 			// Any other character following a backslash is treated as a literal sequence (backslash + char).
 			// Outside quotes, the backslash itself is always consumed as an escape character.
-			if (in_double_quotes && (c != '`' && c != '"' && c != '$' && c != '\\')) {
+			if (is_inside_quotes && (c != '`' && c != '"' && c != '$' && c != '\\')) {
 				token_buffer += '\\';
 			}
 			token_buffer += c;
@@ -1806,23 +1825,19 @@ std::vector<XDGBasedAppProvider::CommandArgumentTemplate> XDGBasedAppProvider::T
 			continue;
 		}
 
-		if (in_double_quotes) {
+		if (is_inside_quotes) {
 			if (c == '"') {
-				in_double_quotes = false;
+				is_inside_quotes = false;
 			} else {
 				token_buffer += c;
 			}
 		} else {
 			if (c == '"') {
-				in_double_quotes = true;
+				is_inside_quotes = true;
+				// Mark this token as semantically meaningful, even if empty.
 				contains_quoted_part = true;
 			} else if (c == ' ') {
-				// Spec: Arguments are separated by a space.
-				if (!token_buffer.empty() || contains_quoted_part) {
-					tokens.push_back({std::move(token_buffer), contains_quoted_part});
-					token_buffer.clear();
-					contains_quoted_part = false;
-				}
+				flush_token();
 			} else {
 				token_buffer += c;
 			}
@@ -1830,9 +1845,7 @@ std::vector<XDGBasedAppProvider::CommandArgumentTemplate> XDGBasedAppProvider::T
 	}
 
 	// Flush the final argument.
-	if (!token_buffer.empty() || contains_quoted_part) {
-		tokens.push_back({std::move(token_buffer), contains_quoted_part});
-	}
+	flush_token();
 
 	return tokens;
 }
