@@ -116,9 +116,9 @@ void XDGBasedAppProvider::SetPlatformSettings(const std::vector<ProviderSetting>
 
 
 // Finds applications that can open all specified files.
-std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vector<std::wstring>& pathnames_wide)
+std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vector<std::wstring>& filepaths_wide)
 {
-	if (pathnames_wide.empty()) {
+	if (filepaths_wide.empty()) {
 		return {};
 	}
 
@@ -132,11 +132,11 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 
 	CandidateMap final_candidates;
 
-	if (pathnames_wide.size() == 1) {
+	if (filepaths_wide.size() == 1) {
 
 		// --- Single file logic ---
 
-		auto profile = GetRawMimeProfile(StrWide2MB(pathnames_wide[0]));
+		auto profile = GetRawMimeProfile(StrWide2MB(filepaths_wide[0]));
 		_last_unique_mime_profiles.insert(profile);
 		auto expanded_mimes = ExpandAndPrioritizeMimeTypes(profile);
 		final_candidates = DiscoverCandidatesForExpandedMimes(expanded_mimes);
@@ -146,8 +146,8 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 		// --- Multiple files intersection logic ---
 
 		// Step 1: Profile Deduplication. Group N files into K unique MIME profiles.
-		for (const auto& pathname_wide : pathnames_wide) {
-			_last_unique_mime_profiles.insert(GetRawMimeProfile(StrWide2MB(pathname_wide)));
+		for (const auto& filepath_wide : filepaths_wide) {
+			_last_unique_mime_profiles.insert(GetRawMimeProfile(StrWide2MB(filepath_wide)));
 		}
 
 		// Step 2: Candidate gathering.
@@ -222,14 +222,14 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 	auto final_candidates_sorted = BuildSortedRankedCandidatesList(final_candidates);
 	// Only store source info (for F3) when a single file is selected,
 	// as sources vary per file in multi-selection mode.
-	return FormatCandidatesForUI(final_candidates_sorted, /* store_source_info = */ (pathnames_wide.size() == 1));
+	return FormatCandidatesForUI(final_candidates_sorted, /* store_source_info = */ (filepaths_wide.size() == 1));
 }
 
 
 // Generates one or more executable command lines for the selected candidate and files.
-std::vector<std::wstring> XDGBasedAppProvider::GenerateLaunchCommands(const CandidateInfo& candidate, const std::vector<std::wstring>& pathnames_wide)
+std::vector<std::wstring> XDGBasedAppProvider::GenerateLaunchCommands(const CandidateInfo& candidate, const std::vector<std::wstring>& filepaths_wide)
 {
-	if (pathnames_wide.empty()) {
+	if (filepaths_wide.empty()) {
 		return {};
 	}
 
@@ -252,8 +252,8 @@ std::vector<std::wstring> XDGBasedAppProvider::GenerateLaunchCommands(const Cand
 		}
 
 		std::vector<std::string> files;
-		files.reserve(pathnames_wide.size());
-		for (const auto& path_wide : pathnames_wide) {
+		files.reserve(filepaths_wide.size());
+		for (const auto& path_wide : filepaths_wide) {
 			files.push_back(StrWide2MB(path_wide));
 		}
 
@@ -728,12 +728,12 @@ CandidateInfo XDGBasedAppProvider::ConvertDesktopEntryToCandidateInfo(const Desk
 // ****************************** File MIME Type Detection & Expansion ******************************
 
 // Gathers file attributes and "raw" MIME types from all enabled detection methods for a single file.
-XDGBasedAppProvider::RawMimeProfile XDGBasedAppProvider::GetRawMimeProfile(const std::string& pathname)
+XDGBasedAppProvider::RawMimeProfile XDGBasedAppProvider::GetRawMimeProfile(const std::string& filepath)
 {
 	RawMimeProfile profile = {};
 	struct stat st;
 
-	if (stat(pathname.c_str(), &st) != 0) {
+	if (stat(filepath.c_str(), &st) != 0) {
 		// stat() failed (e.g., ENOENT).
 		// We can't determine any file type. Return the empty profile.
 		return profile;
@@ -745,24 +745,24 @@ XDGBasedAppProvider::RawMimeProfile XDGBasedAppProvider::GetRawMimeProfile(const
 
 		// Only call extension-based lookup for regular files
 		if (_use_extension_based_fallback) {
-			profile.ext_mime = GuessMimeTypeByExtension(pathname);
+			profile.ext_mime = GuessMimeTypeByExtension(filepath);
 		}
 
 		auto should_run_cli_tools = ((_use_xdg_mime_tool && _op_xdg_mime_exists) || _op_file_tool_enabled_and_exists || _op_magika_tool_enabled_and_exists);
 
 		// Run expensive external tools ONLY for accessible regular files.
-		if (should_run_cli_tools && access(pathname.c_str(), R_OK) == 0) {
+		if (should_run_cli_tools && access(filepath.c_str(), R_OK) == 0) {
 
-			auto escaped_pathname = EscapeArgForShell(pathname);
+			auto escaped_filepath = EscapeArgForShell(filepath);
 
 			if (_use_xdg_mime_tool && _op_xdg_mime_exists) {
-				profile.xdg_mime = DetectMimeTypeWithXdgMimeTool(escaped_pathname);
+				profile.xdg_mime = DetectMimeTypeWithXdgMimeTool(escaped_filepath);
 			}
 			if (_op_file_tool_enabled_and_exists) {
-				profile.file_mime = DetectMimeTypeWithFileTool(escaped_pathname);
+				profile.file_mime = DetectMimeTypeWithFileTool(escaped_filepath);
 			}
 			if (_op_magika_tool_enabled_and_exists) {
-				profile.magika_mime = DetectMimeTypeWithMagikaTool(escaped_pathname);
+				profile.magika_mime = DetectMimeTypeWithMagikaTool(escaped_filepath);
 			}
 		}
 
@@ -902,25 +902,25 @@ std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const
 }
 
 
-std::string XDGBasedAppProvider::DetectMimeTypeWithXdgMimeTool(const std::string& escaped_pathname)
+std::string XDGBasedAppProvider::DetectMimeTypeWithXdgMimeTool(const std::string& escaped_filepath)
 {
-	return RunCommandAndCaptureOutput("xdg-mime query filetype " + escaped_pathname + " 2>/dev/null");
+	return RunCommandAndCaptureOutput("xdg-mime query filetype " + escaped_filepath + " 2>/dev/null");
 }
 
 
-std::string XDGBasedAppProvider::DetectMimeTypeWithFileTool(const std::string& escaped_pathname)
+std::string XDGBasedAppProvider::DetectMimeTypeWithFileTool(const std::string& escaped_filepath)
 {
-	return RunCommandAndCaptureOutput("file --brief --dereference --mime-type " + escaped_pathname + " 2>/dev/null");
+	return RunCommandAndCaptureOutput("file --brief --dereference --mime-type " + escaped_filepath + " 2>/dev/null");
 }
 
 
-std::string XDGBasedAppProvider::DetectMimeTypeWithMagikaTool(const std::string& escaped_pathname)
+std::string XDGBasedAppProvider::DetectMimeTypeWithMagikaTool(const std::string& escaped_filepath)
 {
-	return RunCommandAndCaptureOutput("magika --no-colors --format '%m' " + escaped_pathname + " 2>/dev/null");
+	return RunCommandAndCaptureOutput("magika --no-colors --format '%m' " + escaped_filepath + " 2>/dev/null");
 }
 
 
-std::string XDGBasedAppProvider::GuessMimeTypeByExtension(const std::string& pathname)
+std::string XDGBasedAppProvider::GuessMimeTypeByExtension(const std::string& filepath)
 {
 	// A static map for common file extensions as a last-resort fallback.
 	// This is not comprehensive but covers many common cases if other tools fail.
@@ -1093,10 +1093,10 @@ std::string XDGBasedAppProvider::GuessMimeTypeByExtension(const std::string& pat
 		{".msg",   "application/vnd.ms-outlook"}
 	};
 
-	auto basename = GetBaseName(pathname);
-	auto dot_pos = basename.rfind('.');
+	auto filename = GetBaseName(filepath);
+	auto dot_pos = filename.rfind('.');
 	if (dot_pos != std::string::npos) {
-		std::string ext = basename.substr(dot_pos);
+		std::string ext = filename.substr(dot_pos);
 		std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
 		auto it = s_ext_to_mime_map.find(ext);
 		if (it != s_ext_to_mime_map.end()) {

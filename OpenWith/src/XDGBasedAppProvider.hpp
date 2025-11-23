@@ -20,8 +20,8 @@ class XDGBasedAppProvider : public AppProvider
 public:
 
 	explicit XDGBasedAppProvider(TMsgGetter msg_getter);
-	std::vector<CandidateInfo> GetAppCandidates(const std::vector<std::wstring>& pathnames_wide) override;
-	std::vector<std::wstring> GenerateLaunchCommands(const CandidateInfo& candidate, const std::vector<std::wstring>& pathnames_wide) override;
+	std::vector<CandidateInfo> GetAppCandidates(const std::vector<std::wstring>& filepaths_wide) override;
+	std::vector<std::wstring> GenerateLaunchCommands(const CandidateInfo& candidate, const std::vector<std::wstring>& filepaths_wide) override;
 	std::vector<std::wstring> GetMimeTypes() override;
 	std::vector<Field> GetCandidateDetails(const CandidateInfo& candidate) override;
 
@@ -298,12 +298,12 @@ private:
 	static CandidateInfo ConvertDesktopEntryToCandidateInfo(const DesktopEntry& desktop_entry);
 
 	// --- File MIME Type Detection & Expansion ---
-	RawMimeProfile GetRawMimeProfile(const std::string& pathname);
+	RawMimeProfile GetRawMimeProfile(const std::string& filepath);
 	std::vector<std::string> ExpandAndPrioritizeMimeTypes(const RawMimeProfile& profile);
-	std::string DetectMimeTypeWithXdgMimeTool(const std::string& escaped_pathname);
-	std::string DetectMimeTypeWithFileTool(const std::string& escaped_pathname);
-	std::string DetectMimeTypeWithMagikaTool(const std::string& escaped_pathname);
-	std::string GuessMimeTypeByExtension(const std::string& pathname);
+	std::string DetectMimeTypeWithXdgMimeTool(const std::string& escaped_filepath);
+	std::string DetectMimeTypeWithFileTool(const std::string& escaped_filepath);
+	std::string DetectMimeTypeWithMagikaTool(const std::string& escaped_filepath);
+	std::string GuessMimeTypeByExtension(const std::string& filepath);
 
 	// --- XDG Database Parsing & Caching ---
 	const std::optional<XDGBasedAppProvider::DesktopEntry>& GetCachedDesktopEntry(const std::string& desktop_filename);
