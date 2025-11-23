@@ -51,7 +51,7 @@ private:
 	// Represents a parsed argument template from the Exec key, potentially containing field codes.
 	struct CommandArgumentTemplate
 	{
-		std::string raw_value;
+		std::string value;
 		bool is_quoted_literal = false; // if true, field codes inside this argument must be ignored.
 	};
 
@@ -59,7 +59,7 @@ private:
 	// Represents a parsed .desktop file from the XDG specifications.
 	struct DesktopEntry
 	{
-		std::string desktop_file;
+		std::string desktop_filepath;
 		std::string name;
 		std::string generic_name;
 		std::string comment;
@@ -74,7 +74,7 @@ private:
 		// Mutable cache for lazy parsing.
 		mutable bool is_exec_parsed = false;
 		mutable ExecutionModel execution_model = ExecutionModel::LegacyImplicit;
-		mutable std::vector<CommandArgumentTemplate> command_line_template;
+		mutable std::vector<CommandArgumentTemplate> arg_templates;
 	};
 
 
@@ -325,7 +325,7 @@ private:
 	std::string AssembleLaunchCommand(const DesktopEntry& entry, const std::vector<std::string>& files) const;
 	std::vector<std::string> ExpandArgumentTemplate(const CommandArgumentTemplate& arg_template, const std::vector<std::string>& files, const DesktopEntry& entry) const;
 	static void AnalyzeExecLine(const DesktopEntry& desktop_entry);
-	static std::vector<XDGBasedAppProvider::CommandArgumentTemplate> TokenizeExecString(const std::string& unescaped_exec);
+	static std::vector<XDGBasedAppProvider::CommandArgumentTemplate> TokenizeExecString(const std::string& exec_value);
 	static std::string PathToUri(std::string_view path);
 	std::string FormatPath(std::string_view path, PathFormat path_format) const;
 	static std::string UnescapeGKeyFileString(const std::string& raw_str);

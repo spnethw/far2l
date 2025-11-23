@@ -233,58 +233,53 @@ std::vector<std::wstring> XDGBasedAppProvider::GenerateLaunchCommands(const Cand
 		return {};
 	}
 
-	// Convert inputs to UTF-8 strings once at the boundary to serve as the internal working format.
-	std::string desktop_id = StrWide2MB(candidate.id);
+	const std::string desktop_id = StrWide2MB(candidate.id);
 
-	std::vector<std::string> files;
-	files.reserve(pathnames_wide.size());
-	for (const auto& pathname_wide : pathnames_wide) {
-		files.push_back(StrWide2MB(pathname_wide));
-	}
-
-	// Retrieve the DesktopEntry from the cache.
-	auto it = _desktop_entry_cache.find(desktop_id);
-	if (it == _desktop_entry_cache.end() || !it->second.has_value()) {
+	if (auto it = _desktop_entry_cache.find(desktop_id);
+		it == _desktop_entry_cache.end() || !it->second.has_value()) {
 		return {};
-	}
-	const DesktopEntry& desktop_entry = it->second.value();
-
-	if (desktop_entry.exec.empty()) {
-		return {};
-	}
-
-	// Ensure the Exec key is parsed to determine the ExecutionModel (lazy evaluation).
-	AnalyzeExecLine(desktop_entry);
-
-	if (desktop_entry.command_line_template.empty()) {
-		return {};
-	}
-
-	std::vector<std::wstring> result_commands_wide;
-
-	// Dispatch based on the detected ExecutionModel.
-	if (desktop_entry.execution_model == ExecutionModel::PerFile) {
-
-		// The application uses %f or %u, meaning it can only handle a single file argument per invocation.
-		// We must generate a separate command line for each selected file.
-		result_commands_wide.reserve(files.size());
-		for (const auto& file : files) {
-			std::string command_line = AssembleLaunchCommand(desktop_entry, {file});
-			if (!command_line.empty()) {
-				result_commands_wide.push_back(StrMB2Wide(command_line));
-			}
-		}
 	} else {
+		const DesktopEntry& desktop_entry = it->second.value();
 
-		// The application uses %F, %U, or no codes (LegacyImplicit).
-		// In these cases, it expects to receive the entire list of files in a single command invocation.
-		std::string command_line = AssembleLaunchCommand(desktop_entry, files);
-		if (!command_line.empty()) {
-			result_commands_wide.push_back(StrMB2Wide(command_line));
+		if (desktop_entry.exec.empty()) {
+			return {};
 		}
-	}
 
-	return result_commands_wide;
+		AnalyzeExecLine(desktop_entry);
+
+		if (desktop_entry.arg_templates.empty()) {
+			return {};
+		}
+
+		std::vector<std::string> files;
+		files.reserve(pathnames_wide.size());
+		for (const auto& path_wide : pathnames_wide) {
+			files.push_back(StrWide2MB(path_wide));
+		}
+
+		std::vector<std::wstring> result_commands;
+
+		auto add_command_from_batch = [&](const std::vector<std::string>& batch) {
+			std::string command = AssembleLaunchCommand(desktop_entry, batch);
+			if (!command.empty()) {
+				result_commands.push_back(StrMB2Wide(command));
+			}
+		};
+
+		if (desktop_entry.execution_model == ExecutionModel::PerFile) {
+			// The application uses %f or %u field codes and accepts only one file per invocation.
+			// Generate a separate command line for each selected file.
+			result_commands.reserve(files.size());
+			for (const auto& file : files) {
+				add_command_from_batch({ file });
+			}
+		} else {
+			// The application uses %F, %U, or has no field codes (Legacy).
+			// It accepts the entire list of files in a single invocation.
+			add_command_from_batch(files);
+		}
+		return result_commands;
+	}
 }
 
 
@@ -301,7 +296,7 @@ std::vector<Field> XDGBasedAppProvider::GetCandidateDetails(const CandidateInfo&
 	}
 	const DesktopEntry& entry = it->second.value();
 
-	details.push_back({m_GetMsg(MDesktopFile), StrMB2Wide(entry.desktop_file)});
+	details.push_back({m_GetMsg(MDesktopFile), StrMB2Wide(entry.desktop_filepath)});
 
 	// Retrieve the source info (e.g., "mimeapps.list") stored during GetAppCandidates.
 	// This is only available for single-file selections.
@@ -539,7 +534,7 @@ void XDGBasedAppProvider::AppendCandidatesByFullScan(const std::vector<std::stri
 			if (!entry_ptr) continue;
 
 			// Check if this specific association is explicitly removed in mimeapps.list.
-			if (IsAssociationRemoved(mime, GetBaseName(entry_ptr->desktop_file))) {
+			if (IsAssociationRemoved(mime, GetBaseName(entry_ptr->desktop_filepath))) {
 				continue;
 			}
 
@@ -715,7 +710,7 @@ CandidateInfo XDGBasedAppProvider::ConvertDesktopEntryToCandidateInfo(const Desk
 	CandidateInfo candidate;
 	candidate.terminal = (desktop_entry.terminal == "true");
 	candidate.name = StrMB2Wide(UnescapeGKeyFileString(desktop_entry.name));
-	candidate.id = StrMB2Wide(GetBaseName(desktop_entry.desktop_file));
+	candidate.id = StrMB2Wide(GetBaseName(desktop_entry.desktop_filepath));
 
 	// Ensure the execution model is determined before checking capabilities.
 	AnalyzeExecLine(desktop_entry);
@@ -1300,7 +1295,7 @@ std::optional<XDGBasedAppProvider::DesktopEntry> XDGBasedAppProvider::ParseDeskt
 	std::string line;
 	bool in_main_section = false;
 	DesktopEntry desktop_entry;
-	desktop_entry.desktop_file = path;
+	desktop_entry.desktop_filepath = path;
 
 	std::unordered_map<std::string, std::string> entries;
 
@@ -1617,7 +1612,7 @@ std::string XDGBasedAppProvider::AssembleLaunchCommand(const DesktopEntry& deskt
 	};
 
 	// 1. Process the explicit command line template from the .desktop Exec key.
-	for (const auto& arg_template : desktop_entry.command_line_template) {
+	for (const auto& arg_template : desktop_entry.arg_templates) {
 		// ExpandArgumentTemplate handles %-codes and quoting rules.
 		for (const auto& expanded_arg : ExpandArgumentTemplate(arg_template, files, desktop_entry)) {
 			append_argument(expanded_arg);
@@ -1640,11 +1635,11 @@ std::string XDGBasedAppProvider::AssembleLaunchCommand(const DesktopEntry& deskt
 std::vector<std::string> XDGBasedAppProvider::ExpandArgumentTemplate(const CommandArgumentTemplate& arg_template, const std::vector<std::string>& files, const DesktopEntry& desktop_entry) const
 {
 	// Optimization: If the argument was quoted or contains no '%', treat it as a literal.
-	if (arg_template.is_quoted_literal || arg_template.raw_value.find('%') == std::string::npos) {
-		return { EscapeArgForShell(arg_template.raw_value) };
+	if (arg_template.is_quoted_literal || arg_template.value.find('%') == std::string::npos) {
+		return { EscapeArgForShell(arg_template.value) };
 	}
 
-	const std::string& pattern = arg_template.raw_value;
+	const std::string& pattern = arg_template.value;
 
 	// Handle List Codes (%F, %U).
 	// These expand into multiple separate arguments, one for each file.
@@ -1695,7 +1690,7 @@ std::vector<std::string> XDGBasedAppProvider::ExpandArgumentTemplate(const Comma
 			break;
 
 		case 'k':
-			expanded_token += desktop_entry.desktop_file;
+			expanded_token += desktop_entry.desktop_filepath;
 			break;
 
 		case 'i':
@@ -1737,18 +1732,18 @@ void XDGBasedAppProvider::AnalyzeExecLine(const DesktopEntry& desktop_entry)
 	std::string unescaped_exec = UnescapeGKeyFileString(desktop_entry.exec);
 
 	// 2. Tokenize the command line adhering to the specific quoting rules.
-	desktop_entry.command_line_template = TokenizeExecString(unescaped_exec);
+	desktop_entry.arg_templates = TokenizeExecString(unescaped_exec);
 
 	// 3. Determine the ExecutionModel by scanning for specific field codes (%f, %F, etc.).
 	desktop_entry.execution_model = ExecutionModel::LegacyImplicit;
 
-	for (const auto& arg_template : desktop_entry.command_line_template) {
+	for (const auto& arg_template : desktop_entry.arg_templates) {
 		// Spec: Field codes must not be used inside a quoted argument.
 		if (arg_template.is_quoted_literal) continue;
 
 		// Check for FileList codes (%F, %U). These take precedence as they define
 		// the ability to handle multiple arguments natively.
-		if (arg_template.raw_value == "%F" || arg_template.raw_value == "%U") {
+		if (arg_template.value == "%F" || arg_template.value == "%U") {
 			desktop_entry.execution_model = ExecutionModel::FileList;
 			break;
 		}
@@ -1757,9 +1752,9 @@ void XDGBasedAppProvider::AnalyzeExecLine(const DesktopEntry& desktop_entry)
 		// We only set this if FileList wasn't already detected.
 		if (desktop_entry.execution_model != ExecutionModel::FileList) {
 			size_t pos = 0;
-			while ((pos = arg_template.raw_value.find('%', pos)) != std::string::npos) {
-				if (pos + 1 < arg_template.raw_value.length()) {
-					char next = arg_template.raw_value[pos + 1];
+			while ((pos = arg_template.value.find('%', pos)) != std::string::npos) {
+				if (pos + 1 < arg_template.value.length()) {
+					char next = arg_template.value[pos + 1];
 					if (next == 'f' || next == 'u') {
 						desktop_entry.execution_model = ExecutionModel::PerFile;
 						break;
@@ -1776,10 +1771,10 @@ void XDGBasedAppProvider::AnalyzeExecLine(const DesktopEntry& desktop_entry)
 }
 
 
-// Parses the 'Exec' key string into a sequence of argument templates.
-std::vector<XDGBasedAppProvider::CommandArgumentTemplate> XDGBasedAppProvider::TokenizeExecString(const std::string& unescaped_exec)
+// Parses the GKeyFile-unescaped 'Exec' key string into a sequence of argument templates.
+std::vector<XDGBasedAppProvider::CommandArgumentTemplate> XDGBasedAppProvider::TokenizeExecString(const std::string& exec_value)
 {
-	if (unescaped_exec.empty()) return {};
+	if (exec_value.empty()) return {};
 
 	std::vector<CommandArgumentTemplate> tokens;
 	tokens.reserve(4);
@@ -1806,7 +1801,7 @@ std::vector<XDGBasedAppProvider::CommandArgumentTemplate> XDGBasedAppProvider::T
 		}
 	};
 
-	for (char c : unescaped_exec) {
+	for (char c : exec_value) {
 		if (escape_pending) {
 			// Spec: Inside double quotes, only ` " $ \ characters are escaped.
 			// Any other character following a backslash is treated as a literal sequence (backslash + char).
@@ -1886,36 +1881,36 @@ std::string XDGBasedAppProvider::FormatPath(std::string_view path, PathFormat pa
 
 // Performs the first-pass un-escaping for a raw string from a .desktop file.
 // This handles general GKeyFile-style escape sequences like '\\' -> '\', '\s' -> ' ', etc.
-std::string XDGBasedAppProvider::UnescapeGKeyFileString(const std::string& raw_str)
+std::string XDGBasedAppProvider::UnescapeGKeyFileString(const std::string& escaped_string)
 {
-	std::string result;
-	result.reserve(raw_str.length());
+	std::string unescaped_string;
+	unescaped_string.reserve(escaped_string.length());
 
-	for (size_t i = 0; i < raw_str.length(); ++i) {
-		if (raw_str[i] == '\\') {
-			if (i + 1 < raw_str.length()) {
+	for (size_t i = 0; i < escaped_string.length(); ++i) {
+		if (escaped_string[i] == '\\') {
+			if (i + 1 < escaped_string.length()) {
 				i++; // Move to the character after the backslash
-				switch (raw_str[i]) {
-				case 's': result += ' '; break;
-				case 'n': result += '\n'; break;
-				case 't': result += '\t'; break;
-				case 'r': result += '\r'; break;
-				case '\\': result += '\\'; break;
+				switch (escaped_string[i]) {
+				case 's': unescaped_string += ' '; break;
+				case 'n': unescaped_string += '\n'; break;
+				case 't': unescaped_string += '\t'; break;
+				case 'r': unescaped_string += '\r'; break;
+				case '\\': unescaped_string += '\\'; break;
 				default:
 					// For unknown escape sequences, the backslash is dropped
 					// and the character is preserved.
-					result += raw_str[i];
+					unescaped_string += escaped_string[i];
 					break;
 				}
 			} else {
 				// A trailing backslash at the end of the string is treated as a literal.
-				result += '\\';
+				unescaped_string += '\\';
 			}
 		} else {
-			result += raw_str[i];
+			unescaped_string += escaped_string[i];
 		}
 	}
-	return result;
+	return unescaped_string;
 }
 
 
