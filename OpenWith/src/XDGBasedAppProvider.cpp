@@ -251,10 +251,10 @@ std::vector<std::wstring> XDGBasedAppProvider::GenerateLaunchCommands(const Cand
 			return {};
 		}
 
-		std::vector<std::string> files;
-		files.reserve(filepaths_wide.size());
-		for (const auto& path_wide : filepaths_wide) {
-			files.push_back(StrWide2MB(path_wide));
+		std::vector<std::string> filepaths;
+		filepaths.reserve(filepaths_wide.size());
+		for (const auto& filepath_wide : filepaths_wide) {
+			filepaths.push_back(StrWide2MB(filepath_wide));
 		}
 
 		std::vector<std::wstring> result_commands;
@@ -269,14 +269,14 @@ std::vector<std::wstring> XDGBasedAppProvider::GenerateLaunchCommands(const Cand
 		if (desktop_entry.execution_model == ExecutionModel::PerFile) {
 			// The application uses %f or %u field codes and accepts only one file per invocation.
 			// Generate a separate command line for each selected file.
-			result_commands.reserve(files.size());
-			for (const auto& file : files) {
+			result_commands.reserve(filepaths.size());
+			for (const auto& file : filepaths) {
 				add_command_from_batch({ file });
 			}
 		} else {
 			// The application uses %F, %U, or has no field codes (Legacy).
 			// It accepts the entire list of files in a single invocation.
-			add_command_from_batch(files);
+			add_command_from_batch(filepaths);
 		}
 		return result_commands;
 	}
@@ -1599,7 +1599,7 @@ std::vector<std::string> XDGBasedAppProvider::GetMimeDatabaseSearchDirpaths()
 
 // Constructs a final, shell-safe command line string for a specific invocation.
 // This function handles argument expansion and the fallback logic for implicit file passing.
-std::string XDGBasedAppProvider::AssembleLaunchCommand(const DesktopEntry& desktop_entry, const std::vector<std::string>& files) const
+std::string XDGBasedAppProvider::AssembleLaunchCommand(const DesktopEntry& desktop_entry, const std::vector<std::string>& filepaths) const
 {
 	std::string command_line;
 
@@ -1613,16 +1613,16 @@ std::string XDGBasedAppProvider::AssembleLaunchCommand(const DesktopEntry& deskt
 	// 1. Process the explicit command line template from the .desktop Exec key.
 	for (const auto& arg_template : desktop_entry.arg_templates) {
 		// ExpandArgumentTemplate handles %-codes and quoting rules.
-		for (const auto& expanded_arg : ExpandArgumentTemplate(arg_template, files, desktop_entry)) {
+		for (const auto& expanded_arg : ExpandArgumentTemplate(arg_template, filepaths, desktop_entry)) {
 			append_argument(expanded_arg);
 		}
 	}
 
 	// 2. If no %f/%F/%u/%U codes were found, append the file paths to the end of the command.
 	if (desktop_entry.execution_model == ExecutionModel::LegacyImplicit) {
-		for (const auto& file : files) {
+		for (const auto& filepath : filepaths) {
 			// Legacy apps typically expect native paths (not URIs) and require shell escaping.
-			append_argument(EscapeArgForShell(FormatPath(file, PathFormat::Native)));
+			append_argument(EscapeArgForShell(FormatPath(filepath, PathFormat::Native)));
 		}
 	}
 
@@ -1631,7 +1631,7 @@ std::string XDGBasedAppProvider::AssembleLaunchCommand(const DesktopEntry& deskt
 
 
 // Expands a single argument template by substituting Field Codes with actual data.
-std::vector<std::string> XDGBasedAppProvider::ExpandArgumentTemplate(const CommandArgumentTemplate& arg_template, const std::vector<std::string>& files, const DesktopEntry& desktop_entry) const
+std::vector<std::string> XDGBasedAppProvider::ExpandArgumentTemplate(const CommandArgumentTemplate& arg_template, const std::vector<std::string>& filepaths, const DesktopEntry& desktop_entry) const
 {
 	// Optimization: If the argument was quoted or contains no '%', treat it as a literal.
 	if (arg_template.is_quoted_literal || arg_template.value.find('%') == std::string::npos) {
@@ -1644,11 +1644,11 @@ std::vector<std::string> XDGBasedAppProvider::ExpandArgumentTemplate(const Comma
 	// These expand into multiple separate arguments, one for each file.
 	if (pattern == "%F" || pattern == "%U") {
 		std::vector<std::string> result;
-		result.reserve(files.size());
+		result.reserve(filepaths.size());
 		const auto path_format = (pattern == "%U") ? PathFormat::Uri : PathFormat::Native;
 
-		for (const auto& file : files) {
-			result.push_back(EscapeArgForShell(FormatPath(file, path_format)));
+		for (const auto& filepath : filepaths) {
+			result.push_back(EscapeArgForShell(FormatPath(filepath, path_format)));
 		}
 		return result;
 	}
@@ -1656,7 +1656,7 @@ std::vector<std::string> XDGBasedAppProvider::ExpandArgumentTemplate(const Comma
 	// Handle String Codes (%f, %u, %c, etc.).
 	// These expand into a single argument string, potentially concatenating data.
 
-	const std::string context_file = files.empty() ? std::string() : files.front();
+	const std::string context_filepath = filepaths.empty() ? std::string() : filepaths.front();
 	std::string expanded_token;
 
 	// Reserve buffer space to minimize reallocations.
@@ -1677,11 +1677,11 @@ std::vector<std::string> XDGBasedAppProvider::ExpandArgumentTemplate(const Comma
 			break;
 
 		case 'f':
-			expanded_token += FormatPath(context_file, PathFormat::Native);
+			expanded_token += FormatPath(context_filepath, PathFormat::Native);
 			break;
 
 		case 'u':
-			expanded_token += FormatPath(context_file, PathFormat::Uri);
+			expanded_token += FormatPath(context_filepath, PathFormat::Uri);
 			break;
 
 		case 'c':
