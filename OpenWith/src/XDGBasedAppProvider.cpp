@@ -1881,36 +1881,36 @@ std::string XDGBasedAppProvider::FormatPath(std::string_view path, PathFormat pa
 
 // Performs the first-pass un-escaping for a raw string from a .desktop file.
 // This handles general GKeyFile-style escape sequences like '\\' -> '\', '\s' -> ' ', etc.
-std::string XDGBasedAppProvider::UnescapeGKeyFileString(const std::string& escaped_string)
+std::string XDGBasedAppProvider::UnescapeGKeyFileString(const std::string& str)
 {
-	std::string unescaped_string;
-	unescaped_string.reserve(escaped_string.length());
+	std::string unescaped;
+	unescaped.reserve(str.length());
 
-	for (size_t i = 0; i < escaped_string.length(); ++i) {
-		if (escaped_string[i] == '\\') {
-			if (i + 1 < escaped_string.length()) {
+	for (size_t i = 0; i < str.length(); ++i) {
+		if (str[i] == '\\') {
+			if (i + 1 < str.length()) {
 				i++; // Move to the character after the backslash
-				switch (escaped_string[i]) {
-				case 's': unescaped_string += ' '; break;
-				case 'n': unescaped_string += '\n'; break;
-				case 't': unescaped_string += '\t'; break;
-				case 'r': unescaped_string += '\r'; break;
-				case '\\': unescaped_string += '\\'; break;
+				switch (str[i]) {
+				case 's': unescaped += ' '; break;
+				case 'n': unescaped += '\n'; break;
+				case 't': unescaped += '\t'; break;
+				case 'r': unescaped += '\r'; break;
+				case '\\': unescaped += '\\'; break;
 				default:
 					// For unknown escape sequences, the backslash is dropped
 					// and the character is preserved.
-					unescaped_string += escaped_string[i];
+					unescaped += str[i];
 					break;
 				}
 			} else {
 				// A trailing backslash at the end of the string is treated as a literal.
-				unescaped_string += '\\';
+				unescaped += '\\';
 			}
 		} else {
-			unescaped_string += escaped_string[i];
+			unescaped += str[i];
 		}
 	}
-	return unescaped_string;
+	return unescaped;
 }
 
 

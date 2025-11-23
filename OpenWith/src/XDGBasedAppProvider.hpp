@@ -328,7 +328,7 @@ private:
 	static std::vector<XDGBasedAppProvider::CommandArgumentTemplate> TokenizeExecString(const std::string& exec_value);
 	static std::string PathToUri(std::string_view path);
 	std::string FormatPath(std::string_view path, PathFormat path_format) const;
-	static std::string UnescapeGKeyFileString(const std::string& raw_str);
+	static std::string UnescapeGKeyFileString(const std::string& str);
 
 	// --- System & Environment Helpers ---
 	static bool IsExecutableAvailable(const std::string& path);
