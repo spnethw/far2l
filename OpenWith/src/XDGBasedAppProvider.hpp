@@ -180,7 +180,7 @@ private:
 	// Holds a non-owning pointer to a cached DesktopEntry and its calculated rank.
 	struct RankedCandidate
 	{
-		const DesktopEntry* entry = nullptr;
+		const DesktopEntry* desktop_entry = nullptr;
 		int rank = 0;
 		std::string source_info;
 
@@ -188,10 +188,10 @@ private:
 			if (rank != other.rank) {
 				return rank > other.rank; // primary sort: descending by rank (highest rank first).
 			}
-			if (entry && other.entry) {
-				return entry->name < other.entry->name;	// secondary sort: ascending by name
+			if (desktop_entry && other.desktop_entry) {
+				return desktop_entry->name < other.desktop_entry->name;	// secondary sort: ascending by name
 			}
-			return entry == nullptr && other.entry != nullptr;
+			return desktop_entry == nullptr && other.desktop_entry != nullptr;
 		}
 	};
 
@@ -290,8 +290,8 @@ private:
 	void AppendCandidatesFromMimeinfoCache(const std::vector<std::string>& expanded_mimes, CandidateMap& unique_candidates);
 	void AppendCandidatesByFullScan(const std::vector<std::string>& expanded_mimes, CandidateMap& unique_candidates);
 	void RegisterCandidateById(CandidateMap& unique_candidates, const std::string& desktop_filename, int rank, const std::string& source_info);
-	void RegisterCandidateFromObject(CandidateMap& unique_candidates, const DesktopEntry& entry, int rank, const std::string& source_info);
-	void AddOrUpdateCandidate(CandidateMap& unique_candidates, const DesktopEntry& entry, int rank, const std::string& source_info);
+	void RegisterCandidateFromObject(CandidateMap& unique_candidates, const DesktopEntry& desktop_entry, int rank, const std::string& source_info);
+	void AddOrUpdateCandidate(CandidateMap& unique_candidates, const DesktopEntry& desktop_entry, int rank, const std::string& source_info);
 	bool IsAssociationRemoved(const std::string& mime, const std::string& desktop_filename);
 	std::vector<RankedCandidate> BuildSortedRankedCandidatesList(const CandidateMap& candidate_map);
 	std::vector<CandidateInfo> FormatCandidatesForUI(const std::vector<RankedCandidate>& ranked_candidates, bool store_source_info);
@@ -313,7 +313,7 @@ private:
 	static MimeappsListsData ParseMimeappsLists(const std::vector<std::string>& filepaths);
 	static void ParseMimeappsList(const std::string& filepath, MimeappsListsData& mimeapps_lists_data);
 	static std::optional<XDGBasedAppProvider::DesktopEntry> ParseDesktopFile(const std::string& filepath);
-	static std::string GetLocalizedValue(const std::unordered_map<std::string, std::string>& values, const std::string& base_key);
+	static std::string GetLocalizedValue(const std::unordered_map<std::string, std::string>& kv_entries, const std::string& base_key);
 	static std::unordered_map<std::string, std::string> LoadMimeAliases();
 	static std::string_view GetMajorMimeType(const std::string& mime);
 	static std::unordered_map<std::string, std::string> LoadMimeSubclasses();
@@ -322,8 +322,8 @@ private:
 	static std::vector<std::string> GetMimeDatabaseSearchDirpaths();
 
 	// --- Launch command constructing ---
-	std::string AssembleLaunchCommand(const DesktopEntry& entry, const std::vector<std::string>& files) const;
-	std::vector<std::string> ExpandArgumentTemplate(const CommandArgumentTemplate& arg_template, const std::vector<std::string>& files, const DesktopEntry& entry) const;
+	std::string AssembleLaunchCommand(const DesktopEntry& desktop_entry, const std::vector<std::string>& files) const;
+	std::vector<std::string> ExpandArgumentTemplate(const CommandArgumentTemplate& arg_template, const std::vector<std::string>& files, const DesktopEntry& desktop_entry) const;
 	static void AnalyzeExecLine(const DesktopEntry& desktop_entry);
 	static std::vector<XDGBasedAppProvider::CommandArgumentTemplate> TokenizeExecString(const std::string& exec_value);
 	static std::string PathToUri(std::string_view path);

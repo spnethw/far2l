@@ -287,9 +287,9 @@ std::vector<Field> XDGBasedAppProvider::GetCandidateDetails(const CandidateInfo&
 	if (it == _desktop_entry_cache.end() || !it->second.has_value()) {
 		return details;
 	}
-	const DesktopEntry& entry = it->second.value();
+	const DesktopEntry& desktop_entry = it->second.value();
 
-	details.push_back({m_GetMsg(MDesktopFile), StrMB2Wide(entry.desktop_filepath)});
+	details.push_back({m_GetMsg(MDesktopFile), StrMB2Wide(desktop_entry.desktop_filepath)});
 
 	// Retrieve the source info (e.g., "mimeapps.list") stored during GetAppCandidates.
 	// This is only available for single-file selections.
@@ -311,7 +311,7 @@ std::vector<Field> XDGBasedAppProvider::GetCandidateDetails(const CandidateInfo&
 			 std::pair{L"OnlyShowIn =",  &DesktopEntry::only_show_in}
 		 })
 	{
-		const std::string& val = entry.*member_ptr;
+		const std::string& val = desktop_entry.*member_ptr;
 		if (!val.empty()) {
 			details.push_back({ label_wide, StrMB2Wide(val) });
 		}
@@ -505,7 +505,7 @@ void XDGBasedAppProvider::AppendCandidatesByFullScan(const std::vector<std::stri
 	const int total_mimes = expanded_mimes.size();
 
 	// Map tracking the highest score found for each DesktopEntry pointer to avoid rank demotion by a less-specific MIME type.
-	std::unordered_map<const DesktopEntry*, AssociationScore> best_score_by_entry;
+	std::unordered_map<const DesktopEntry*, AssociationScore> best_score_by_desktop_entry;
 
 	const auto& mime_to_desktop_entry_map = _op_mime_to_desktop_entry_map.value();
 
@@ -523,17 +523,17 @@ void XDGBasedAppProvider::AppendCandidatesByFullScan(const std::vector<std::stri
 		int rank = (total_mimes - i) * Ranking::SPECIFICITY_MULTIPLIER + Ranking::SOURCE_RANK_CACHE_OR_SCAN;
 
 		// Iterate through all applications found for this MIME type.
-		for (const DesktopEntry* entry_ptr : it_index->second) {
-			if (!entry_ptr) continue;
+		for (const DesktopEntry* desktop_entry_ptr : it_index->second) {
+			if (!desktop_entry_ptr) continue;
 
 			// Check if this specific association is explicitly removed in mimeapps.list.
-			if (IsAssociationRemoved(mime, GetBaseName(entry_ptr->desktop_filepath))) {
+			if (IsAssociationRemoved(mime, GetBaseName(desktop_entry_ptr->desktop_filepath))) {
 				continue;
 			}
 
 			std::string source_info = StrWide2MB(m_GetMsg(MFullScanFor)) + mime;
 
-			auto [it, inserted] = best_score_by_entry.try_emplace(entry_ptr, rank, source_info);
+			auto [it, inserted] = best_score_by_desktop_entry.try_emplace(desktop_entry_ptr, rank, source_info);
 			// Update only if the new rank is higher than the existing one.
 			if (!inserted && rank > it->second.rank) {
 				it->second.rank = rank;
@@ -543,9 +543,9 @@ void XDGBasedAppProvider::AppendCandidatesByFullScan(const std::vector<std::stri
 	}
 
 	// Register each application using its highest calculated rank.
-	for (const auto& [entry_ptr, score] : best_score_by_entry) {
+	for (const auto& [desktop_entry_ptr, score] : best_score_by_desktop_entry) {
 		// Call the registration helper directly, passing the dereferenced entry to avoid a redundant cache lookup.
-		RegisterCandidateFromObject(unique_candidates, *entry_ptr, score.rank, score.source_info);
+		RegisterCandidateFromObject(unique_candidates, *desktop_entry_ptr, score.rank, score.source_info);
 	}
 }
 
@@ -558,23 +558,23 @@ void XDGBasedAppProvider::RegisterCandidateById(CandidateMap& unique_candidates,
 	if (desktop_filename.empty()) return;
 
 	// Retrieve the full DesktopEntry, either from cache or by parsing it.
-	const auto& entry_opt = GetCachedDesktopEntry(desktop_filename);
-	if (!entry_opt) {
+	const auto& desktop_entry_opt = GetCachedDesktopEntry(desktop_filename);
+	if (!desktop_entry_opt) {
 		return;
 	}
 
 	// Pass the actual DesktopEntry object to the core validation and registration logic.
-	RegisterCandidateFromObject(unique_candidates, *entry_opt, rank, source_info);
+	RegisterCandidateFromObject(unique_candidates, *desktop_entry_opt, rank, source_info);
 }
 
 
 // This is the core validation and registration helper.
 // It filters a candidate (TryExec, ShowIn/NotShowIn) and adds it to the map.
-void XDGBasedAppProvider::RegisterCandidateFromObject(CandidateMap& unique_candidates, const DesktopEntry& entry,
+void XDGBasedAppProvider::RegisterCandidateFromObject(CandidateMap& unique_candidates, const DesktopEntry& desktop_entry,
 											int rank, const std::string& source_info)
 {
 	// Optionally validate the TryExec key to ensure the executable exists.
-	if (_validate_try_exec && !entry.try_exec.empty() && !IsExecutableAvailable(UnescapeGKeyFileString(entry.try_exec))) {
+	if (_validate_try_exec && !desktop_entry.try_exec.empty() && !IsExecutableAvailable(UnescapeGKeyFileString(desktop_entry.try_exec))) {
 		return;
 	}
 
@@ -583,39 +583,39 @@ void XDGBasedAppProvider::RegisterCandidateFromObject(CandidateMap& unique_candi
 	// Optionally filter applications based on the current desktop environment
 	// using the OnlyShowIn and NotShowIn keys.
 	if (_filter_by_show_in && !current_desktop_env.empty()) {
-		if (!entry.only_show_in.empty()) {
+		if (!desktop_entry.only_show_in.empty()) {
 			bool found = false;
-			for (const auto& desktop : SplitString(entry.only_show_in, ';')) {
+			for (const auto& desktop : SplitString(desktop_entry.only_show_in, ';')) {
 				if (desktop == current_desktop_env) { found = true; break; }
 			}
 			if (!found) return;
 		}
-		if (!entry.not_show_in.empty()) {
+		if (!desktop_entry.not_show_in.empty()) {
 			bool found = false;
-			for (const auto& desktop : SplitString(entry.not_show_in, ';')) {
+			for (const auto& desktop : SplitString(desktop_entry.not_show_in, ';')) {
 				if (desktop == current_desktop_env) { found = true; break; }
 			}
 			if (found) return;
 		}
 	}
 
-	AddOrUpdateCandidate(unique_candidates, entry, rank, source_info);
+	AddOrUpdateCandidate(unique_candidates, desktop_entry, rank, source_info);
 }
 
 
 // Adds a new candidate to the results map or updates its rank if a better one is found.
-void XDGBasedAppProvider::AddOrUpdateCandidate(CandidateMap& unique_candidates, const DesktopEntry& entry,
+void XDGBasedAppProvider::AddOrUpdateCandidate(CandidateMap& unique_candidates, const DesktopEntry& desktop_entry,
 											   int rank, const std::string& source_info)
 {
 	// A unique key to identify an application.
-	AppUniqueKey unique_key{entry.name, entry.exec};
+	AppUniqueKey unique_key{desktop_entry.name, desktop_entry.exec};
 
-	auto [it, inserted] = unique_candidates.try_emplace(unique_key, RankedCandidate{&entry, rank, source_info});
+	auto [it, inserted] = unique_candidates.try_emplace(unique_key, RankedCandidate{&desktop_entry, rank, source_info});
 
 	// If the candidate already exists, update it only if the new rank is higher.
 	if (!inserted && rank > it->second.rank) {
 		it->second.rank = rank;
-		it->second.entry = &entry;
+		it->second.desktop_entry = &desktop_entry;
 		it->second.source_info = source_info;
 	}
 }
@@ -662,8 +662,8 @@ std::vector<XDGBasedAppProvider::RankedCandidate> XDGBasedAppProvider::BuildSort
 	if (_sort_alphabetically) {
 		// Sort candidates based on their name only
 		std::sort(sorted_candidates.begin(), sorted_candidates.end(), [](const RankedCandidate& a, const RankedCandidate& b) {
-			if (!a.entry || !b.entry) return b.entry != nullptr;
-			return a.entry->name < b.entry->name;
+			if (!a.desktop_entry || !b.desktop_entry) return b.desktop_entry != nullptr;
+			return a.desktop_entry->name < b.desktop_entry->name;
 		});
 	} else {
 		// Use the standard ranking defined in the < operator for RankedCandidate (sorts by rank descending, then name ascending).
@@ -684,7 +684,7 @@ std::vector<CandidateInfo> XDGBasedAppProvider::FormatCandidatesForUI(
 
 	for (const auto& ranked_candidate : ranked_candidates) {
 		// Convert the internal DesktopEntry representation to the UI-facing CandidateInfo.
-		CandidateInfo ci = ConvertDesktopEntryToCandidateInfo(*ranked_candidate.entry);
+		CandidateInfo ci = ConvertDesktopEntryToCandidateInfo(*ranked_candidate.desktop_entry);
 
 		// If requested (only for single-file lookups), store the association's source
 		// for the F3 details dialog.
@@ -1114,9 +1114,9 @@ const std::optional<XDGBasedAppProvider::DesktopEntry>& XDGBasedAppProvider::Get
 
 	for (const auto& base_dir : _op_desktop_file_dirpaths.value()) {
 		std::string full_path = base_dir + "/" + desktop_filename;
-		if (auto entry = ParseDesktopFile(full_path)) {
+		if (auto desktop_entry = ParseDesktopFile(full_path)) {
 			// A valid entry was found and parsed, cache and return it.
-			auto [it, inserted] = _desktop_entry_cache.try_emplace(desktop_filename, std::move(entry));
+			auto [it, inserted] = _desktop_entry_cache.try_emplace(desktop_filename, std::move(desktop_entry));
 			return it->second;
 		}
 	}
@@ -1149,14 +1149,14 @@ XDGBasedAppProvider::MimeToDesktopEntryIndex XDGBasedAppProvider::FullScanDeskto
 			}
 
 			// A non-owning pointer is safe because _desktop_entry_cache is a std::map.
-			const DesktopEntry* entry_ptr = &desktop_entry_opt.value();
+			const DesktopEntry* desktop_entry_ptr = &desktop_entry_opt.value();
 
 			// Split the MimeType= key and populate the index for each MIME type.
-			std::vector<std::string> entry_mimes = SplitString(entry_ptr->mimetype, ';');
+			std::vector<std::string> entry_mimes = SplitString(desktop_entry_ptr->mimetype, ';');
 			for (const auto& mime : entry_mimes) {
 				if (!mime.empty()) {
 					// Add the pointer to the list for this MIME type.
-					index[mime].push_back(entry_ptr);
+					index[mime].push_back(desktop_entry_ptr);
 				}
 			}
 		}
@@ -1289,7 +1289,7 @@ std::optional<XDGBasedAppProvider::DesktopEntry> XDGBasedAppProvider::ParseDeskt
 	DesktopEntry desktop_entry;
 	desktop_entry.desktop_filepath = filepath;
 
-	std::unordered_map<std::string, std::string> entries;
+	std::unordered_map<std::string, std::string> kv_entries;
 
 	// Parse key-value pairs from the [Desktop Entry] section only.
 	while (std::getline(file, line)) {
@@ -1308,18 +1308,18 @@ std::optional<XDGBasedAppProvider::DesktopEntry> XDGBasedAppProvider::ParseDeskt
 			if (eq_pos == std::string::npos) continue;
 			std::string key = Trim(line.substr(0, eq_pos));
 			std::string value = Trim(line.substr(eq_pos + 1));
-			entries[key] = value;
+			kv_entries[key] = value;
 		}
 	}
 
 	// Validate required fields and application type according to the spec.
 	bool is_application = false;
-	if (auto it = entries.find("Type"); it != entries.end() && it->second == "Application") {
+	if (auto it = kv_entries.find("Type"); it != kv_entries.end() && it->second == "Application") {
 		is_application = true;
 	}
 
 	bool hidden = false;
-	if (auto it = entries.find("Hidden"); it != entries.end() && it->second == "true") {
+	if (auto it = kv_entries.find("Hidden"); it != kv_entries.end() && it->second == "true") {
 		hidden = true;
 	}
 
@@ -1329,21 +1329,21 @@ std::optional<XDGBasedAppProvider::DesktopEntry> XDGBasedAppProvider::ParseDeskt
 	}
 
 	//  An application must have a non-empty Exec field.
-	if (auto it = entries.find("Exec"); it == entries.end() || it->second.empty()) {
+	if (auto it = kv_entries.find("Exec"); it == kv_entries.end() || it->second.empty()) {
 		return std::nullopt;
 	} else {
 		desktop_entry.exec = it->second;
 	}
 
 	// The Name field is required for a valid desktop entry.
-	desktop_entry.name = GetLocalizedValue(entries, "Name");
+	desktop_entry.name = GetLocalizedValue(kv_entries, "Name");
 	if (desktop_entry.name.empty()) {
 		return std::nullopt;
 	}
 
 	// Extract optional fields with localization support.
-	desktop_entry.generic_name = GetLocalizedValue(entries, "GenericName");
-	desktop_entry.comment = GetLocalizedValue(entries, "Comment");
+	desktop_entry.generic_name = GetLocalizedValue(kv_entries, "GenericName");
+	desktop_entry.comment = GetLocalizedValue(kv_entries, "Comment");
 
 	for (const auto& [key, member_ptr] : {
 			 std::pair{"Categories", &DesktopEntry::categories},
@@ -1354,7 +1354,7 @@ std::optional<XDGBasedAppProvider::DesktopEntry> XDGBasedAppProvider::ParseDeskt
 			 std::pair{"NotShowIn",  &DesktopEntry::not_show_in}
 		 })
 	{
-		if (auto it = entries.find(key); it != entries.end()) {
+		if (auto it = kv_entries.find(key); it != kv_entries.end()) {
 			desktop_entry.*member_ptr = it->second;
 		}
 	}
@@ -1367,7 +1367,7 @@ std::optional<XDGBasedAppProvider::DesktopEntry> XDGBasedAppProvider::ParseDeskt
 // following the locale resolution logic based on environment variables.
 // Priority: LC_ALL -> LC_MESSAGES -> LANG.
 // Fallback: full locale (en_US) -> language only (en) -> unlocalized key.
-std::string XDGBasedAppProvider::GetLocalizedValue(const std::unordered_map<std::string, std::string>& values,
+std::string XDGBasedAppProvider::GetLocalizedValue(const std::unordered_map<std::string, std::string>& kv_entries,
 												   const std::string& base_key)
 {
 	const char* env_vars[] = {"LC_ALL", "LC_MESSAGES", "LANG"};
@@ -1382,21 +1382,21 @@ std::string XDGBasedAppProvider::GetLocalizedValue(const std::unordered_map<std:
 			}
 			if (!locale.empty()) {
 				// Try full locale (e.g., Name[en_US]).
-				auto it = values.find(base_key + "[" + locale + "]");
-				if (it != values.end()) return it->second;
+				auto it = kv_entries.find(base_key + "[" + locale + "]");
+				if (it != kv_entries.end()) return it->second;
 				// Try language part only (e.g., Name[en]).
 				size_t underscore_pos = locale.find('_');
 				if (underscore_pos != std::string::npos) {
 					std::string lang_only = locale.substr(0, underscore_pos);
-					it = values.find(base_key + "[" + lang_only + "]");
-					if (it != values.end()) return it->second;
+					it = kv_entries.find(base_key + "[" + lang_only + "]");
+					if (it != kv_entries.end()) return it->second;
 				}
 			}
 		}
 	}
 	// Fallback to the unlocalized key (e.g., Name=).
-	auto it = values.find(base_key);
-	return (it != values.end()) ? it->second : "";
+	auto it = kv_entries.find(base_key);
+	return (it != kv_entries.end()) ? it->second : "";
 }
 
 
