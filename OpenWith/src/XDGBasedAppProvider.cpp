@@ -2031,41 +2031,41 @@ std::string XDGBasedAppProvider::EscapeArgForShell(const std::string& arg)
 }
 
 
-// Extracts the basename (filename) from a full path.
-std::string XDGBasedAppProvider::GetBaseName(const std::string& path)
+// Extracts the basename (filename) from a full filepath.
+std::string XDGBasedAppProvider::GetBaseName(const std::string& filepath)
 {
-	size_t pos = path.find_last_of('/');
+	size_t pos = filepath.find_last_of('/');
 	if (pos == std::string::npos) {
-		return path;
+		return filepath;
 	}
-	return path.substr(pos + 1);
+	return filepath.substr(pos + 1);
 }
 
 
-// Checks if a path is a regular file (S_ISREG) AND is readable (R_OK).
-bool XDGBasedAppProvider::IsReadableFile(const std::string& path)
+// Checks if a filepath is a regular file (S_ISREG) AND is readable (R_OK).
+bool XDGBasedAppProvider::IsReadableFile(const std::string& filepath)
 {
 	struct stat st;
 	// Use stat() to follow symlinks
-	if (stat(path.c_str(), &st) == 0) {
+	if (stat(filepath.c_str(), &st) == 0) {
 		// Check type first, then check permissions
 		if (S_ISREG(st.st_mode)) {
-			return (access(path.c_str(), R_OK) == 0);
+			return (access(filepath.c_str(), R_OK) == 0);
 		}
 	}
 	return false;
 }
 
 
-// Checks if a path is a directory (S_ISDIR) AND is traversable (X_OK).
-bool XDGBasedAppProvider::IsTraversableDirectory(const std::string& path)
+// Checks if a dirpath is a directory (S_ISDIR) AND is traversable (X_OK).
+bool XDGBasedAppProvider::IsTraversableDirectory(const std::string& dirpath)
 {
 	struct stat st;
 	// Use stat() to follow symlinks
-	if (stat(path.c_str(), &st) == 0) {
+	if (stat(dirpath.c_str(), &st) == 0) {
 		// Check type first, then check permissions
 		if (S_ISDIR(st.st_mode)) {
-			return (access(path.c_str(), X_OK) == 0);
+			return (access(dirpath.c_str(), X_OK) == 0);
 		}
 	}
 	return false;
