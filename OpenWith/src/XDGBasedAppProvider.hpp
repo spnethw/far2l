@@ -322,12 +322,12 @@ private:
 	static std::vector<std::string> GetMimeDatabaseSearchDirpaths();
 
 	// --- Launch command constructing ---
-	std::string AssembleLaunchCommand(const DesktopEntry& desktop_entry, const std::vector<std::string>& files) const;
-	std::vector<std::string> ExpandArgumentTemplate(const CommandArgumentTemplate& arg_template, const std::vector<std::string>& files, const DesktopEntry& desktop_entry) const;
 	static void AnalyzeExecLine(const DesktopEntry& desktop_entry);
 	static std::vector<XDGBasedAppProvider::CommandArgumentTemplate> TokenizeExecString(const std::string& exec_value);
-	static std::string PathToUri(std::string_view path);
+	std::string AssembleLaunchCommand(const DesktopEntry& desktop_entry, const std::vector<std::string>& files) const;
+	std::vector<std::string> ExpandArgumentTemplate(const CommandArgumentTemplate& arg_template, const std::vector<std::string>& files, const DesktopEntry& desktop_entry) const;
 	std::string FormatPath(std::string_view path, PathFormat path_format) const;
+	static std::string PathToUri(std::string_view path);
 	static std::string UnescapeGKeyFileString(const std::string& str);
 
 	// --- System & Environment Helpers ---
