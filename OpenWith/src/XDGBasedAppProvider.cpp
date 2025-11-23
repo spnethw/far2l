@@ -413,8 +413,7 @@ std::string XDGBasedAppProvider::GetDefaultApp(const std::string& mime)
 		return it->second;
 	}
 
-	std::string escaped_mime = EscapeArgForShell(mime);
-	std::string cmd = "xdg-mime query default " + escaped_mime + " 2>/dev/null";
+	std::string cmd = "xdg-mime query default " + EscapeArgForShell(mime) + " 2>/dev/null";
 
 	auto desktop_filename = RunCommandAndCaptureOutput(cmd);
 	_op_default_app_cache.try_emplace(mime, desktop_filename);
@@ -746,16 +745,16 @@ XDGBasedAppProvider::RawMimeProfile XDGBasedAppProvider::GetRawMimeProfile(const
 		// Run expensive external tools ONLY for accessible regular files.
 		if (should_run_cli_tools && access(filepath.c_str(), R_OK) == 0) {
 
-			auto escaped_filepath = EscapeArgForShell(filepath);
+			auto filepath_escaped = EscapeArgForShell(filepath);
 
 			if (_use_xdg_mime_tool && _op_xdg_mime_exists) {
-				profile.xdg_mime = DetectMimeTypeWithXdgMimeTool(escaped_filepath);
+				profile.xdg_mime = DetectMimeTypeWithXdgMimeTool(filepath_escaped);
 			}
 			if (_op_file_tool_enabled_and_exists) {
-				profile.file_mime = DetectMimeTypeWithFileTool(escaped_filepath);
+				profile.file_mime = DetectMimeTypeWithFileTool(filepath_escaped);
 			}
 			if (_op_magika_tool_enabled_and_exists) {
-				profile.magika_mime = DetectMimeTypeWithMagikaTool(escaped_filepath);
+				profile.magika_mime = DetectMimeTypeWithMagikaTool(filepath_escaped);
 			}
 		}
 
@@ -895,21 +894,21 @@ std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const
 }
 
 
-std::string XDGBasedAppProvider::DetectMimeTypeWithXdgMimeTool(const std::string& escaped_filepath)
+std::string XDGBasedAppProvider::DetectMimeTypeWithXdgMimeTool(const std::string& filepath_escaped)
 {
-	return RunCommandAndCaptureOutput("xdg-mime query filetype " + escaped_filepath + " 2>/dev/null");
+	return RunCommandAndCaptureOutput("xdg-mime query filetype " + filepath_escaped + " 2>/dev/null");
 }
 
 
-std::string XDGBasedAppProvider::DetectMimeTypeWithFileTool(const std::string& escaped_filepath)
+std::string XDGBasedAppProvider::DetectMimeTypeWithFileTool(const std::string& filepath_escaped)
 {
-	return RunCommandAndCaptureOutput("file --brief --dereference --mime-type " + escaped_filepath + " 2>/dev/null");
+	return RunCommandAndCaptureOutput("file --brief --dereference --mime-type " + filepath_escaped + " 2>/dev/null");
 }
 
 
-std::string XDGBasedAppProvider::DetectMimeTypeWithMagikaTool(const std::string& escaped_filepath)
+std::string XDGBasedAppProvider::DetectMimeTypeWithMagikaTool(const std::string& filepath_escaped)
 {
-	return RunCommandAndCaptureOutput("magika --no-colors --format '%m' " + escaped_filepath + " 2>/dev/null");
+	return RunCommandAndCaptureOutput("magika --no-colors --format '%m' " + filepath_escaped + " 2>/dev/null");
 }
 
 
@@ -1112,9 +1111,9 @@ const std::optional<XDGBasedAppProvider::DesktopEntry>& XDGBasedAppProvider::Get
 		return it->second;
 	}
 
-	for (const auto& base_dir : _op_desktop_file_dirpaths.value()) {
-		std::string full_path = base_dir + "/" + desktop_filename;
-		if (auto desktop_entry = ParseDesktopFile(full_path)) {
+	for (const auto& dirpath : _op_desktop_file_dirpaths.value()) {
+		std::string pathname = dirpath + "/" + desktop_filename;
+		if (auto desktop_entry = ParseDesktopFile(pathname)) {
 			// A valid entry was found and parsed, cache and return it.
 			auto [it, inserted] = _desktop_entry_cache.try_emplace(desktop_filename, std::move(desktop_entry));
 			return it->second;
@@ -1721,10 +1720,10 @@ void XDGBasedAppProvider::AnalyzeExecLine(const DesktopEntry& desktop_entry)
 
 	// 1. Unescape string values (e.g., \s, \n) as per GKeyFile format rules.
 	// Note: This must happen *before* parsing arguments and quotes.
-	std::string unescaped_exec = UnescapeGKeyFileString(desktop_entry.exec);
+	std::string exec_unescaped = UnescapeGKeyFileString(desktop_entry.exec);
 
 	// 2. Tokenize the command line adhering to the specific quoting rules.
-	desktop_entry.arg_templates = TokenizeExecString(unescaped_exec);
+	desktop_entry.arg_templates = TokenizeExecString(exec_unescaped);
 
 	// 3. Determine the ExecutionModel by scanning for specific field codes (%f, %F, etc.).
 	desktop_entry.execution_model = ExecutionModel::LegacyImplicit;

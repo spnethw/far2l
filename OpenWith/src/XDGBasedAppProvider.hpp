@@ -300,9 +300,9 @@ private:
 	// --- File MIME Type Detection & Expansion ---
 	RawMimeProfile GetRawMimeProfile(const std::string& filepath);
 	std::vector<std::string> ExpandAndPrioritizeMimeTypes(const RawMimeProfile& profile);
-	std::string DetectMimeTypeWithXdgMimeTool(const std::string& escaped_filepath);
-	std::string DetectMimeTypeWithFileTool(const std::string& escaped_filepath);
-	std::string DetectMimeTypeWithMagikaTool(const std::string& escaped_filepath);
+	std::string DetectMimeTypeWithXdgMimeTool(const std::string& filepath_escaped);
+	std::string DetectMimeTypeWithFileTool(const std::string& filepath_escaped);
+	std::string DetectMimeTypeWithMagikaTool(const std::string& filepath_escaped);
 	std::string GuessMimeTypeByExtension(const std::string& filepath);
 
 	// --- XDG Database Parsing & Caching ---
