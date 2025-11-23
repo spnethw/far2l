@@ -135,12 +135,12 @@ private:
 	// to the configuration file (e.g., mimeapps.list or mimeinfo.cache) that specified the rule.
 	struct HandlerProvenance
 	{
-		std::string desktop_file;
+		std::string desktop_filename;
 		std::string source_path;
 
 		HandlerProvenance() = default;
 		HandlerProvenance(const std::string& df, const std::string& sp)
-			: desktop_file(df), source_path(sp) {}
+			: desktop_filename(df), source_path(sp) {}
 	};
 
 
@@ -289,10 +289,10 @@ private:
 	void AppendCandidatesFromMimeAppsLists(const std::vector<std::string>& expanded_mimes, CandidateMap& unique_candidates);
 	void AppendCandidatesFromMimeinfoCache(const std::vector<std::string>& expanded_mimes, CandidateMap& unique_candidates);
 	void AppendCandidatesByFullScan(const std::vector<std::string>& expanded_mimes, CandidateMap& unique_candidates);
-	void RegisterCandidateById(CandidateMap& unique_candidates, const std::string& desktop_file, int rank, const std::string& source_info);
+	void RegisterCandidateById(CandidateMap& unique_candidates, const std::string& desktop_filename, int rank, const std::string& source_info);
 	void RegisterCandidateFromObject(CandidateMap& unique_candidates, const DesktopEntry& entry, int rank, const std::string& source_info);
 	void AddOrUpdateCandidate(CandidateMap& unique_candidates, const DesktopEntry& entry, int rank, const std::string& source_info);
-	bool IsAssociationRemoved(const std::string& mime, const std::string& desktop_file);
+	bool IsAssociationRemoved(const std::string& mime, const std::string& desktop_filename);
 	std::vector<RankedCandidate> BuildSortedRankedCandidatesList(const CandidateMap& candidate_map);
 	std::vector<CandidateInfo> FormatCandidatesForUI(const std::vector<RankedCandidate>& ranked_candidates, bool store_source_info);
 	static CandidateInfo ConvertDesktopEntryToCandidateInfo(const DesktopEntry& desktop_entry);
@@ -306,13 +306,13 @@ private:
 	std::string GuessMimeTypeByExtension(const std::string& pathname);
 
 	// --- XDG Database Parsing & Caching ---
-	const std::optional<XDGBasedAppProvider::DesktopEntry>& GetCachedDesktopEntry(const std::string& desktop_file);
+	const std::optional<XDGBasedAppProvider::DesktopEntry>& GetCachedDesktopEntry(const std::string& desktop_filename);
 	MimeToDesktopEntryIndex FullScanDesktopFiles(const std::vector<std::string>& search_paths);
 	static MimeinfoCacheData ParseAllMimeinfoCacheFiles(const std::vector<std::string>& search_paths);
 	static void ParseMimeinfoCache(const std::string& path, MimeinfoCacheData& mimeinfo_cache_data);
 	static MimeappsListsData ParseMimeappsLists(const std::vector<std::string>& paths);
 	static void ParseMimeappsList(const std::string& path, MimeappsListsData& mimeapps_lists_data);
-	static std::optional<XDGBasedAppProvider::DesktopEntry> ParseDesktopFile(const std::string& path);
+	static std::optional<XDGBasedAppProvider::DesktopEntry> ParseDesktopFile(const std::string& filepath);
 	static std::string GetLocalizedValue(const std::unordered_map<std::string, std::string>& values, const std::string& base_key);
 	static std::unordered_map<std::string, std::string> LoadMimeAliases();
 	static std::string_view GetMajorMimeType(const std::string& mime);
@@ -331,7 +331,7 @@ private:
 	static std::string UnescapeGKeyFileString(const std::string& str);
 
 	// --- System & Environment Helpers ---
-	static bool IsExecutableAvailable(const std::string& path);
+	static bool IsExecutableAvailable(const std::string& command);
 	static std::string GetEnv(const char* var, const char* default_val = "");
 	static std::string RunCommandAndCaptureOutput(const std::string& cmd);
 
@@ -339,9 +339,9 @@ private:
 	static std::string Trim(std::string str);
 	static std::vector<std::string> SplitString(const std::string& str, char delimiter);
 	static std::string EscapeArgForShell(const std::string& arg);
-	static std::string GetBaseName(const std::string& path);
-	static bool IsReadableFile(const std::string& path);
-	static bool IsTraversableDirectory(const std::string& path);
+	static std::string GetBaseName(const std::string& filepath);
+	static bool IsReadableFile(const std::string& filepath);
+	static bool IsTraversableDirectory(const std::string& dirpath);
 
 	// ******************************************************************************
 	// DATA MEMBERS
