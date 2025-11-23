@@ -136,11 +136,11 @@ private:
 	struct HandlerProvenance
 	{
 		std::string desktop_filename;
-		std::string source_path;
+		std::string source_filepath;
 
 		HandlerProvenance() = default;
-		HandlerProvenance(const std::string& df, const std::string& sp)
-			: desktop_filename(df), source_path(sp) {}
+		HandlerProvenance(const std::string& dfn, const std::string& sfp)
+			: desktop_filename(dfn), source_filepath(sfp) {}
 	};
 
 
@@ -307,19 +307,19 @@ private:
 
 	// --- XDG Database Parsing & Caching ---
 	const std::optional<XDGBasedAppProvider::DesktopEntry>& GetCachedDesktopEntry(const std::string& desktop_filename);
-	MimeToDesktopEntryIndex FullScanDesktopFiles(const std::vector<std::string>& search_paths);
-	static MimeinfoCacheData ParseAllMimeinfoCacheFiles(const std::vector<std::string>& search_paths);
-	static void ParseMimeinfoCache(const std::string& path, MimeinfoCacheData& mimeinfo_cache_data);
-	static MimeappsListsData ParseMimeappsLists(const std::vector<std::string>& paths);
-	static void ParseMimeappsList(const std::string& path, MimeappsListsData& mimeapps_lists_data);
+	MimeToDesktopEntryIndex FullScanDesktopFiles(const std::vector<std::string>& search_dirpaths);
+	static MimeinfoCacheData ParseAllMimeinfoCacheFiles(const std::vector<std::string>& search_dirpaths);
+	static void ParseMimeinfoCache(const std::string& filepath, MimeinfoCacheData& mimeinfo_cache_data);
+	static MimeappsListsData ParseMimeappsLists(const std::vector<std::string>& filepaths);
+	static void ParseMimeappsList(const std::string& filepath, MimeappsListsData& mimeapps_lists_data);
 	static std::optional<XDGBasedAppProvider::DesktopEntry> ParseDesktopFile(const std::string& filepath);
 	static std::string GetLocalizedValue(const std::unordered_map<std::string, std::string>& values, const std::string& base_key);
 	static std::unordered_map<std::string, std::string> LoadMimeAliases();
 	static std::string_view GetMajorMimeType(const std::string& mime);
 	static std::unordered_map<std::string, std::string> LoadMimeSubclasses();
-	static std::vector<std::string> GetDesktopFileSearchPaths();
-	static std::vector<std::string> GetMimeappsListSearchPaths();
-	static std::vector<std::string> GetMimeDatabaseSearchPaths();
+	static std::vector<std::string> GetDesktopFileSearchDirpaths();
+	static std::vector<std::string> GetMimeappsListSearchFilepaths();
+	static std::vector<std::string> GetMimeDatabaseSearchDirpaths();
 
 	// --- Launch command constructing ---
 	std::string AssembleLaunchCommand(const DesktopEntry& entry, const std::vector<std::string>& files) const;
@@ -407,7 +407,7 @@ private:
 	std::optional<std::unordered_map<std::string, std::vector<std::string>>> _op_canonical_to_aliases_map;
 	std::optional<std::unordered_map<std::string, std::string>> _op_subclass_to_parent_map;
 	std::optional<MimeappsListsData> _op_mimeapps_lists_data;      // combined mimeapps.list data
-	std::optional<std::vector<std::string>> _op_desktop_paths; // XDG .desktop file search paths
+	std::optional<std::vector<std::string>> _op_desktop_file_dirpaths; // XDG .desktop file search paths
 	std::optional<std::string> _op_current_desktop_env; // $XDG_CURRENT_DESKTOP
 
 	// Tool availability flags, cached for the duration of one GetAppCandidates operation.
