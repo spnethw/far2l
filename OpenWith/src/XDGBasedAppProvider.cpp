@@ -82,23 +82,16 @@ std::vector<ProviderSetting> XDGBasedAppProvider::GetPlatformSettings()
 	settings.reserve(_platform_settings_definitions.size());
 	for (const auto& def : _platform_settings_definitions) {
 
-		bool is_disabled = false;
 		// Check if this setting is linked to a command-line tool via its internal string key.
-		auto it = s_tool_key_map.find(def.key);
-
-		if (it != s_tool_key_map.end()) {
+		bool is_disabled = false;
+		if (auto it = s_tool_key_map.find(def.key); it != s_tool_key_map.end()) {
 			// If a corresponding tool name is found, check for the executable's existence.
 			// The option is disabled if the tool is not found on the system.
 			const std::string& tool_name = it->second;
 			is_disabled = !IsExecutableAvailable(tool_name);
 		}
 
-		settings.push_back({
-			StrMB2Wide(def.key),
-			m_GetMsg(def.display_name_id),
-			this->*(def.member_variable),
-			is_disabled // Pass the disabled state to the UI
-		});
+		settings.push_back({StrMB2Wide(def.key), m_GetMsg(def.display_name_id), this->*(def.member_variable), is_disabled});
 	}
 	return settings;
 }
