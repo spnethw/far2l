@@ -438,7 +438,7 @@ void XDGBasedAppProvider::AppendCandidatesFromMimeAppsLists(const std::vector<st
 			const auto& default_app = it_defaults->second;
 			if (!IsAssociationRemoved(mime, default_app.desktop_filename)) {
 				int rank = mime_specificity_rank * Ranking::SPECIFICITY_MULTIPLIER + Ranking::SOURCE_RANK_MIMEAPPS_DEFAULT;
-				std::string source_info = default_app.source_filepath + StrWide2MB(m_GetMsg(MIn)) + " [Default Applications] " + StrWide2MB(m_GetMsg(MFor)) + mime;
+				auto source_info = default_app.source_filepath + StrWide2MB(m_GetMsg(MIn)) + " [Default Applications] " + StrWide2MB(m_GetMsg(MFor)) + mime;
 				RegisterCandidateById(unique_candidates, default_app.desktop_filename, rank, source_info);
 			}
 		}
@@ -448,7 +448,7 @@ void XDGBasedAppProvider::AppendCandidatesFromMimeAppsLists(const std::vector<st
 			for (const auto& app_assoc : it_added->second) {
 				if (!IsAssociationRemoved(mime, app_assoc.desktop_filename)) {
 					int rank = mime_specificity_rank * Ranking::SPECIFICITY_MULTIPLIER + Ranking::SOURCE_RANK_MIMEAPPS_ADDED;
-					std::string source_info = app_assoc.source_filepath + StrWide2MB(m_GetMsg(MIn)) + "[Added Associations]" + StrWide2MB(m_GetMsg(MFor)) + mime;
+					auto source_info = app_assoc.source_filepath + StrWide2MB(m_GetMsg(MIn)) + "[Added Associations]" + StrWide2MB(m_GetMsg(MFor)) + mime;
 					RegisterCandidateById(unique_candidates, app_assoc.desktop_filename, rank, source_info);
 				}
 			}
@@ -462,8 +462,8 @@ void XDGBasedAppProvider::AppendCandidatesFromMimeinfoCache(const std::vector<st
 {
 	const int total_mimes = expanded_mimes.size();
 
-	// Map tracking the highest score found for each application ID to avoid rank demotion by a less-specific MIME type.
-	std::unordered_map<std::string, AssociationScore> best_score_by_app_id;
+	// Tracks the highest score for each application to avoid rank demotion by a less-specific MIME type.
+	std::unordered_map<std::string, AssociationScore> desktop_filename_to_score_map;
 
 	const auto& mime_to_handlers_map = _op_mime_to_handlers_map.value();
 
@@ -480,8 +480,8 @@ void XDGBasedAppProvider::AppendCandidatesFromMimeinfoCache(const std::vector<st
 				const auto& desktop_filename = handler_provenance.desktop_filename;
 				if (desktop_filename.empty()) continue;
 				if (IsAssociationRemoved(mime, desktop_filename)) continue;
-				std::string source_info = handler_provenance.source_filepath + StrWide2MB(m_GetMsg(MFor)) + mime;
-				auto [it, inserted] = best_score_by_app_id.try_emplace(desktop_filename, rank, source_info);
+				auto source_info = handler_provenance.source_filepath + StrWide2MB(m_GetMsg(MFor)) + mime;
+				auto [it, inserted] = desktop_filename_to_score_map.try_emplace(desktop_filename, rank, source_info);
 				// Update only if the new rank is higher than the existing one.
 				if (!inserted && rank > it->second.rank) {
 					it->second.rank = rank;
@@ -492,7 +492,7 @@ void XDGBasedAppProvider::AppendCandidatesFromMimeinfoCache(const std::vector<st
 	}
 
 	// Register each application using its highest calculated rank.
-	for (const auto& [desktop_filename, score] : best_score_by_app_id) {
+	for (const auto& [desktop_filename, score] : desktop_filename_to_score_map) {
 		RegisterCandidateById(unique_candidates, desktop_filename, score.rank, score.source_info);
 	}
 }
@@ -503,8 +503,8 @@ void XDGBasedAppProvider::AppendCandidatesByFullScan(const std::vector<std::stri
 {
 	const int total_mimes = expanded_mimes.size();
 
-	// Map tracking the highest score found for each DesktopEntry pointer to avoid rank demotion by a less-specific MIME type.
-	std::unordered_map<const DesktopEntry*, AssociationScore> best_score_by_desktop_entry;
+	// Tracks the highest score for each application to avoid rank demotion by a less-specific MIME type.
+	std::unordered_map<const DesktopEntry*, AssociationScore> desktop_entry_to_score_map;
 
 	const auto& mime_to_desktop_entry_map = _op_mime_to_desktop_entry_map.value();
 
@@ -530,9 +530,9 @@ void XDGBasedAppProvider::AppendCandidatesByFullScan(const std::vector<std::stri
 				continue;
 			}
 
-			std::string source_info = StrWide2MB(m_GetMsg(MFullScanFor)) + mime;
+			auto source_info = StrWide2MB(m_GetMsg(MFullScanFor)) + mime;
 
-			auto [it, inserted] = best_score_by_desktop_entry.try_emplace(desktop_entry_ptr, rank, source_info);
+			auto [it, inserted] = desktop_entry_to_score_map.try_emplace(desktop_entry_ptr, rank, source_info);
 			// Update only if the new rank is higher than the existing one.
 			if (!inserted && rank > it->second.rank) {
 				it->second.rank = rank;
@@ -542,7 +542,7 @@ void XDGBasedAppProvider::AppendCandidatesByFullScan(const std::vector<std::stri
 	}
 
 	// Register each application using its highest calculated rank.
-	for (const auto& [desktop_entry_ptr, score] : best_score_by_desktop_entry) {
+	for (const auto& [desktop_entry_ptr, score] : desktop_entry_to_score_map) {
 		// Call the registration helper directly, passing the dereferenced entry to avoid a redundant cache lookup.
 		RegisterCandidateFromObject(unique_candidates, *desktop_entry_ptr, score.rank, score.source_info);
 	}
@@ -1170,9 +1170,9 @@ XDGBasedAppProvider::MimeinfoCacheData XDGBasedAppProvider::ParseAllMimeinfoCach
 {
 	MimeinfoCacheData mimeinfo_cache_data;
 	for (const auto& dirpath : search_dirpaths) {
-		std::string cache_filepath = dirpath + "/mimeinfo.cache";
-		if (IsReadableFile(cache_filepath)) {
-			ParseMimeinfoCache(cache_filepath, mimeinfo_cache_data);
+		std::string filepath = dirpath + "/mimeinfo.cache";
+		if (IsReadableFile(filepath)) {
+			ParseMimeinfoCache(filepath, mimeinfo_cache_data);
 		}
 	}
 	return mimeinfo_cache_data;
@@ -1619,22 +1619,19 @@ void XDGBasedAppProvider::AnalyzeExecLine(const DesktopEntry& desktop_entry)
 			break;
 		}
 
-		// Check for PerFile codes (%f, %u).
-		// We only set this if FileList wasn't already detected.
-		if (desktop_entry.execution_model != ExecutionModel::FileList) {
-			size_t pos = 0;
-			while ((pos = arg_template.value.find('%', pos)) != std::string::npos) {
-				if (pos + 1 < arg_template.value.length()) {
-					char next = arg_template.value[pos + 1];
-					if (next == 'f' || next == 'u') {
-						desktop_entry.execution_model = ExecutionModel::PerFile;
-						break;
-					}
-					// Skip escaped percent "%%" to avoid false positives.
-					if (next == '%') pos++;
+		// Check PerFile codes (%f, %u) only if FileList was not detected above.
+		size_t pos = 0;
+		while ((pos = arg_template.value.find('%', pos)) != std::string::npos) {
+			if (pos + 1 < arg_template.value.length()) {
+				char next = arg_template.value[pos + 1];
+				if (next == 'f' || next == 'u') {
+					desktop_entry.execution_model = ExecutionModel::PerFile;
+					break;
 				}
-				pos++;
+				// Skip escaped percent "%%" to avoid false positives.
+				if (next == '%') pos++;
 			}
+			pos++;
 		}
 	}
 
@@ -1643,11 +1640,11 @@ void XDGBasedAppProvider::AnalyzeExecLine(const DesktopEntry& desktop_entry)
 
 
 // Parses the GKeyFile-unescaped 'Exec' key string into a sequence of argument templates.
-std::vector<XDGBasedAppProvider::CommandArgumentTemplate> XDGBasedAppProvider::TokenizeExecString(const std::string& exec_value)
+std::vector<XDGBasedAppProvider::ArgTemplate> XDGBasedAppProvider::TokenizeExecString(const std::string& exec_value)
 {
 	if (exec_value.empty()) return {};
 
-	std::vector<CommandArgumentTemplate> tokens;
+	std::vector<ArgTemplate> tokens;
 	tokens.reserve(4);
 
 	std::string token_buffer;
@@ -1750,21 +1747,21 @@ std::string XDGBasedAppProvider::AssembleLaunchCommand(const DesktopEntry& deskt
 
 
 // Expands a single argument template by substituting Field Codes with actual data.
-std::vector<std::string> XDGBasedAppProvider::ExpandArgumentTemplate(const CommandArgumentTemplate& arg_template, const std::vector<std::string>& filepaths, const DesktopEntry& desktop_entry) const
+std::vector<std::string> XDGBasedAppProvider::ExpandArgumentTemplate(const ArgTemplate& arg_template, const std::vector<std::string>& filepaths, const DesktopEntry& desktop_entry) const
 {
 	// Optimization: If the argument was quoted or contains no '%', treat it as a literal.
 	if (arg_template.is_quoted_literal || arg_template.value.find('%') == std::string::npos) {
 		return { EscapeArgForShell(arg_template.value) };
 	}
 
-	const std::string& pattern = arg_template.value;
+	const std::string& tmpl = arg_template.value;
 
-	// Handle List Codes (%F, %U).
+	// Handle List codes (%F, %U).
 	// These expand into multiple separate arguments, one for each file.
-	if (pattern == "%F" || pattern == "%U") {
+	if (tmpl == "%F" || tmpl == "%U") {
 		std::vector<std::string> result;
 		result.reserve(filepaths.size());
-		const auto path_format = (pattern == "%U") ? PathFormat::Uri : PathFormat::Native;
+		const auto path_format = (tmpl == "%U") ? PathFormat::Uri : PathFormat::Native;
 
 		for (const auto& filepath : filepaths) {
 			result.push_back(EscapeArgForShell(FormatPath(filepath, path_format)));
@@ -1772,22 +1769,22 @@ std::vector<std::string> XDGBasedAppProvider::ExpandArgumentTemplate(const Comma
 		return result;
 	}
 
-	// Handle String Codes (%f, %u, %c, etc.).
+	// Handle other codes (%f, %u, %c, etc.).
 	// These expand into a single argument string, potentially concatenating data.
 
 	const std::string context_filepath = filepaths.empty() ? std::string() : filepaths.front();
 	std::string expanded_token;
 
 	// Reserve buffer space to minimize reallocations.
-	expanded_token.reserve(pattern.size() + 64);
+	expanded_token.reserve(tmpl.size() + 64);
 
-	for (size_t i = 0; i < pattern.size(); ++i) {
-		if (pattern[i] != '%' || i + 1 >= pattern.size()) {
-			expanded_token += pattern[i];
+	for (size_t i = 0; i < tmpl.size(); ++i) {
+		if (tmpl[i] != '%' || i + 1 >= tmpl.size()) {
+			expanded_token += tmpl[i];
 			continue;
 		}
 
-		char code = pattern[++i]; // Advance to the character following '%'.
+		char code = tmpl[++i]; // Advance to the character following '%'.
 
 		switch (code) {
 		case '%':
