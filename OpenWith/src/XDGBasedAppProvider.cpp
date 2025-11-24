@@ -220,7 +220,7 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 
 
 // Generates one or more executable command lines for the selected candidate and files.
-std::vector<std::wstring> XDGBasedAppProvider::GenerateLaunchCommands(const CandidateInfo& candidate, const std::vector<std::wstring>& filepaths_wide)
+std::vector<std::wstring> XDGBasedAppProvider::ConstructLaunchCommands(const CandidateInfo& candidate, const std::vector<std::wstring>& filepaths_wide)
 {
 	if (filepaths_wide.empty()) {
 		return {};

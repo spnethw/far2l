@@ -12,7 +12,7 @@ public:
 
 	std::vector<CandidateInfo> GetAppCandidates(const std::vector<std::wstring>& pathnames) override;
 	std::vector<std::wstring> GetMimeTypes() override;
-	std::vector<std::wstring> GenerateLaunchCommands(const CandidateInfo& candidate, const std::vector<std::wstring>& pathnames) override;
+	std::vector<std::wstring> ConstructLaunchCommands(const CandidateInfo& candidate, const std::vector<std::wstring>& pathnames) override;
 	std::vector<Field> GetCandidateDetails(const CandidateInfo& candidate) override;
 
 	std::vector<ProviderSetting> GetPlatformSettings() override;
