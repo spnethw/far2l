@@ -325,7 +325,7 @@ private:
 	static void AnalyzeExecLine(const DesktopEntry& desktop_entry);
 	static std::vector<XDGBasedAppProvider::ArgTemplate> TokenizeExecString(const std::string& exec_value);
 	std::string AssembleLaunchCommand(const DesktopEntry& desktop_entry, const std::vector<std::string>& files) const;
-	std::vector<std::string> ExpandArgumentTemplate(const ArgTemplate& arg_template, const std::vector<std::string>& files, const DesktopEntry& desktop_entry) const;
+	std::vector<std::string> ExpandArgTemplate(const ArgTemplate& arg_template, const std::vector<std::string>& files, const DesktopEntry& desktop_entry) const;
 	std::string FormatPath(std::string_view path, PathFormat path_format) const;
 	static std::string PathToUri(std::string_view path);
 	static std::string UnescapeGKeyFileString(const std::string& str);
@@ -347,14 +347,9 @@ private:
 	// DATA MEMBERS
 	// ******************************************************************************
 
-	// WARNING: This cache is a std::map on purpose.
-	// It owns all DesktopEntry objects for the duration of a GetAppCandidates call.
-	// RankedCandidate pointers will point to the entries stored here.
-	// This is safe ONLY because std::map guarantees pointer/reference stability on insertion,
-	// meaning that pointers to existing elements are not invalidated when new elements are added.
-	// DO NOT change this to std::unordered_map.
-	// An unordered_map may rehash on insertion, which would invalidate all existing pointers
-	// stored in RankedCandidate instances, leading to dangling pointers and undefined behavior.
+	// CRITICAL: Must use std::map (not std::unordered_map) to guarantee pointer stability!
+	// RankedCandidate holds non-owning pointers to DesktopEntry objects stored here,
+	// which would be invalidated by unordered_map rehashing.
 	std::map<std::string, std::optional<DesktopEntry>> _desktop_entry_cache;
 
 	// This cache maps a candidate's ID to its source info string from the last GetAppCandidates call.

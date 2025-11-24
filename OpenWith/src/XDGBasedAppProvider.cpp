@@ -606,7 +606,7 @@ void XDGBasedAppProvider::RegisterCandidateFromObject(CandidateMap& unique_candi
 void XDGBasedAppProvider::AddOrUpdateCandidate(CandidateMap& unique_candidates, const DesktopEntry& desktop_entry,
 											   int rank, const std::string& source_info)
 {
-	// A unique key to identify an application.
+	// Composite key (Name + Exec) used to deduplicate candidates defined across multiple .desktop files or overlays.
 	AppUniqueKey unique_key{desktop_entry.name, desktop_entry.exec};
 
 	auto [it, inserted] = unique_candidates.try_emplace(unique_key, RankedCandidate{&desktop_entry, rank, source_info});
@@ -821,7 +821,7 @@ std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const
 					add_unique(it_canonical->second);
 				}
 
-				// --- Smart reverse lookup (canonical -> aliases) using the pre-built map ---
+				// --- Reverse lookup (canonical -> aliases) using major-type filtered map ---
 				auto it_aliases = _op_canonical_to_aliases_map->find(current_mime);
 				if (it_aliases != _op_canonical_to_aliases_map->end()) {
 					for (const auto& alias : it_aliases->second) {
@@ -1612,8 +1612,7 @@ void XDGBasedAppProvider::AnalyzeExecLine(const DesktopEntry& desktop_entry)
 		// Spec: Field codes must not be used inside a quoted argument.
 		if (arg_template.is_quoted_literal) continue;
 
-		// Check for FileList codes (%F, %U). These take precedence as they define
-		// the ability to handle multiple arguments natively.
+		// Check for FileList codes (%F, %U) which dictate a single process invocation for multiple files.
 		if (arg_template.value == "%F" || arg_template.value == "%U") {
 			desktop_entry.execution_model = ExecutionModel::FileList;
 			break;
@@ -1671,9 +1670,8 @@ std::vector<XDGBasedAppProvider::ArgTemplate> XDGBasedAppProvider::TokenizeExecS
 
 	for (char c : exec_value) {
 		if (escape_pending) {
-			// Spec: Inside double quotes, only ` " $ \ characters are escaped.
-			// Any other character following a backslash is treated as a literal sequence (backslash + char).
-			// Outside quotes, the backslash itself is always consumed as an escape character.
+			// Per Spec: Inside quotes, backslash acts as an escape only for ` " $ \.
+			// Otherwise, it is preserved as a literal char.
 			if (is_inside_quotes && (c != '`' && c != '"' && c != '$' && c != '\\')) {
 				token_buffer += '\\';
 			}
@@ -1729,15 +1727,14 @@ std::string XDGBasedAppProvider::AssembleLaunchCommand(const DesktopEntry& deskt
 	// 1. Process the explicit command line template from the .desktop Exec key.
 	for (const auto& arg_template : desktop_entry.arg_templates) {
 		// ExpandArgumentTemplate handles %-codes and quoting rules.
-		for (const auto& expanded_arg : ExpandArgumentTemplate(arg_template, filepaths, desktop_entry)) {
+		for (const auto& expanded_arg : ExpandArgTemplate(arg_template, filepaths, desktop_entry)) {
 			append_argument(expanded_arg);
 		}
 	}
 
-	// 2. If no %f/%F/%u/%U codes were found, append the file paths to the end of the command.
+	// 2. Legacy behavior: If no execution model was deduced from field codes, explicitly append native file paths.
 	if (desktop_entry.execution_model == ExecutionModel::LegacyImplicit) {
 		for (const auto& filepath : filepaths) {
-			// Legacy apps typically expect native paths (not URIs) and require shell escaping.
 			append_argument(EscapeArgForShell(FormatPath(filepath, PathFormat::Native)));
 		}
 	}
@@ -1747,9 +1744,9 @@ std::string XDGBasedAppProvider::AssembleLaunchCommand(const DesktopEntry& deskt
 
 
 // Expands a single argument template by substituting Field Codes with actual data.
-std::vector<std::string> XDGBasedAppProvider::ExpandArgumentTemplate(const ArgTemplate& arg_template, const std::vector<std::string>& filepaths, const DesktopEntry& desktop_entry) const
+std::vector<std::string> XDGBasedAppProvider::ExpandArgTemplate(const ArgTemplate& arg_template, const std::vector<std::string>& filepaths, const DesktopEntry& desktop_entry) const
 {
-	// Optimization: If the argument was quoted or contains no '%', treat it as a literal.
+	// Compliance: The spec forbids field code expansion inside quoted arguments. Also fast-path if no '%' is present.
 	if (arg_template.is_quoted_literal || arg_template.value.find('%') == std::string::npos) {
 		return { EscapeArgForShell(arg_template.value) };
 	}
@@ -1818,7 +1815,8 @@ std::vector<std::string> XDGBasedAppProvider::ExpandArgumentTemplate(const ArgTe
 			break;
 
 		default:
-			// Unknown codes are treated as literals: "%" + code char.
+			// Deviation from Spec: Unknown codes are preserved as literals rather than
+			// invalidating the command (for robustness).
 			expanded_token += '%';
 			expanded_token += code;
 			break;
@@ -2008,9 +2006,8 @@ std::string XDGBasedAppProvider::EscapeArgForShell(const std::string& arg)
 	out.push_back('\'');
 	for (const unsigned char uc : arg) {
 		if (uc == '\'') {
-			// A single quote cannot be escaped inside a single-quoted string.
-			// The standard method is to end the string (''), add an escaped quote (\'),
-			// and start a new string (''). For example, "it's" becomes 'it'\''s'.
+			// Single quotes cannot be nested. Close the string, add an escaped literal quote,
+			// and reopen. Ex: "it's" -> 'it'\''s'.
 			out.append("'\\''");
 		} else {
 			out.push_back(static_cast<char>(uc));
