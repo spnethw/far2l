@@ -1847,22 +1847,27 @@ std::string XDGBasedAppProvider::FormatPath(std::string_view path, PathFormat pa
 // Converts absolute local filepath to a file:// URI.
 std::string XDGBasedAppProvider::PathToUri(std::string_view path)
 {
-	std::stringstream uri_stream;
-	uri_stream << "file://";
-	uri_stream << std::hex << std::uppercase << std::setfill('0');
+	if (path.empty() || path[0] != '/') {
+		return {};
+	}
 
+	static constexpr char hex_digits[] = "0123456789ABCDEF";
+	std::string uri;
+	uri.reserve(7 + path.size() * 3 / 2);
+	uri.append("file://");
 	for (const unsigned char c : path) {
 		// Perform a locale-independent check for unreserved characters (RFC 3986) plus the path separator '/'.
 		if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
-			|| c == '-' || c == '_' || c == '.' || c == '~' || c == '/')
-		{
-			uri_stream << c;
+			|| c == '-' || c == '_' || c == '.' || c == '~' || c == '/') {
+			uri.push_back(static_cast<char>(c));
 		} else {
 			// Percent-encode all other characters.
-			uri_stream << '%' << std::setw(2) << static_cast<int>(c);
+			uri.push_back('%');
+			uri.push_back(hex_digits[(c >> 4) & 0xF]);
+			uri.push_back(hex_digits[c & 0xF]);
 		}
 	}
-	return uri_stream.str();
+	return uri;
 }
 
 
