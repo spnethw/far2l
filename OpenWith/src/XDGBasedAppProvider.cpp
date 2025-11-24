@@ -1591,7 +1591,7 @@ std::vector<std::string> XDGBasedAppProvider::GetMimeDatabaseSearchDirpaths()
 
 
 // Performs lazy analysis of the Exec string: unescapes GKeyFile sequences, tokenizes,
-// and scans for Field Codes to determine the ExecutionModel.
+// and scans for field codes to determine the ExecutionModel.
 void XDGBasedAppProvider::AnalyzeExecLine(const DesktopEntry& desktop_entry)
 {
 	if (desktop_entry.is_exec_parsed) {
@@ -1609,7 +1609,7 @@ void XDGBasedAppProvider::AnalyzeExecLine(const DesktopEntry& desktop_entry)
 	desktop_entry.execution_model = ExecutionModel::LegacyImplicit;
 
 	for (const auto& arg_template : desktop_entry.arg_templates) {
-		// Spec: Field codes must not be used inside a quoted argument.
+		// Spec: field codes must not be used inside a quoted argument.
 		if (arg_template.is_quoted_literal) continue;
 
 		// Check for FileList codes (%F, %U) which dictate a single process invocation for multiple files.
@@ -1657,7 +1657,7 @@ std::vector<XDGBasedAppProvider::ArgTemplate> XDGBasedAppProvider::TokenizeExecS
 	bool contains_quoted_part = false;
 
 	auto flush_token = [&]() {
-		// Spec: Arguments are separated by a space.
+		// Spec: arguments are separated by a space.
 		// The check ensures that:
 		// 1. Consecutive spaces are treated as a single delimiter (ignored).
 		// 2. Explicit empty strings (e.g. "") are preserved as valid empty arguments.
@@ -1670,7 +1670,7 @@ std::vector<XDGBasedAppProvider::ArgTemplate> XDGBasedAppProvider::TokenizeExecS
 
 	for (char c : exec_value) {
 		if (escape_pending) {
-			// Per Spec: Inside quotes, backslash acts as an escape only for ` " $ \.
+			// Per Spec: inside quotes, backslash acts as an escape only for ` " $ \.
 			// Otherwise, it is preserved as a literal char.
 			if (is_inside_quotes && (c != '`' && c != '"' && c != '$' && c != '\\')) {
 				token_buffer += '\\';
@@ -1726,7 +1726,7 @@ std::string XDGBasedAppProvider::AssembleLaunchCommand(const DesktopEntry& deskt
 
 	// 1. Process the explicit command line template from the .desktop Exec key.
 	for (const auto& arg_template : desktop_entry.arg_templates) {
-		// ExpandArgumentTemplate handles %-codes and quoting rules.
+		// ExpandArgumentTemplate handles field codes and quoting rules.
 		for (const auto& expanded_arg : ExpandArgTemplate(arg_template, filepaths, desktop_entry)) {
 			append_argument(expanded_arg);
 		}
@@ -1735,7 +1735,7 @@ std::string XDGBasedAppProvider::AssembleLaunchCommand(const DesktopEntry& deskt
 	// 2. Legacy behavior: If no execution model was deduced from field codes, explicitly append native file paths.
 	if (desktop_entry.execution_model == ExecutionModel::LegacyImplicit) {
 		for (const auto& filepath : filepaths) {
-			append_argument(EscapeArgForShell(FormatPath(filepath, PathFormat::Native)));
+			append_argument(EscapeArgForShell(filepath));
 		}
 	}
 
@@ -1743,25 +1743,24 @@ std::string XDGBasedAppProvider::AssembleLaunchCommand(const DesktopEntry& deskt
 }
 
 
-// Expands a single argument template by substituting Field Codes with actual data.
+// Expands a single argument template by substituting field codes with actual data.
 std::vector<std::string> XDGBasedAppProvider::ExpandArgTemplate(const ArgTemplate& arg_template, const std::vector<std::string>& filepaths, const DesktopEntry& desktop_entry) const
 {
-	// Compliance: The spec forbids field code expansion inside quoted arguments. Also fast-path if no '%' is present.
+	// Compliance: the spec forbids field code expansion inside quoted arguments. Also fast-path if no '%' is present.
 	if (arg_template.is_quoted_literal || arg_template.value.find('%') == std::string::npos) {
 		return { EscapeArgForShell(arg_template.value) };
 	}
 
 	const std::string& tmpl = arg_template.value;
 
-	// Handle List codes (%F, %U).
+	// Handle list codes (%F, %U).
 	// These expand into multiple separate arguments, one for each file.
 	if (tmpl == "%F" || tmpl == "%U") {
 		std::vector<std::string> result;
 		result.reserve(filepaths.size());
-		const auto path_format = (tmpl == "%U") ? PathFormat::Uri : PathFormat::Native;
-
+		const bool should_convert_to_uri = (tmpl == "%U" && !_treat_urls_as_paths);
 		for (const auto& filepath : filepaths) {
-			result.push_back(EscapeArgForShell(FormatPath(filepath, path_format)));
+			result.push_back(EscapeArgForShell(should_convert_to_uri ? PathToUri(filepath) : filepath));
 		}
 		return result;
 	}
@@ -1781,7 +1780,7 @@ std::vector<std::string> XDGBasedAppProvider::ExpandArgTemplate(const ArgTemplat
 			continue;
 		}
 
-		char code = tmpl[++i]; // Advance to the character following '%'.
+		char code = tmpl[++i]; // advance to the character following '%'
 
 		switch (code) {
 		case '%':
@@ -1790,11 +1789,11 @@ std::vector<std::string> XDGBasedAppProvider::ExpandArgTemplate(const ArgTemplat
 			break;
 
 		case 'f':
-			expanded_token += FormatPath(context_filepath, PathFormat::Native);
+			expanded_token += context_filepath;
 			break;
 
 		case 'u':
-			expanded_token += FormatPath(context_filepath, PathFormat::Uri);
+			expanded_token += (_treat_urls_as_paths ? context_filepath : PathToUri(context_filepath));
 			break;
 
 		case 'c':
@@ -1811,11 +1810,11 @@ std::vector<std::string> XDGBasedAppProvider::ExpandArgTemplate(const ArgTemplat
 			return {};
 
 		case 'd': case 'D': case 'n': case 'N': case 'v': case 'm':
-			// Deprecated codes: The spec states these should be removed and ignored.
+			// Deprecated codes: the spec states these should be removed and ignored.
 			break;
 
 		default:
-			// Deviation from Spec: Unknown codes are preserved as literals rather than
+			// Deviation from Spec: unknown codes are preserved as literals rather than
 			// invalidating the command (for robustness).
 			expanded_token += '%';
 			expanded_token += code;
@@ -1832,20 +1831,8 @@ std::vector<std::string> XDGBasedAppProvider::ExpandArgTemplate(const ArgTemplat
 }
 
 
-// Formats a filesystem path as either a native string or a file:// URI,
-// respecting the requested format and the '_treat_urls_as_paths' setting.
-std::string XDGBasedAppProvider::FormatPath(std::string_view path, PathFormat path_format) const
-{
-	if (path_format == PathFormat::Uri && !_treat_urls_as_paths) {
-		return PathToUri(path);
-	}
-
-	return std::string(path);
-}
-
-
 // Converts absolute local filepath to a file:// URI.
-std::string XDGBasedAppProvider::PathToUri(std::string_view path)
+std::string XDGBasedAppProvider::PathToUri(const std::string& path)
 {
 	if (path.empty() || path[0] != '/') {
 		return {};
@@ -1881,7 +1868,7 @@ std::string XDGBasedAppProvider::UnescapeGKeyFileString(const std::string& str)
 	for (size_t i = 0; i < str.length(); ++i) {
 		if (str[i] == '\\') {
 			if (i + 1 < str.length()) {
-				i++; // Move to the character after the backslash
+				i++; // move to the character after the backslash
 				switch (str[i]) {
 				case 's': unescaped += ' '; break;
 				case 'n': unescaped += '\n'; break;

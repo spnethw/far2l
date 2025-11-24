@@ -90,7 +90,7 @@ private:
 		// MIME type results from different tools
 		std::string xdg_mime;		// result from xdg-mime query filetype
 		std::string file_mime;		// result from file --mime-type
-		std::string magika_mime;	// result from magika --mime-type
+		std::string magika_mime;	// result from magika --format '%m'
 		std::string ext_mime;		// result from internal extension fallback map
 		std::string stat_mime;		// result from internal stat() analysis (e.g., inode/directory)
 
@@ -245,19 +245,7 @@ private:
 
 
 	// ******************************************************************************
-	// Group 6: Command Line Construction Helpers
-	// ******************************************************************************
-
-
-	enum class PathFormat
-	{
-		Native, // e.g. /home/user/file.txt
-		Uri     // e.g. file:///home/user/file.txt
-	};
-
-
-	// ******************************************************************************
-	// Group 7: Lifecycle & State Management
+	// Group 6: Lifecycle & State Management
 	// ******************************************************************************
 
 
@@ -326,8 +314,7 @@ private:
 	static std::vector<XDGBasedAppProvider::ArgTemplate> TokenizeExecString(const std::string& exec_value);
 	std::string AssembleLaunchCommand(const DesktopEntry& desktop_entry, const std::vector<std::string>& files) const;
 	std::vector<std::string> ExpandArgTemplate(const ArgTemplate& arg_template, const std::vector<std::string>& files, const DesktopEntry& desktop_entry) const;
-	std::string FormatPath(std::string_view path, PathFormat path_format) const;
-	static std::string PathToUri(std::string_view path);
+	static std::string PathToUri(const std::string &path);
 	static std::string UnescapeGKeyFileString(const std::string& str);
 
 	// --- System & Environment Helpers ---
