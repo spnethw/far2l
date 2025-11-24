@@ -1162,18 +1162,49 @@ void XDGBasedAppProvider::ScanRecursive(const std::string& current_path, const s
 	if (!dir_stream) return;
 
 	struct dirent* dir_entry;
+
 	while ((dir_entry = readdir(dir_stream))) {
 		std::string name = dir_entry->d_name;
 		if (name == "." || name == "..") continue;
 
 		std::string full_path = current_path + "/" + name;
 
-		// We need to stat the entry to determine if it's a directory or a file.
-		if (stat(full_path.c_str(), &st) != 0) continue;
+		bool is_dir = false;
+		bool is_reg = false;
+		bool need_stat = true;
 
-		if (S_ISDIR(st.st_mode)) {
+		// Optimization: Use d_type from dirent to avoid expensive stat() calls where possible.
+		// We check if DT_UNKNOWN is defined to ensure compilation on systems that might not support d_type.
+#ifdef DT_UNKNOWN
+		// If the filesystem supports d_type (not UNKNOWN) and it's not a symlink (LNK),
+		// we can trust the type without calling stat().
+		// We MUST stat symlinks because we need to know what they point to (follow semantics).
+		if (dir_entry->d_type != DT_UNKNOWN && dir_entry->d_type != DT_LNK) {
+			need_stat = false;
+			if (dir_entry->d_type == DT_DIR) {
+				is_dir = true;
+			} else if (dir_entry->d_type == DT_REG) {
+				is_reg = true;
+			}
+		}
+#endif
+
+		if (need_stat) {
+			// Fallback to stat():
+			// 1. If d_type is not supported by the OS or Filesystem.
+			// 2. If the entry is a Symlink (we need to follow it).
+			if (stat(full_path.c_str(), &st) != 0) continue;
+
+			if (S_ISDIR(st.st_mode)) {
+				is_dir = true;
+			} else if (S_ISREG(st.st_mode)) {
+				is_reg = true;
+			}
+		}
+
+		if (is_dir) {
 			ScanRecursive(full_path, base_dir_prefix, visited_inodes);
-		} else if (S_ISREG(st.st_mode)) {
+		} else if (is_reg) {
 			if (name.size() > 8 && name.compare(name.size() - 8, 8, ".desktop") == 0) {
 				// Calculate ID: relative path from base_dir_prefix, with '/' replaced by '-'.
 				if (full_path.size() > base_dir_prefix.size() + 1) {
@@ -1188,6 +1219,7 @@ void XDGBasedAppProvider::ScanRecursive(const std::string& current_path, const s
 			}
 		}
 	}
+
 	closedir(dir_stream);
 }
 
