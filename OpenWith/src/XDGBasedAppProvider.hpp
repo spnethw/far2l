@@ -12,6 +12,9 @@
 #include <vector>
 #include <map>
 #include <tuple>
+#include <set>
+#include <utility>
+#include <sys/types.h>
 
 
 class XDGBasedAppProvider : public AppProvider
@@ -59,6 +62,7 @@ private:
 	// Represents a parsed .desktop file from the XDG specifications.
 	struct DesktopEntry
 	{
+		std::string id;
 		std::string desktop_filepath;
 		std::string name;
 		std::string generic_name;
@@ -135,12 +139,12 @@ private:
 	// to the configuration file (e.g., mimeapps.list or mimeinfo.cache) that specified the rule.
 	struct HandlerProvenance
 	{
-		std::string desktop_filename;
+		std::string desktop_id;
 		std::string source_filepath;
 
 		HandlerProvenance() = default;
-		HandlerProvenance(const std::string& dfn, const std::string& sfp)
-			: desktop_filename(dfn), source_filepath(sfp) {}
+		HandlerProvenance(const std::string& did, const std::string& sfp)
+			: desktop_id(did), source_filepath(sfp) {}
 	};
 
 
@@ -277,10 +281,10 @@ private:
 	void AppendCandidatesFromMimeAppsLists(const std::vector<std::string>& expanded_mimes, CandidateMap& unique_candidates);
 	void AppendCandidatesFromMimeinfoCache(const std::vector<std::string>& expanded_mimes, CandidateMap& unique_candidates);
 	void AppendCandidatesByFullScan(const std::vector<std::string>& expanded_mimes, CandidateMap& unique_candidates);
-	void RegisterCandidateById(CandidateMap& unique_candidates, const std::string& desktop_filename, int rank, const std::string& source_info);
+	void RegisterCandidateById(CandidateMap& unique_candidates, const std::string& desktop_id, int rank, const std::string& source_info);
 	void RegisterCandidateFromObject(CandidateMap& unique_candidates, const DesktopEntry& desktop_entry, int rank, const std::string& source_info);
 	void AddOrUpdateCandidate(CandidateMap& unique_candidates, const DesktopEntry& desktop_entry, int rank, const std::string& source_info);
-	bool IsAssociationRemoved(const std::string& mime, const std::string& desktop_filename);
+	bool IsAssociationRemoved(const std::string& mime, const std::string& desktop_id);
 	std::vector<RankedCandidate> BuildSortedRankedCandidatesList(const CandidateMap& candidate_map);
 	std::vector<CandidateInfo> FormatCandidatesForUI(const std::vector<RankedCandidate>& ranked_candidates, bool store_source_info);
 	static CandidateInfo ConvertDesktopEntryToCandidateInfo(const DesktopEntry& desktop_entry);
@@ -294,8 +298,10 @@ private:
 	std::string GuessMimeTypeByExtension(const std::string& filepath);
 
 	// --- XDG Database Parsing & Caching ---
-	const std::optional<XDGBasedAppProvider::DesktopEntry>& GetCachedDesktopEntry(const std::string& desktop_filename);
-	MimeToDesktopEntryIndex FullScanDesktopFiles(const std::vector<std::string>& search_dirpaths);
+	const std::optional<XDGBasedAppProvider::DesktopEntry>& GetCachedDesktopEntry(const std::string& desktop_id);
+	void IndexAllDesktopFiles(const std::vector<std::string>& search_dirpaths);
+	void ScanRecursive(const std::string& current_path, const std::string& base_dir_prefix, std::set<std::pair<dev_t, ino_t>>& visited_inodes);
+	MimeToDesktopEntryIndex BuildMimeIndexFromIds();
 	static MimeinfoCacheData ParseAllMimeinfoCacheFiles(const std::vector<std::string>& search_dirpaths);
 	static void ParseMimeinfoCache(const std::string& filepath, MimeinfoCacheData& mimeinfo_cache_data);
 	static MimeappsListsData ParseMimeappsLists(const std::vector<std::string>& filepaths);
@@ -401,6 +407,10 @@ private:
 	// One of the following two caches will be populated based on settings.
 	std::optional<MimeinfoCacheData> _op_mime_to_handlers_map;	// from mimeinfo.cache
 	std::optional<MimeToDesktopEntryIndex> _op_mime_to_desktop_entry_map;	// from full .desktop scan
+
+	// Maps a Desktop File ID to its absolute filepath.
+	// Populated by IndexAllDesktopFiles at the start of the operation.
+	std::unordered_map<std::string, std::string> _id_to_path_map;
 
 	// Cache for 'xdg-mime query default' results (MIME type -> .desktop file name)
 	std::map<std::string, std::string> _op_default_app_cache;
