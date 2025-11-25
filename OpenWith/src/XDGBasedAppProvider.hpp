@@ -137,24 +137,24 @@ private:
 
 	// This struct represents a single association rule and links a handler's .desktop file
 	// to the configuration file (e.g., mimeapps.list or mimeinfo.cache) that specified the rule.
-	struct HandlerProvenance
+	struct DesktopAssociation
 	{
 		std::string desktop_id;
 		std::string source_filepath;
 
-		HandlerProvenance() = default;
-		HandlerProvenance(const std::string& did, const std::string& sfp)
+		DesktopAssociation() = default;
+		DesktopAssociation(const std::string& did, const std::string& sfp)
 			: desktop_id(did), source_filepath(sfp) {}
 	};
 
 
 	// Represents the combined associations from all parsed mimeapps.list files.
-	struct MimeappsListsData
+	struct MimeappsListsConfig
 	{
 		// MIME type -> default application from [Default Applications].
-		std::unordered_map<std::string, HandlerProvenance> defaults;
+		std::unordered_map<std::string, DesktopAssociation> defaults;
 		// MIME type -> list of apps from [Added Associations].
-		std::unordered_map<std::string, std::vector<HandlerProvenance>> added;
+		std::unordered_map<std::string, std::vector<DesktopAssociation>> added;
 		// MIME type -> set of apps from [Removed Associations].
 		std::unordered_map<std::string, std::unordered_set<std::string>> removed;
 	};
@@ -269,7 +269,7 @@ private:
 
 	using CandidateMap = std::unordered_map<AppUniqueKey, RankedCandidate, AppUniqueKeyHash>;
 	using MimeToDesktopEntryIndex = std::unordered_map<std::string, std::vector<const DesktopEntry*>>;
-	using MimeinfoCacheData = std::unordered_map<std::string, std::vector<HandlerProvenance>>;
+	using MimeToDesktopAssociationsMap = std::unordered_map<std::string, std::vector<DesktopAssociation>>;
 
 	// ******************************************************************************
 	// METHODS
@@ -277,10 +277,10 @@ private:
 
 	// --- Searching and ranking candidates logic ---
 	CandidateMap DiscoverCandidatesForExpandedMimes(const std::vector<std::string>& expanded_mimes);
-	std::string GetDefaultApp(const std::string& mime);
+	std::string QuerySystemDefaultApplication(const std::string& mime);
 	void AppendCandidatesFromMimeAppsLists(const std::vector<std::string>& expanded_mimes, CandidateMap& unique_candidates);
 	void AppendCandidatesFromMimeinfoCache(const std::vector<std::string>& expanded_mimes, CandidateMap& unique_candidates);
-	void AppendCandidatesByFullScan(const std::vector<std::string>& expanded_mimes, CandidateMap& unique_candidates);
+	void AppendCandidatesFromDesktopEntryIndex(const std::vector<std::string>& expanded_mimes, CandidateMap& unique_candidates);
 	void RegisterCandidateById(CandidateMap& unique_candidates, const std::string& desktop_id, int rank, const std::string& source_info);
 	void RegisterCandidateFromObject(CandidateMap& unique_candidates, const DesktopEntry& desktop_entry, int rank, const std::string& source_info);
 	void AddOrUpdateCandidate(CandidateMap& unique_candidates, const DesktopEntry& desktop_entry, int rank, const std::string& source_info);
@@ -298,14 +298,14 @@ private:
 	std::string GuessMimeTypeByExtension(const std::string& filepath);
 
 	// --- XDG Database Parsing & Caching ---
-	const std::optional<XDGBasedAppProvider::DesktopEntry>& GetCachedDesktopEntry(const std::string& desktop_id);
+	const std::optional<XDGBasedAppProvider::DesktopEntry>& GetOrLoadDesktopEntry(const std::string& desktop_id);
 	void IndexAllDesktopFiles(const std::vector<std::string>& search_dirpaths);
-	void ScanRecursive(const std::string& current_path, const std::string& base_dir_prefix, std::set<std::pair<dev_t, ino_t>>& visited_inodes);
+	void IndexDirectoryRecursively(const std::string& current_path, const std::string& base_dir_prefix, std::set<std::pair<dev_t, ino_t>>& visited_inodes);
 	MimeToDesktopEntryIndex BuildMimeIndexFromIds();
-	static MimeinfoCacheData ParseAllMimeinfoCacheFiles(const std::vector<std::string>& search_dirpaths);
-	static void ParseMimeinfoCache(const std::string& filepath, MimeinfoCacheData& mimeinfo_cache_data);
-	static MimeappsListsData ParseMimeappsLists(const std::vector<std::string>& filepaths);
-	static void ParseMimeappsList(const std::string& filepath, MimeappsListsData& mimeapps_lists_data);
+	static MimeToDesktopAssociationsMap ParseAllMimeinfoCacheFiles(const std::vector<std::string>& search_dirpaths);
+	static void ParseMimeinfoCache(const std::string& filepath, MimeToDesktopAssociationsMap& mime_to_desktop_associations_map);
+	static MimeappsListsConfig ParseMimeappsLists(const std::vector<std::string>& filepaths);
+	static void ParseMimeappsList(const std::string& filepath, MimeappsListsConfig& mimeapps_lists_config);
 	static std::optional<XDGBasedAppProvider::DesktopEntry> ParseDesktopFile(const std::string& filepath);
 	static std::string GetLocalizedValue(const std::unordered_map<std::string, std::string>& kv_entries, const std::string& base_key);
 	static std::unordered_map<std::string, std::string> LoadMimeAliases();
@@ -394,7 +394,7 @@ private:
 	std::optional<std::unordered_map<std::string, std::string>> _op_alias_to_canonical_map;
 	std::optional<std::unordered_map<std::string, std::vector<std::string>>> _op_canonical_to_aliases_map;
 	std::optional<std::unordered_map<std::string, std::string>> _op_subclass_to_parent_map;
-	std::optional<MimeappsListsData> _op_mimeapps_lists_data;      // combined mimeapps.list data
+	std::optional<MimeappsListsConfig> _op_mimeapps_lists_config;      // combined mimeapps.list data
 	std::optional<std::vector<std::string>> _op_desktop_file_dirpaths; // XDG .desktop file search paths
 	std::optional<std::string> _op_current_desktop_env; // $XDG_CURRENT_DESKTOP
 
@@ -405,7 +405,7 @@ private:
 	bool _op_magika_tool_enabled_and_exists = false;
 
 	// One of the following two caches will be populated based on settings.
-	std::optional<MimeinfoCacheData> _op_mime_to_handlers_map;	// from mimeinfo.cache
+	std::optional<MimeToDesktopAssociationsMap> _op_mime_to_desktop_associations_map;	// from mimeinfo.cache
 	std::optional<MimeToDesktopEntryIndex> _op_mime_to_desktop_entry_map;	// from full .desktop scan
 
 	// Maps a Desktop File ID to its absolute filepath.
