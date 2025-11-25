@@ -422,22 +422,18 @@ std::string XDGBasedAppProvider::QuerySystemDefaultApplication(const std::string
 }
 
 
-// Finds and registers candidates defined in 'mimeapps.list' files.
-// According to the XDG Mime Apps Specification, this source has precedence over system defaults.
+// Finds candidates from the parsed mimeapps.list files. This is a high-priority source.
 void XDGBasedAppProvider::AppendCandidatesFromMimeAppsLists(const std::vector<std::string>& expanded_mimes, CandidateMap& unique_candidates)
 {
 	const int total_mimes = expanded_mimes.size();
 	const auto& mimeapps_lists_config = _op_mimeapps_lists_config.value();
 
-	// Iterate through the expanded MIME types list (ordered from most specific to least specific).
 	for (int i = 0; i < total_mimes; ++i) {
 		const auto& mime = expanded_mimes[i];
-
-		// Calculate a dynamic rank component based on the position in the expanded list.
-		// Earlier items (more specific MIME types) get a higher multiplier.
+		// Rank based on MIME type specificity. The more specific, the higher the rank.
 		int mime_specificity_rank = (total_mimes - i);
 
-		// 1. Process [Default Applications].
+		// 1. Default application from mimeapps.list: high source rank.
 		auto it_defaults = mimeapps_lists_config.defaults.find(mime);
 		if (it_defaults != mimeapps_lists_config.defaults.end()) {
 			const auto& default_app = it_defaults->second;
@@ -447,8 +443,7 @@ void XDGBasedAppProvider::AppendCandidatesFromMimeAppsLists(const std::vector<st
 				RegisterCandidateById(unique_candidates, default_app.desktop_id, rank, source_info);
 			}
 		}
-
-		// 2. Process [Added Associations].
+		// 2. Added associations from mimeapps.list: medium source rank.
 		auto it_added = mimeapps_lists_config.added.find(mime);
 		if (it_added != mimeapps_lists_config.added.end()) {
 			for (const auto& app_assoc : it_added->second) {
@@ -463,45 +458,32 @@ void XDGBasedAppProvider::AppendCandidatesFromMimeAppsLists(const std::vector<st
 }
 
 
-// Finds and registers candidates from the system-wide 'mimeinfo.cache' database.
-// This database maps MIME types to lists of Desktop File IDs and is generally populated
-// by the 'update-desktop-database' tool. It serves as the primary fallback lookup
-// when no user-specific configuration is found in mimeapps.list.
+// Finds candidates from the pre-generated mimeinfo.cache file for performance.
 void XDGBasedAppProvider::AppendCandidatesFromMimeinfoCache(const std::vector<std::string>& expanded_mimes, CandidateMap& unique_candidates)
 {
 	const int total_mimes = expanded_mimes.size();
 
-	// Local map to track the highest score found for each Desktop ID within this batch.
-	// Since an application might be associated with multiple MIME types in the 'expanded_mimes' list
-	// (e.g., specific 'image/jpeg' and generic 'image/*'), we must ensure that we register
-	// the application using the rank from the most specific match.
+	// Tracks the highest score for each application ID to avoid rank demotion by a less-specific MIME type.
 	std::unordered_map<std::string, AssociationScore> desktop_id_to_score_map;
 
 	const auto& mime_to_desktop_associations_map = _op_mime_to_desktop_associations_map.value();
 
-	// Iterate through the expanded MIME types list (ordered from most specific to least specific).
+	// First, find the best possible rank for each application across all matching MIME types.
+	// This prevents an app from getting a low rank for a generic MIME type (e.g., text/plain)
+	// if it has already been matched with a high-rank specific MIME type.
 	for (int i = 0; i < total_mimes; ++i) {
 		const auto& mime = expanded_mimes[i];
-
 		auto it_cache = mime_to_desktop_associations_map.find(mime);
 		if (it_cache != mime_to_desktop_associations_map.end()) {
-
-			// Calculate rank based on specificity.
+			// Calculate rank using the tiered formula.
 			int rank = (total_mimes - i) * Ranking::SPECIFICITY_MULTIPLIER + Ranking::SOURCE_RANK_CACHE_OR_SCAN;
-
 			for (const auto& desktop_association : it_cache->second) {
 				const auto& desktop_id = desktop_association.desktop_id;
 				if (desktop_id.empty()) continue;
-
-				// Check against [Removed Associations] in mimeapps.list
 				if (IsAssociationRemoved(mime, desktop_id)) continue;
-
 				auto source_info = desktop_association.source_filepath + StrWide2MB(m_GetMsg(MFor)) + mime;
-
-				// Insert or update the score for this Desktop ID.
 				auto [it, inserted] = desktop_id_to_score_map.try_emplace(desktop_id, rank, source_info);
-
-				// If the ID was already present, keep the higher rank (which corresponds to a more specific MIME type).
+				// Update only if the new rank is higher than the existing one.
 				if (!inserted && rank > it->second.rank) {
 					it->second.rank = rank;
 					it->second.source_info = source_info;
@@ -510,56 +492,48 @@ void XDGBasedAppProvider::AppendCandidatesFromMimeinfoCache(const std::vector<st
 		}
 	}
 
-	// Finally, register each unique application using its best calculated rank.
+	// Register each application using its highest calculated rank.
 	for (const auto& [desktop_id, score] : desktop_id_to_score_map) {
 		RegisterCandidateById(unique_candidates, desktop_id, score.rank, score.source_info);
 	}
 }
 
 
-// Finds and registers candidates using the internal runtime index.
-// This method is used as a fallback mechanism when the system-wide 'mimeinfo.cache'
-// is unavailable, invalid, or disabled by the user configuration.
-// It relies on the 'MimeToDesktopEntryIndex' built by ParseAllDesktopFiles()
+// Finds candidates by looking up the pre-built index. Used when _use_mimeinfo_cache is false.
 void XDGBasedAppProvider::AppendCandidatesFromDesktopEntryIndex(const std::vector<std::string>& expanded_mimes, CandidateMap& unique_candidates)
 {
 	const int total_mimes = expanded_mimes.size();
 
-	// Local map to track the highest score found for each DesktopEntry pointer.
-	// We use the pointer address as the unique key here because the index stores pointers.
-	// Similar to the cache-based lookup, this ensures we use the rank from the most specific
-	// MIME type match if an application supports multiple types from the list.
+	// Tracks the highest score for each application DesktopEntry to avoid rank demotion by a less-specific MIME type.
 	std::unordered_map<const DesktopEntry*, AssociationScore> desktop_entry_to_score_map;
 
 	const auto& mime_to_desktop_entry_map = _op_mime_to_desktop_entry_map.value();
 
-	// Iterate through the expanded MIME types list (ordered from most specific to least specific).
+	// Iterate through all expanded MIME types for the current file.
 	for (int i = 0; i < total_mimes; ++i) {
 		const auto& mime = expanded_mimes[i];
 
 		auto it_index = mime_to_desktop_entry_map.find(mime);
 		if (it_index == mime_to_desktop_entry_map.end()) {
-			continue; // No applications associated with this MIME type in the runtime index.
+			continue; // no applications are associated with this MIME type in the index.
 		}
 
-		// Calculate rank based on specificity.
+		// Calculate the rank for this level of MIME specificity.
 		int rank = (total_mimes - i) * Ranking::SPECIFICITY_MULTIPLIER + Ranking::SOURCE_RANK_CACHE_OR_SCAN;
 
-		// Iterate through all applications found for this MIME type in the index.
+		// Iterate through all applications found for this MIME type.
 		for (const DesktopEntry* desktop_entry_ptr : it_index->second) {
 			if (!desktop_entry_ptr) continue;
 
-			// Check against [Removed Associations] in mimeapps.list.
+			// Check if this specific association is explicitly removed in mimeapps.list.
 			if (IsAssociationRemoved(mime, desktop_entry_ptr->id)) {
 				continue;
 			}
 
 			auto source_info = StrWide2MB(m_GetMsg(MFullScanFor)) + mime;
 
-			// Insert or update the score for this DesktopEntry pointer.
 			auto [it, inserted] = desktop_entry_to_score_map.try_emplace(desktop_entry_ptr, rank, source_info);
-
-			// If the entry was already present, keep the higher rank (most specific match).
+			// Update only if the new rank is higher than the existing one.
 			if (!inserted && rank > it->second.rank) {
 				it->second.rank = rank;
 				it->second.source_info = source_info;
@@ -567,8 +541,9 @@ void XDGBasedAppProvider::AppendCandidatesFromDesktopEntryIndex(const std::vecto
 		}
 	}
 
-	// Finally, register each unique application using its best calculated rank.
+	// Register each application using its highest calculated rank.
 	for (const auto& [desktop_entry_ptr, score] : desktop_entry_to_score_map) {
+		// Call the registration helper directly, passing the dereferenced entry to avoid a redundant cache lookup.
 		RegisterCandidateFromDesktopEntry(unique_candidates, *desktop_entry_ptr, score.rank, score.source_info);
 	}
 }
