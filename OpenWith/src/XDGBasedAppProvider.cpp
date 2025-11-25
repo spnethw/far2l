@@ -396,7 +396,7 @@ XDGBasedAppProvider::CandidateMap XDGBasedAppProvider::DiscoverCandidatesForExpa
 		// Use the results from mimeinfo.cache (it was successfully loaded and was not empty).
 		AppendCandidatesFromMimeinfoCache(expanded_mimes, unique_candidates);
 	} else {
-		// Use the full scan index (either because caching was disabled, or as a fallback).
+		// Use the fullscan index (either because caching was disabled, or as a fallback).
 		AppendCandidatesFromDesktopEntryIndex(expanded_mimes, unique_candidates);
 	}
 
@@ -544,7 +544,7 @@ void XDGBasedAppProvider::AppendCandidatesFromDesktopEntryIndex(const std::vecto
 	// Register each application using its highest calculated rank.
 	for (const auto& [desktop_entry_ptr, score] : desktop_entry_to_score_map) {
 		// Call the registration helper directly, passing the dereferenced entry to avoid a redundant cache lookup.
-		RegisterCandidateFromObject(unique_candidates, *desktop_entry_ptr, score.rank, score.source_info);
+		RegisterCandidateFromDesktopEntry(unique_candidates, *desktop_entry_ptr, score.rank, score.source_info);
 	}
 }
 
@@ -556,20 +556,19 @@ void XDGBasedAppProvider::RegisterCandidateById(CandidateMap& unique_candidates,
 {
 	if (desktop_id.empty()) return;
 
-	// Retrieve the full DesktopEntry by ID.
 	const auto& desktop_entry_opt = GetOrLoadDesktopEntry(desktop_id);
 	if (!desktop_entry_opt) {
 		return;
 	}
 
 	// Pass the actual DesktopEntry object to the core validation and registration logic.
-	RegisterCandidateFromObject(unique_candidates, *desktop_entry_opt, rank, source_info);
+	RegisterCandidateFromDesktopEntry(unique_candidates, *desktop_entry_opt, rank, source_info);
 }
 
 
 // This is the core validation and registration helper.
 // It filters a candidate (TryExec, ShowIn/NotShowIn) and adds it to the map.
-void XDGBasedAppProvider::RegisterCandidateFromObject(CandidateMap& unique_candidates, const DesktopEntry& desktop_entry,
+void XDGBasedAppProvider::RegisterCandidateFromDesktopEntry(CandidateMap& unique_candidates, const DesktopEntry& desktop_entry,
 											int rank, const std::string& source_info)
 {
 	// Optionally validate the TryExec key to ensure the executable exists.
@@ -1100,32 +1099,7 @@ std::string XDGBasedAppProvider::GuessMimeTypeByExtension(const std::string& fil
 
 
 
-// ****************************** XDG Database Parsing & Caching ******************************
-
-// Retrieves a DesktopEntry from the cache or parses it from disk if not present.
-const std::optional<XDGBasedAppProvider::DesktopEntry>& XDGBasedAppProvider::GetOrLoadDesktopEntry(const std::string& desktop_id)
-{
-	// 1. Check if the entry object is already cached.
-	if (auto it = _desktop_entry_cache.find(desktop_id); it != _desktop_entry_cache.end()) {
-		return it->second;
-	}
-
-	// 2. Resolve the ID to a file path using the index.
-	auto it_path = _id_to_path_map.find(desktop_id);
-	if (it_path != _id_to_path_map.end()) {
-		const std::string& filepath = it_path->second;
-		if (auto desktop_entry = ParseDesktopFile(filepath)) {
-			// Set the ID on the object, as ParseDesktopFile does not know it.
-			desktop_entry->id = desktop_id;
-			auto [it, inserted] = _desktop_entry_cache.try_emplace(desktop_id, std::move(desktop_entry));
-			return it->second;
-		}
-	}
-
-	// Cache a nullopt if the file cannot be found or parsed.
-	auto [it, inserted] = _desktop_entry_cache.try_emplace(desktop_id, std::nullopt);
-	return it->second;
-}
+// ****************************** XDG database parsing & caching ******************************
 
 
 // Recursively scans search directories to build a map of Desktop File IDs to absolute file paths.
@@ -1137,7 +1111,7 @@ std::unordered_map<std::string, std::string> XDGBasedAppProvider::IndexAllDeskto
 
 	std::unordered_map<std::string, std::string> id_to_path_map;
 
-	std::set<std::pair<dev_t, ino_t>> visited_inodes;
+	VisitedInodeSet visited_inodes;
 
 	for (const auto& dirpath : *_op_desktop_file_dirpaths) {
 		IndexDirectoryRecursively(id_to_path_map, dirpath, dirpath, visited_inodes);
@@ -1148,7 +1122,7 @@ std::unordered_map<std::string, std::string> XDGBasedAppProvider::IndexAllDeskto
 
 
 // Recursive helper for directory scanning with loop protection.
-void XDGBasedAppProvider::IndexDirectoryRecursively(std::unordered_map<std::string, std::string>& result_map, const std::string& current_path, const std::string& base_dir_prefix, std::set<std::pair<dev_t, ino_t>>& visited_inodes)
+void XDGBasedAppProvider::IndexDirectoryRecursively(std::unordered_map<std::string, std::string>& result_map, const std::string& current_path, const std::string& base_dir_prefix, VisitedInodeSet &visited_inodes)
 {
 	struct stat st;
 	if (stat(current_path.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) {
@@ -1222,8 +1196,34 @@ void XDGBasedAppProvider::IndexDirectoryRecursively(std::unordered_map<std::stri
 }
 
 
+// Retrieves a DesktopEntry from the cache or parses it from disk if not present.
+const std::optional<XDGBasedAppProvider::DesktopEntry>& XDGBasedAppProvider::GetOrLoadDesktopEntry(const std::string& desktop_id)
+{
+	// 1. Check if the entry object is already cached.
+	if (auto it = _desktop_entry_cache.find(desktop_id); it != _desktop_entry_cache.end()) {
+		return it->second;
+	}
+
+	// 2. Resolve the ID to a file path using the index.
+	auto it_path = _id_to_path_map.find(desktop_id);
+	if (it_path != _id_to_path_map.end()) {
+		const std::string& filepath = it_path->second;
+		if (auto desktop_entry = ParseDesktopFile(filepath)) {
+			// Set the ID on the object, as ParseDesktopFile does not know it.
+			desktop_entry->id = desktop_id;
+			auto [it, inserted] = _desktop_entry_cache.try_emplace(desktop_id, std::move(desktop_entry));
+			return it->second;
+		}
+	}
+
+	// Cache a nullopt if the file cannot be found or parsed.
+	auto [it, inserted] = _desktop_entry_cache.try_emplace(desktop_id, std::nullopt);
+	return it->second;
+}
+
+
 // Builds the MIME index by iterating over all discovered Desktop IDs.
-XDGBasedAppProvider::MimeToDesktopEntryIndex XDGBasedAppProvider::BuildMimeIndexFromIds()
+XDGBasedAppProvider::MimeToDesktopEntryIndex XDGBasedAppProvider::ParseAllDesktopFiles()
 {
 	MimeToDesktopEntryIndex index;
 
@@ -1976,7 +1976,37 @@ std::string XDGBasedAppProvider::UnescapeGKeyFileString(const std::string& str)
 
 
 
-// ****************************** System & Environment Helpers ******************************
+// ****************************** System, environment and common helpers ******************************
+
+
+// Checks if a filepath is a regular file (S_ISREG) AND is readable (R_OK).
+bool XDGBasedAppProvider::IsReadableFile(const std::string& filepath)
+{
+	struct stat st;
+	// Use stat() to follow symlinks
+	if (stat(filepath.c_str(), &st) == 0) {
+		// Check type first, then check permissions
+		if (S_ISREG(st.st_mode)) {
+			return (access(filepath.c_str(), R_OK) == 0);
+		}
+	}
+	return false;
+}
+
+
+// Checks if a dirpath is a directory (S_ISDIR) AND is traversable (X_OK).
+bool XDGBasedAppProvider::IsTraversableDirectory(const std::string& dirpath)
+{
+	struct stat st;
+	// Use stat() to follow symlinks
+	if (stat(dirpath.c_str(), &st) == 0) {
+		// Check type first, then check permissions
+		if (S_ISDIR(st.st_mode)) {
+			return (access(dirpath.c_str(), X_OK) == 0);
+		}
+	}
+	return false;
+}
 
 
 // Checks if an executable exists and is runnable.
@@ -2008,14 +2038,6 @@ bool XDGBasedAppProvider::IsExecutableAvailable(const std::string& command)
 }
 
 
-// Safe environment variable access with an optional default value.
-std::string XDGBasedAppProvider::GetEnv(const char* var, const char* default_val)
-{
-	const char* val = getenv(var);
-	return val ? val : default_val;
-}
-
-
 // Runs a shell command and captures its standard output.
 std::string XDGBasedAppProvider::RunCommandAndCaptureOutput(const std::string& cmd)
 {
@@ -2024,33 +2046,11 @@ std::string XDGBasedAppProvider::RunCommandAndCaptureOutput(const std::string& c
 }
 
 
-
-// ****************************** Common helper functions ******************************
-
-// Trims whitespace from both ends of a string.
-std::string XDGBasedAppProvider::Trim(std::string str)
+// Safe environment variable access with an optional default value.
+std::string XDGBasedAppProvider::GetEnv(const char* var, const char* default_val)
 {
-	str.erase(str.begin(), std::find_if(str.begin(), str.end(), [](unsigned char ch) { return !std::isspace(ch); }));
-	str.erase(std::find_if(str.rbegin(), str.rend(), [](unsigned char ch) { return !std::isspace(ch); }).base(), str.end());
-	return str;
-}
-
-
-// String splitting utility with trimming of individual tokens.
-std::vector<std::string> XDGBasedAppProvider::SplitString(const std::string& str, char delimiter)
-{
-	if (str.empty()) return {};
-
-	std::vector<std::string> tokens;
-	std::istringstream stream(str);
-	std::string token;
-
-	while (std::getline(stream, token, delimiter)) {
-		if (auto trimmed = Trim(token); !trimmed.empty()) {
-			tokens.push_back(std::move(trimmed));
-		}
-	}
-	return tokens;
+	const char* val = getenv(var);
+	return val ? val : default_val;
 }
 
 
@@ -2103,34 +2103,32 @@ std::string XDGBasedAppProvider::GetBaseName(const std::string& filepath)
 }
 
 
-// Checks if a filepath is a regular file (S_ISREG) AND is readable (R_OK).
-bool XDGBasedAppProvider::IsReadableFile(const std::string& filepath)
+// Trims whitespace from both ends of a string.
+std::string XDGBasedAppProvider::Trim(std::string str)
 {
-	struct stat st;
-	// Use stat() to follow symlinks
-	if (stat(filepath.c_str(), &st) == 0) {
-		// Check type first, then check permissions
-		if (S_ISREG(st.st_mode)) {
-			return (access(filepath.c_str(), R_OK) == 0);
-		}
-	}
-	return false;
+	str.erase(str.begin(), std::find_if(str.begin(), str.end(), [](unsigned char ch) { return !std::isspace(ch); }));
+	str.erase(std::find_if(str.rbegin(), str.rend(), [](unsigned char ch) { return !std::isspace(ch); }).base(), str.end());
+	return str;
 }
 
 
-// Checks if a dirpath is a directory (S_ISDIR) AND is traversable (X_OK).
-bool XDGBasedAppProvider::IsTraversableDirectory(const std::string& dirpath)
+// String splitting utility with trimming of individual tokens.
+std::vector<std::string> XDGBasedAppProvider::SplitString(const std::string& str, char delimiter)
 {
-	struct stat st;
-	// Use stat() to follow symlinks
-	if (stat(dirpath.c_str(), &st) == 0) {
-		// Check type first, then check permissions
-		if (S_ISDIR(st.st_mode)) {
-			return (access(dirpath.c_str(), X_OK) == 0);
+	if (str.empty()) return {};
+
+	std::vector<std::string> tokens;
+	std::istringstream stream(str);
+	std::string token;
+
+	while (std::getline(stream, token, delimiter)) {
+		if (auto trimmed = Trim(token); !trimmed.empty()) {
+			tokens.push_back(std::move(trimmed));
 		}
 	}
-	return false;
+	return tokens;
 }
+
 
 
 // ****************************** RAII cache helper ******************************
@@ -2182,16 +2180,22 @@ XDGBasedAppProvider::OperationContext::OperationContext(XDGBasedAppProvider& p) 
 	provider._op_default_app_cache.clear();
 
 	// 4. Build the primary application lookup cache
+
 	if (provider._use_mimeinfo_cache) {
+		// Attempt to load from mimeinfo.cache first, as per user setting.
 		provider._op_mime_to_desktop_associations_map = XDGBasedAppProvider::ParseAllMimeinfoCacheFiles(provider._op_desktop_file_dirpaths.value());
+
+		// Fallback: If the cache is empty (files not found or all are empty),
+		// reset the optional. This will trigger the full scan logic below.
 		if (provider._op_mime_to_desktop_associations_map.value().empty()) {
 			provider._op_mime_to_desktop_associations_map.reset();
 		}
 	}
 
+	// If caching is disabled (by user) OR the fallback was triggered (cache was empty)...
 	if (!provider._op_mime_to_desktop_associations_map.has_value()) {
-		// Fallback: build index from the discovered IDs.
-		provider._op_mime_to_desktop_entry_map = provider.BuildMimeIndexFromIds();
+		// ...populate the index by performing a full scan.
+		provider._op_mime_to_desktop_entry_map = provider.ParseAllDesktopFiles();
 	}
 }
 

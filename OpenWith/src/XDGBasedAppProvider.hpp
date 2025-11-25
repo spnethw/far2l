@@ -41,7 +41,6 @@ private:
 	// Structures representing the content and logic of .desktop files.
 	// ******************************************************************************
 
-
 	// Defines how the application expects arguments based on Field Codes in the Exec key.
 	enum class ExecutionModel
 	{
@@ -86,7 +85,6 @@ private:
 	// Group 2: MIME Detection Types
 	// Structures used for identifying file types before application lookup.
 	// ******************************************************************************
-
 
 	// Represents the "raw" MIME profile of a file, derived from all available detection tools before any expansion.
 	struct RawMimeProfile
@@ -134,7 +132,6 @@ private:
 	// Structures representing parsed data from mimeapps.list, mimeinfo.cache, etc.
 	// ******************************************************************************
 
-
 	// This struct represents a single association rule and links a handler's .desktop file
 	// to the configuration file (e.g., mimeapps.list or mimeinfo.cache) that specified the rule.
 	struct DesktopAssociation
@@ -164,7 +161,6 @@ private:
 	// Group 4: Ranking & Candidate Identification
 	// Structures used in the logic for selecting and sorting the best applications.
 	// ******************************************************************************
-
 
 	// Constants for the tiered ranking system.
 	struct Ranking
@@ -237,7 +233,6 @@ private:
 	// Group 5: Plugin Internal Configuration
 	// ******************************************************************************
 
-
 	// A helper struct to define a platform setting, linking its INI key,
 	// localized UI display name, its corresponding class member variable, and default value.
 	struct PlatformSettingDefinition {
@@ -251,7 +246,6 @@ private:
 	// ******************************************************************************
 	// Group 6: Lifecycle & State Management
 	// ******************************************************************************
-
 
 	// RAII helper to manage the lifecycle of the operation-scoped state.
 	struct OperationContext
@@ -270,6 +264,8 @@ private:
 	using CandidateMap = std::unordered_map<AppUniqueKey, RankedCandidate, AppUniqueKeyHash>;
 	using MimeToDesktopEntryIndex = std::unordered_map<std::string, std::vector<const DesktopEntry*>>;
 	using MimeToDesktopAssociationsMap = std::unordered_map<std::string, std::vector<DesktopAssociation>>;
+	using VisitedInodeSet = std::set<std::pair<dev_t, ino_t>>;
+
 
 	// ******************************************************************************
 	// METHODS
@@ -282,14 +278,14 @@ private:
 	void AppendCandidatesFromMimeinfoCache(const std::vector<std::string>& expanded_mimes, CandidateMap& unique_candidates);
 	void AppendCandidatesFromDesktopEntryIndex(const std::vector<std::string>& expanded_mimes, CandidateMap& unique_candidates);
 	void RegisterCandidateById(CandidateMap& unique_candidates, const std::string& desktop_id, int rank, const std::string& source_info);
-	void RegisterCandidateFromObject(CandidateMap& unique_candidates, const DesktopEntry& desktop_entry, int rank, const std::string& source_info);
+	void RegisterCandidateFromDesktopEntry(CandidateMap& unique_candidates, const DesktopEntry& desktop_entry, int rank, const std::string& source_info);
 	void AddOrUpdateCandidate(CandidateMap& unique_candidates, const DesktopEntry& desktop_entry, int rank, const std::string& source_info);
 	bool IsAssociationRemoved(const std::string& mime, const std::string& desktop_id);
 	std::vector<RankedCandidate> BuildSortedRankedCandidatesList(const CandidateMap& candidate_map);
 	std::vector<CandidateInfo> FormatCandidatesForUI(const std::vector<RankedCandidate>& ranked_candidates, bool store_source_info);
 	static CandidateInfo ConvertDesktopEntryToCandidateInfo(const DesktopEntry& desktop_entry);
 
-	// --- File MIME Type Detection & Expansion ---
+	// --- File MIME type detection & expansion ---
 	RawMimeProfile GetRawMimeProfile(const std::string& filepath);
 	std::vector<std::string> ExpandAndPrioritizeMimeTypes(const RawMimeProfile& profile);
 	std::string DetectMimeTypeWithXdgMimeTool(const std::string& filepath_escaped);
@@ -297,11 +293,11 @@ private:
 	std::string DetectMimeTypeWithMagikaTool(const std::string& filepath_escaped);
 	std::string GuessMimeTypeByExtension(const std::string& filepath);
 
-	// --- XDG Database Parsing & Caching ---
-	const std::optional<XDGBasedAppProvider::DesktopEntry>& GetOrLoadDesktopEntry(const std::string& desktop_id);
+	// --- XDG database parsing & caching ---
 	std::unordered_map<std::string, std::string> IndexAllDesktopFiles();
-	void IndexDirectoryRecursively(std::unordered_map<std::string, std::string>& result_map, const std::string& current_path, const std::string& base_dir_prefix, std::set<std::pair<dev_t, ino_t>>& visited_inodes);
-	MimeToDesktopEntryIndex BuildMimeIndexFromIds();
+	void IndexDirectoryRecursively(std::unordered_map<std::string, std::string>& result_map, const std::string& current_path, const std::string& base_dir_prefix, VisitedInodeSet& visited_inodes);
+	const std::optional<XDGBasedAppProvider::DesktopEntry>& GetOrLoadDesktopEntry(const std::string& desktop_id);
+	MimeToDesktopEntryIndex ParseAllDesktopFiles();
 	static MimeToDesktopAssociationsMap ParseAllMimeinfoCacheFiles(const std::vector<std::string>& search_dirpaths);
 	static void ParseMimeinfoCache(const std::string& filepath, MimeToDesktopAssociationsMap& mime_to_desktop_associations_map);
 	static MimeappsListsConfig ParseMimeappsLists(const std::vector<std::string>& filepaths);
@@ -323,18 +319,16 @@ private:
 	static std::string PathToUri(const std::string &path);
 	static std::string UnescapeGKeyFileString(const std::string& str);
 
-	// --- System & Environment Helpers ---
-	static bool IsExecutableAvailable(const std::string& command);
-	static std::string GetEnv(const char* var, const char* default_val = "");
-	static std::string RunCommandAndCaptureOutput(const std::string& cmd);
-
-	// --- Common helper functions ---
-	static std::string Trim(std::string str);
-	static std::vector<std::string> SplitString(const std::string& str, char delimiter);
-	static std::string EscapeArgForShell(const std::string& arg);
-	static std::string GetBaseName(const std::string& filepath);
+	// --- System, environment and common helpers ---
 	static bool IsReadableFile(const std::string& filepath);
 	static bool IsTraversableDirectory(const std::string& dirpath);
+	static bool IsExecutableAvailable(const std::string& command);
+	static std::string RunCommandAndCaptureOutput(const std::string& cmd);
+	static std::string GetEnv(const char* var, const char* default_val = "");
+	static std::string EscapeArgForShell(const std::string& arg);
+	static std::string GetBaseName(const std::string& filepath);
+	static std::string Trim(std::string str);
+	static std::vector<std::string> SplitString(const std::string& str, char delimiter);
 
 	// ******************************************************************************
 	// DATA MEMBERS
@@ -409,10 +403,9 @@ private:
 	std::optional<MimeToDesktopEntryIndex> _op_mime_to_desktop_entry_map;	// from full .desktop scan
 
 	// Maps a Desktop File ID to its absolute filepath.
-	// Populated by IndexAllDesktopFiles at the start of the operation.
 	std::unordered_map<std::string, std::string> _id_to_path_map;
 
-	// Cache for 'xdg-mime query default' results (MIME type -> .desktop file name)
+	// Cache for 'xdg-mime query default' results (MIME type -> Desktop File ID)
 	std::map<std::string, std::string> _op_default_app_cache;
 };
 
