@@ -1129,18 +1129,26 @@ const std::optional<XDGBasedAppProvider::DesktopEntry>& XDGBasedAppProvider::Get
 
 
 // Recursively scans search directories to build a map of Desktop File IDs to absolute file paths.
-void XDGBasedAppProvider::IndexAllDesktopFiles(const std::vector<std::string>& search_dirpaths)
+std::unordered_map<std::string, std::string> XDGBasedAppProvider::IndexAllDesktopFiles()
 {
+	if (!_op_desktop_file_dirpaths.has_value()) {
+		return {};
+	}
+
+	std::unordered_map<std::string, std::string> id_to_path_map;
+
 	std::set<std::pair<dev_t, ino_t>> visited_inodes;
 
-	for (const auto& dirpath : search_dirpaths) {
-		IndexDirectoryRecursively(dirpath, dirpath, visited_inodes);
+	for (const auto& dirpath : *_op_desktop_file_dirpaths) {
+		IndexDirectoryRecursively(id_to_path_map, dirpath, dirpath, visited_inodes);
 	}
+
+	return id_to_path_map;
 }
 
 
 // Recursive helper for directory scanning with loop protection.
-void XDGBasedAppProvider::IndexDirectoryRecursively(const std::string& current_path, const std::string& base_dir_prefix, std::set<std::pair<dev_t, ino_t>>& visited_inodes)
+void XDGBasedAppProvider::IndexDirectoryRecursively(std::unordered_map<std::string, std::string>& result_map, const std::string& current_path, const std::string& base_dir_prefix, std::set<std::pair<dev_t, ino_t>>& visited_inodes)
 {
 	struct stat st;
 	if (stat(current_path.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) {
@@ -1195,7 +1203,7 @@ void XDGBasedAppProvider::IndexDirectoryRecursively(const std::string& current_p
 		}
 
 		if (is_dir) {
-			IndexDirectoryRecursively(full_path, base_dir_prefix, visited_inodes);
+			IndexDirectoryRecursively(result_map, full_path, base_dir_prefix, visited_inodes);
 		} else if (is_reg) {
 			if (name.size() > 8 && name.compare(name.size() - 8, 8, ".desktop") == 0) {
 				// Calculate ID: relative path from base_dir_prefix, with '/' replaced by '-'.
@@ -1204,7 +1212,7 @@ void XDGBasedAppProvider::IndexDirectoryRecursively(const std::string& current_p
 					std::string id = relative_path;
 					std::replace(id.begin(), id.end(), '/', '-');
 					// Store in the map. First found wins.
-					_id_to_path_map.try_emplace(id, full_path);
+					result_map.try_emplace(id, full_path);
 				}
 			}
 		}
@@ -1714,11 +1722,11 @@ void XDGBasedAppProvider::AnalyzeExecLine(const DesktopEntry& desktop_entry)
 
 
 // Parses the GKeyFile-unescaped 'Exec' key string into a sequence of argument templates.
-std::vector<XDGBasedAppProvider::ArgTemplate> XDGBasedAppProvider::TokenizeExecString(const std::string& exec_value)
+std::vector<XDGBasedAppProvider::ExecArgTemplate> XDGBasedAppProvider::TokenizeExecString(const std::string& exec_value)
 {
 	if (exec_value.empty()) return {};
 
-	std::vector<ArgTemplate> tokens;
+	std::vector<ExecArgTemplate> tokens;
 	tokens.reserve(4);
 
 	std::string token_buffer;
@@ -1801,8 +1809,7 @@ std::string XDGBasedAppProvider::AssembleLaunchCommand(const DesktopEntry& deskt
 
 	// 1. Process the explicit command line template from the .desktop Exec key.
 	for (const auto& arg_template : desktop_entry.arg_templates) {
-		// ExpandArgumentTemplate handles field codes and quoting rules.
-		for (const auto& expanded_arg : ExpandArgTemplate(arg_template, filepaths, desktop_entry)) {
+		for (const auto& expanded_arg : ExpandFieldCodes(arg_template, filepaths, desktop_entry)) {
 			append_argument(expanded_arg);
 		}
 	}
@@ -1819,7 +1826,7 @@ std::string XDGBasedAppProvider::AssembleLaunchCommand(const DesktopEntry& deskt
 
 
 // Expands a single argument template by substituting field codes with actual data.
-std::vector<std::string> XDGBasedAppProvider::ExpandArgTemplate(const ArgTemplate& arg_template, const std::vector<std::string>& filepaths, const DesktopEntry& desktop_entry) const
+std::vector<std::string> XDGBasedAppProvider::ExpandFieldCodes(const ExecArgTemplate& arg_template, const std::vector<std::string>& filepaths, const DesktopEntry& desktop_entry) const
 {
 	// Compliance: the spec forbids field code expansion inside quoted arguments. Also fast-path if no '%' is present.
 	if (arg_template.is_quoted_literal || arg_template.value.find('%') == std::string::npos) {
@@ -2160,7 +2167,7 @@ XDGBasedAppProvider::OperationContext::OperationContext(XDGBasedAppProvider& p) 
 	// 2. Load system paths and association files
 	provider._op_desktop_file_dirpaths = provider.GetDesktopFileSearchDirpaths();
 
-	provider.IndexAllDesktopFiles(provider._op_desktop_file_dirpaths.value());
+	provider._id_to_path_map = provider.IndexAllDesktopFiles();
 
 	auto mimeapps_filepaths = provider.GetMimeappsListSearchFilepaths();
 	provider._op_mimeapps_lists_config = provider.ParseMimeappsLists(mimeapps_filepaths);

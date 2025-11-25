@@ -52,7 +52,7 @@ private:
 
 
 	// Represents a parsed argument template from the Exec key, potentially containing field codes.
-	struct ArgTemplate
+	struct ExecArgTemplate
 	{
 		std::string value;
 		bool is_quoted_literal = false; // if true, field codes inside this argument must be ignored.
@@ -78,7 +78,7 @@ private:
 		// Mutable cache for lazy parsing.
 		mutable bool is_exec_parsed = false;
 		mutable ExecutionModel execution_model = ExecutionModel::LegacyImplicit;
-		mutable std::vector<ArgTemplate> arg_templates;
+		mutable std::vector<ExecArgTemplate> arg_templates;
 	};
 
 
@@ -299,8 +299,8 @@ private:
 
 	// --- XDG Database Parsing & Caching ---
 	const std::optional<XDGBasedAppProvider::DesktopEntry>& GetOrLoadDesktopEntry(const std::string& desktop_id);
-	void IndexAllDesktopFiles(const std::vector<std::string>& search_dirpaths);
-	void IndexDirectoryRecursively(const std::string& current_path, const std::string& base_dir_prefix, std::set<std::pair<dev_t, ino_t>>& visited_inodes);
+	std::unordered_map<std::string, std::string> IndexAllDesktopFiles();
+	void IndexDirectoryRecursively(std::unordered_map<std::string, std::string>& result_map, const std::string& current_path, const std::string& base_dir_prefix, std::set<std::pair<dev_t, ino_t>>& visited_inodes);
 	MimeToDesktopEntryIndex BuildMimeIndexFromIds();
 	static MimeToDesktopAssociationsMap ParseAllMimeinfoCacheFiles(const std::vector<std::string>& search_dirpaths);
 	static void ParseMimeinfoCache(const std::string& filepath, MimeToDesktopAssociationsMap& mime_to_desktop_associations_map);
@@ -317,9 +317,9 @@ private:
 
 	// --- Launch command constructing ---
 	static void AnalyzeExecLine(const DesktopEntry& desktop_entry);
-	static std::vector<XDGBasedAppProvider::ArgTemplate> TokenizeExecString(const std::string& exec_value);
+	static std::vector<XDGBasedAppProvider::ExecArgTemplate> TokenizeExecString(const std::string& exec_value);
 	std::string AssembleLaunchCommand(const DesktopEntry& desktop_entry, const std::vector<std::string>& files) const;
-	std::vector<std::string> ExpandArgTemplate(const ArgTemplate& arg_template, const std::vector<std::string>& files, const DesktopEntry& desktop_entry) const;
+	std::vector<std::string> ExpandFieldCodes(const ExecArgTemplate& arg_template, const std::vector<std::string>& files, const DesktopEntry& desktop_entry) const;
 	static std::string PathToUri(const std::string &path);
 	static std::string UnescapeGKeyFileString(const std::string& str);
 
