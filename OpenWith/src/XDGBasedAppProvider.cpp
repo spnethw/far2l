@@ -509,9 +509,9 @@ void XDGBasedAppProvider::AppendCandidatesFromMimeinfoCache(const std::vector<st
 // Finds and registers candidates using the internal runtime index built during the fullscan by ParseAllDesktopFiles().
 void XDGBasedAppProvider::AppendCandidatesFromDesktopEntryIndex(const std::vector<std::string>& expanded_mimes, CandidateMap& unique_candidates)
 {
-	const auto& mime_to_desktop_entry_map = _op_mime_to_desktop_entry_map.value();
+	const auto& mime_to_desktop_entry = _op_mime_to_desktop_entry_map.value();
 
-	// Tracks the highest score for each application DesktopEntry* to avoid rank demotion by a less-specific MIME type.
+	// Tracks the highest score for each DesktopEntry* to avoid rank demotion by a less-specific MIME type.
 	std::unordered_map<const DesktopEntry*, AssociationScore> desktop_entry_to_score_map;
 
 	// Iterate through the expanded MIME types list (ordered from most specific to least specific).
@@ -519,8 +519,8 @@ void XDGBasedAppProvider::AppendCandidatesFromDesktopEntryIndex(const std::vecto
 
 	for (int i = 0; i < total_mimes; ++i) {
 		const auto& mime = expanded_mimes[i];
-		auto it_index = mime_to_desktop_entry_map.find(mime);
-		if (it_index == mime_to_desktop_entry_map.end()) {
+		auto it_index = mime_to_desktop_entry.find(mime);
+		if (it_index == mime_to_desktop_entry.end()) {
 			continue; // No applications associated with this MIME type in the index.
 		}
 		int rank = (total_mimes - i) * Ranking::SPECIFICITY_MULTIPLIER + Ranking::SOURCE_RANK_CACHE_OR_SCAN;
@@ -1147,8 +1147,6 @@ void XDGBasedAppProvider::IndexDirectoryRecursively(std::unordered_map<std::stri
 		std::string name = dir_entry->d_name;
 		if (name == "." || name == "..") continue;
 
-		std::string full_path = current_path + "/" + name;
-
 		bool is_dir = false;
 		bool is_reg = false;
 		bool need_stat = true;
@@ -1162,9 +1160,14 @@ void XDGBasedAppProvider::IndexDirectoryRecursively(std::unordered_map<std::stri
 				is_dir = true;
 			} else if (dir_entry->d_type == DT_REG) {
 				is_reg = true;
+			} else {
+				// Skip special file types (e.g., sockets, pipes, devices).
+				continue;
 			}
 		}
 #endif
+
+		std::string full_path = current_path + "/" + name;
 
 		if (need_stat) {
 			// Fallback to stat():
@@ -1185,11 +1188,10 @@ void XDGBasedAppProvider::IndexDirectoryRecursively(std::unordered_map<std::stri
 			if (name.size() > 8 && name.compare(name.size() - 8, 8, ".desktop") == 0) {
 				// Calculate ID: relative path from base_dir_prefix, with '/' replaced by '-'.
 				if (full_path.size() > base_dir_prefix.size() + 1) {
-					std::string relative_path = full_path.substr(base_dir_prefix.size() + 1); // +1 for the separator
-					std::string id = relative_path;
+					std::string id = full_path.substr(base_dir_prefix.size() + 1); // +1 for the separator
 					std::replace(id.begin(), id.end(), '/', '-');
 					// Store in the map. First found wins.
-					result_map.try_emplace(id, full_path);
+					result_map.try_emplace(std::move(id), full_path);
 				}
 			}
 		}
