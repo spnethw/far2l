@@ -302,8 +302,9 @@ private:
 	static void ParseMimeinfoCache(const std::string& filepath, MimeToDesktopAssociationsMap& mime_to_desktop_associations_map);
 	static MimeappsListsConfig ParseMimeappsLists(const std::vector<std::string>& filepaths);
 	static void ParseMimeappsList(const std::string& filepath, MimeappsListsConfig& mimeapps_lists_config);
-	static std::optional<XDGBasedAppProvider::DesktopEntry> ParseDesktopFile(const std::string& filepath);
-	static std::string GetLocalizedValue(const std::unordered_map<std::string, std::string>& kv_entries, const std::string& base_key);
+	std::optional<XDGBasedAppProvider::DesktopEntry> ParseDesktopFile(const std::string& filepath);
+	std::string GetLocalizedValue(const std::unordered_map<std::string, std::string>& kv_entries, const std::string& base_key) const;
+	static std::vector<std::string> GenerateLocaleSuffixes();
 	static std::unordered_map<std::string, std::string> LoadMimeAliases();
 	static std::string_view GetMajorMimeType(const std::string& mime);
 	static std::unordered_map<std::string, std::string> LoadMimeSubclasses();
@@ -391,6 +392,7 @@ private:
 	std::optional<MimeappsListsConfig> _op_mimeapps_lists_config;      // combined mimeapps.list data
 	std::optional<std::vector<std::string>> _op_desktop_file_dirpaths; // XDG .desktop file search paths
 	std::optional<std::string> _op_current_desktop_env; // $XDG_CURRENT_DESKTOP
+	std::vector<std::string> _locale_suffixes;
 
 	// Tool availability flags, cached for the duration of one GetAppCandidates operation.
 	// They are calculated in OperationContext::OperationContext.
