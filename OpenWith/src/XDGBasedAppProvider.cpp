@@ -1450,38 +1450,136 @@ std::optional<XDGBasedAppProvider::DesktopEntry> XDGBasedAppProvider::ParseDeskt
 }
 
 
-// Retrieves a localized string value (e.g., Name[en_US]) from a map of key-value pairs,
-// following the locale resolution logic based on environment variables.
-// Priority: LC_ALL -> LC_MESSAGES -> LANG.
-// Fallback: full locale (en_US) -> language only (en) -> unlocalized key.
+// Retrieves a localized string value (e.g., Name[en_US]) from a map of key-value pairs.
+// This implementation strictly follows the "Desktop Entry Specification", Section 5:
+// "Localized values for keys". It handles POSIX locale precedence and parses
+// complex locale strings (e.g., "sr_YU.UTF-8@Latn") to generate the correct
+// lookup fallback sequence defined in Table 1 of the specification.
 std::string XDGBasedAppProvider::GetLocalizedValue(const std::unordered_map<std::string, std::string>& kv_entries,
 												   const std::string& base_key)
 {
+	// 1. Determine the active locale based on POSIX precedence rules for message localization.
+	// Priority: LC_ALL > LC_MESSAGES > LANG.
+	// We ignore the GNU extension "LANGUAGE" as it is not part of the Desktop Entry Specification.
 	const char* env_vars[] = {"LC_ALL", "LC_MESSAGES", "LANG"};
+	std::string raw_locale;
+
 	for (const auto* var : env_vars) {
-		const char* value = getenv(var);
-		if (value && *value && std::strlen(value) >= 2) {
-			std::string locale(value);
-			// Remove character set suffix (e.g., en_US.UTF-8 -> en_US).
-			size_t dot_pos = locale.find('.');
-			if (dot_pos != std::string::npos) {
-				locale = locale.substr(0, dot_pos);
-			}
-			if (!locale.empty()) {
-				// Try full locale (e.g., Name[en_US]).
-				auto it = kv_entries.find(base_key + "[" + locale + "]");
-				if (it != kv_entries.end()) return it->second;
-				// Try language part only (e.g., Name[en]).
-				size_t underscore_pos = locale.find('_');
-				if (underscore_pos != std::string::npos) {
-					std::string lang_only = locale.substr(0, underscore_pos);
-					it = kv_entries.find(base_key + "[" + lang_only + "]");
-					if (it != kv_entries.end()) return it->second;
-				}
-			}
+		if (const char* val = getenv(var); val && *val) {
+			raw_locale = val;
+			break;
 		}
 	}
-	// Fallback to the unlocalized key (e.g., Name=).
+
+	// If no locale is set, or if it's explicitly "C" (which usually implies default),
+	// we might still want to check for "Name[C]" if it exists, though it's rare.
+	// The spec allows keys like "Name[C]".
+	if (raw_locale.empty()) {
+		auto it = kv_entries.find(base_key);
+		return (it != kv_entries.end()) ? it->second : "";
+	}
+
+	// 2. Normalize the locale string.
+	// The specification states: "the .ENCODING part stripped".
+	// POSIX locale format: [language[_territory][.codeset][@modifier]]
+	// Examples:
+	// "sr_YU.UTF-8@Latn" -> "sr_YU@Latn" (Encoding removed, modifier preserved)
+	// "de_DE.UTF-8"      -> "de_DE"      (Encoding removed)
+	// "ca@valencia"      -> "ca@valencia" (No encoding to remove)
+
+	std::string locale;
+	locale.reserve(raw_locale.size());
+
+	size_t dot_pos = raw_locale.find('.');
+	size_t at_pos = raw_locale.find('@');
+
+	if (dot_pos != std::string::npos) {
+		// Append part before the dot (language + optional territory)
+		locale.append(raw_locale, 0, dot_pos);
+		// If a modifier exists (usually after encoding), append it.
+		// We assume standard POSIX structure where modifier comes after encoding.
+		if (at_pos != std::string::npos && at_pos > dot_pos) {
+			locale.append(raw_locale, at_pos);
+		}
+	} else {
+		locale = raw_locale;
+	}
+
+	// Recalculate positions in the normalized string for parsing components
+	size_t norm_at_pos = locale.find('@');
+	size_t norm_under_pos = locale.find('_');
+
+	// 3. Parse components: Language, Country, Modifier.
+	std::string lang, country, modifier;
+
+	if (norm_at_pos != std::string::npos) {
+		modifier = locale.substr(norm_at_pos + 1);
+		// Language/Country is everything before '@'
+		std::string base = locale.substr(0, norm_at_pos);
+		size_t base_under = base.find('_');
+		if (base_under != std::string::npos) {
+			lang = base.substr(0, base_under);
+			country = base.substr(base_under + 1);
+		} else {
+			lang = base;
+		}
+	} else {
+		// No modifier
+		if (norm_under_pos != std::string::npos) {
+			lang = locale.substr(0, norm_under_pos);
+			country = locale.substr(norm_under_pos + 1);
+		} else {
+			lang = locale;
+		}
+	}
+
+	// 4. Generate lookup candidates strictly according to "Table 1: Locale Matching"
+	// in the specification.
+	std::vector<std::string> candidates;
+	candidates.reserve(4);
+
+	if (!modifier.empty()) {
+		if (!country.empty()) {
+			// Case: lang_COUNTRY@MODIFIER
+			// 1. lang_COUNTRY@MODIFIER
+			candidates.push_back(lang + "_" + country + "@" + modifier);
+			// 2. lang_COUNTRY
+			candidates.push_back(lang + "_" + country);
+			// 3. lang@MODIFIER
+			candidates.push_back(lang + "@" + modifier);
+			// 4. lang
+			candidates.push_back(lang);
+		} else {
+			// Case: lang@MODIFIER (e.g. ca@valencia)
+			// 1. lang@MODIFIER
+			candidates.push_back(lang + "@" + modifier);
+			// 2. lang
+			candidates.push_back(lang);
+		}
+	} else {
+		if (!country.empty()) {
+			// Case: lang_COUNTRY
+			// 1. lang_COUNTRY
+			candidates.push_back(lang + "_" + country);
+			// 2. lang
+			candidates.push_back(lang);
+		} else {
+			// Case: lang
+			candidates.push_back(lang);
+		}
+	}
+
+	// 5. Iterate through candidates and return the first match.
+	for (const auto& candidate : candidates) {
+		// Construct the full key, e.g., "Name[sr_YU@Latn]"
+		std::string lookup_key = base_key + "[" + candidate + "]";
+		auto it = kv_entries.find(lookup_key);
+		if (it != kv_entries.end()) {
+			return it->second;
+		}
+	}
+
+	// 6. Fallback: Return the unlocalized value (e.g., "Name").
 	auto it = kv_entries.find(base_key);
 	return (it != kv_entries.end()) ? it->second : "";
 }
