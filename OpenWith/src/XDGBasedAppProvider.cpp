@@ -1255,10 +1255,10 @@ XDGBasedAppProvider::MimeToDesktopEntryIndex XDGBasedAppProvider::ParseAllDeskto
 
 
 // Parses all mimeinfo.cache files found in the XDG search paths into a single map, avoiding repeated file I/O.
-XDGBasedAppProvider::MimeToDesktopAssociationsMap XDGBasedAppProvider::ParseAllMimeinfoCacheFiles(const std::vector<std::string>& search_dirpaths)
+XDGBasedAppProvider::MimeToDesktopAssociationsMap XDGBasedAppProvider::ParseAllMimeinfoCacheFiles()
 {
 	MimeToDesktopAssociationsMap mime_to_desktop_associations_map;
-	for (const auto& dirpath : search_dirpaths) {
+	for (const auto& dirpath : *_op_desktop_file_dirpaths) {
 		std::string filepath = dirpath + "/mimeinfo.cache";
 		if (IsReadableFile(filepath)) {
 			ParseMimeinfoCache(filepath, mime_to_desktop_associations_map);
@@ -2220,7 +2220,7 @@ XDGBasedAppProvider::OperationContext::OperationContext(XDGBasedAppProvider& p) 
 
 	if (provider._use_mimeinfo_cache) {
 		// Attempt to load from mimeinfo.cache first, as per user setting.
-		provider._op_mime_to_desktop_associations_map = XDGBasedAppProvider::ParseAllMimeinfoCacheFiles(provider._op_desktop_file_dirpaths.value());
+		provider._op_mime_to_desktop_associations_map = provider.ParseAllMimeinfoCacheFiles();
 
 		// Fallback: If the cache is empty (files not found or all are empty),
 		// reset the optional. This will trigger the full scan logic below.

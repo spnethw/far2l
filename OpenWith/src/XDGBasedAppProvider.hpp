@@ -298,7 +298,7 @@ private:
 	void IndexDirectoryRecursively(std::unordered_map<std::string, std::string>& result_map, const std::string& current_path, const std::string& base_dir_prefix, VisitedInodeSet& visited_inodes);
 	const std::optional<XDGBasedAppProvider::DesktopEntry>& GetOrLoadDesktopEntry(const std::string& desktop_id);
 	MimeToDesktopEntryIndex ParseAllDesktopFiles();
-	static MimeToDesktopAssociationsMap ParseAllMimeinfoCacheFiles(const std::vector<std::string>& search_dirpaths);
+	MimeToDesktopAssociationsMap ParseAllMimeinfoCacheFiles();
 	static void ParseMimeinfoCache(const std::string& filepath, MimeToDesktopAssociationsMap& mime_to_desktop_associations_map);
 	static MimeappsListsConfig ParseMimeappsLists(const std::vector<std::string>& filepaths);
 	static void ParseMimeappsList(const std::string& filepath, MimeappsListsConfig& mimeapps_lists_config);
