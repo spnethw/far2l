@@ -1450,25 +1450,37 @@ std::optional<XDGBasedAppProvider::DesktopEntry> XDGBasedAppProvider::ParseDeskt
 }
 
 
+// Retrieves a localized string value for a given key following the Desktop Entry Specification priority rules.
+// If no localized key is found, it falls back to the default (unlocalized) key.
 std::string XDGBasedAppProvider::GetLocalizedValue(const std::unordered_map<std::string, std::string>& kv_entries,
 												   const std::string& base_key) const
 {
+	// Optimization: Allocate a single buffer for key construction to avoid
+	// repeated heap allocations inside the loop.
+	std::string key_buffer;
+	key_buffer.reserve(base_key.size() + 16);
+	key_buffer = base_key;
+	const size_t base_len = base_key.size();
 	for (const auto& suffix : _locale_suffixes) {
-		if (auto it = kv_entries.find(base_key + "[" + suffix + "]"); it != kv_entries.end()) {
+		key_buffer.push_back('[');
+		key_buffer.append(suffix);
+		key_buffer.push_back(']');
+		if (auto it = kv_entries.find(key_buffer); it != kv_entries.end()) {
 			return it->second;
 		}
+		key_buffer.resize(base_len);
 	}
-
 	auto it = kv_entries.find(base_key);
 	return (it != kv_entries.end()) ? it->second : "";
 }
 
 
+// Generates a prioritized list of locale suffixes based on system environment variables.
 std::vector<std::string> XDGBasedAppProvider::GenerateLocaleSuffixes()
 {
-	const char* env_vars[] = {"LC_ALL", "LC_MESSAGES", "LANG"};
+	const char* locale_env_vars[] = {"LC_ALL", "LC_MESSAGES", "LANG"};
 	std::string locale;
-	for (const char* var : env_vars) {
+	for (const char* var : locale_env_vars) {
 		if (const char* val = std::getenv(var); val && *val) {
 			locale = val;
 			break;
@@ -1477,28 +1489,29 @@ std::vector<std::string> XDGBasedAppProvider::GenerateLocaleSuffixes()
 	if (locale.empty()) {
 		return {};
 	}
-
+	// Locale must be of the form: lang[_COUNTRY][.ENCODING][@MODIFIER]
+	// According to the Desktop Entry Specification the encoding part (e.g., ".UTF-8") is ignored when matching.
 	if (size_t dot = locale.find('.'); dot != std::string::npos) {
 		size_t at = locale.find('@');
-		if (at != std::string::npos && at > dot)
-			locale.replace(dot, at - dot, "");
-		else
-			locale.resize(dot);
+		if (at != std::string::npos && at > dot) {
+			locale.replace(dot, at - dot, ""); // Remove encoding between '.' and '@'
+		} else {
+			locale.resize(dot); // Remove trailing encoding
+		}
 	}
-
 	std::vector<std::string> suffixes;
 	suffixes.reserve(4);
-	suffixes.push_back(locale);
+	suffixes.push_back(locale); // 1. Full locale match
 	size_t at = locale.find('@');
 	size_t under = locale.find('_');
 	if (at != std::string::npos) {
-		suffixes.push_back(locale.substr(0, at));
+		suffixes.push_back(locale.substr(0, at)); // 2. Match without modifier
 	}
 	if (under != std::string::npos) {
 		if (at != std::string::npos) {
-			suffixes.push_back(locale.substr(0, under) + locale.substr(at));
+			suffixes.push_back(locale.substr(0, under) + locale.substr(at)); // 3. Match language with modifier
 		}
-		suffixes.push_back(locale.substr(0, under));
+		suffixes.push_back(locale.substr(0, under)); // 4. Match language only
 	}
 	return suffixes;
 }
