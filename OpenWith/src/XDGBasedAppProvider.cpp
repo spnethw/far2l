@@ -120,7 +120,7 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 	_last_candidates_source_info.clear();
 	_last_unique_mime_profiles.clear();
 
-	// RAII helper: loads mimeapps.list, checks for external tools, and initializes lookup maps.
+	// RAII helper: loads 'mimeapps.list', checks for external tools, and initializes lookup maps.
 	OperationContext op_context(*this);
 
 	CandidateMap final_candidates;
@@ -290,7 +290,7 @@ std::vector<Field> XDGBasedAppProvider::GetCandidateDetails(const CandidateInfo&
 
 	details.push_back({m_GetMsg(MDesktopFile), StrMB2Wide(desktop_entry.desktop_filepath)});
 
-	// Retrieve the source info (e.g., "mimeapps.list") stored during GetAppCandidates.
+	// Retrieve the source info (e.g., 'mimeapps.list') stored during GetAppCandidates.
 	// This is only available for single-file selections.
 	auto it_source = _last_candidates_source_info.find(candidate.id);
 	if (it_source != _last_candidates_source_info.end()) {
@@ -369,7 +369,7 @@ std::vector<std::wstring> XDGBasedAppProvider::GetMimeTypes()
 
 // ****************************** Searching and ranking candidates logic ******************************
 
-// Resolves MIME types to a map of unique candidates.
+// Orchestrates the candidate discovery process for a given list of MIME types.
 XDGBasedAppProvider::CandidateMap XDGBasedAppProvider::DiscoverCandidatesForExpandedMimes(const std::vector<std::string>& expanded_mimes)
 {
 	// This map will store the final, unique candidates for this MIME list.
@@ -381,6 +381,7 @@ XDGBasedAppProvider::CandidateMap XDGBasedAppProvider::DiscoverCandidatesForExpa
 		std::string desktop_id = QuerySystemDefaultApplication(mime_for_default);
 		if (!desktop_id.empty()) {
 			if (!IsAssociationRemoved(mime_for_default, desktop_id)) {
+				// Highest possible rank for the explicit system default.
 				int rank = (expanded_mimes.size() - 0) * Ranking::SPECIFICITY_MULTIPLIER + Ranking::SOURCE_RANK_GLOBAL_DEFAULT;
 				RegisterCandidateById(unique_candidates, desktop_id, rank,  "xdg-mime query default " + mime_for_default);
 			}
@@ -391,10 +392,10 @@ XDGBasedAppProvider::CandidateMap XDGBasedAppProvider::DiscoverCandidatesForExpa
 
 	// Find candidates using the cache prepared by OperationContext.
 	if (_op_mime_to_desktop_associations_index.has_value()) {
-		// Use the results from 'mimeinfo.cache' (it was successfully loaded and was not empty).
+		// Use 'mimeinfo.cache' (fast path).
 		AppendCandidatesFromMimeinfoCache(expanded_mimes, unique_candidates);
 	} else {
-		// Use the fullscan index (either because caching was disabled, or as a fallback).
+		// Use internal index built from full .desktop file scan (slow path / fallback).
 		AppendCandidatesFromDesktopEntryIndex(expanded_mimes, unique_candidates);
 	}
 
@@ -488,7 +489,7 @@ void XDGBasedAppProvider::AppendCandidatesFromMimeinfoCache(const std::vector<st
 				// Insert or update the score for this Desktop ID.
 				auto [it, inserted] = desktop_id_to_score_map.try_emplace(desktop_id, rank, source_info);
 
-				// Update only if the new rank is higher than the existing one.
+				// Update only if the new rank is higher than the existing one (i.e., we found a more specific MIME match).
 				if (!inserted && rank > it->second.rank) {
 					it->second.rank = rank;
 					it->second.source_info = source_info;
@@ -537,7 +538,7 @@ void XDGBasedAppProvider::AppendCandidatesFromDesktopEntryIndex(const std::vecto
 			// Insert or update the score for this DesktopEntry pointer.
 			auto [it, inserted] = desktop_entry_to_score_map.try_emplace(desktop_entry_ptr, rank, source_info);
 
-			// Update only if the new rank is higher than the existing one.
+			// Update only if the new rank is higher than the existing one (i.e., we found a more specific MIME match).
 			if (!inserted && rank > it->second.rank) {
 				it->second.rank = rank;
 				it->second.source_info = source_info;
@@ -552,8 +553,7 @@ void XDGBasedAppProvider::AppendCandidatesFromDesktopEntryIndex(const std::vecto
 }
 
 
-// Processes a single application candidate: validates it, filters it, and adds it to the map.
-// This version retrieves the DesktopEntry from cache via its ID.
+// Helper that resolves a Desktop File ID to a DesktopEntry object and initiates registration.
 void XDGBasedAppProvider::RegisterCandidateById(CandidateMap& unique_candidates, const std::string& desktop_id,
 												int rank, const std::string& source_info)
 {
@@ -567,8 +567,7 @@ void XDGBasedAppProvider::RegisterCandidateById(CandidateMap& unique_candidates,
 }
 
 
-// This is the core validation and registration helper.
-// It filters a candidate (TryExec, ShowIn/NotShowIn) and adds it to the map.
+// Core validation, filtering and registration logic for a candidate application.
 void XDGBasedAppProvider::RegisterCandidateFromDesktopEntry(CandidateMap& unique_candidates, const DesktopEntry& desktop_entry,
 											int rank, const std::string& source_info)
 {
@@ -602,7 +601,7 @@ void XDGBasedAppProvider::RegisterCandidateFromDesktopEntry(CandidateMap& unique
 }
 
 
-// Adds a new candidate to the results map or updates its rank if a better one is found.
+// Adds a candidate to the result map, handling deduplication and rank upgrades.
 void XDGBasedAppProvider::AddOrUpdateCandidate(CandidateMap& unique_candidates, const DesktopEntry& desktop_entry,
 											   int rank, const std::string& source_info)
 {
@@ -611,7 +610,7 @@ void XDGBasedAppProvider::AddOrUpdateCandidate(CandidateMap& unique_candidates, 
 
 	auto [it, inserted] = unique_candidates.try_emplace(unique_key, RankedCandidate{&desktop_entry, rank, source_info});
 
-	// If the candidate already exists, update it only if the new rank is higher.
+	// If the candidate already exists, we keep the version with the HIGHEST rank.
 	if (!inserted && rank > it->second.rank) {
 		it->second.rank = rank;
 		it->second.desktop_entry = &desktop_entry;
@@ -620,8 +619,8 @@ void XDGBasedAppProvider::AddOrUpdateCandidate(CandidateMap& unique_candidates, 
 }
 
 
-// Checks if an application association for a given MIME type is explicitly removed
-// in the [Removed Associations] section of mimeapps.list.
+// Checks if an application association for a given MIME type is explicitly forbidden
+// in the [Removed Associations] section of 'mimeapps.list'.
 bool XDGBasedAppProvider::IsAssociationRemoved(const std::string& mime, const std::string& desktop_id)
 {
 	const auto& mimeapps_lists = _op_mimeapps_lists_cache.value();
@@ -633,6 +632,7 @@ bool XDGBasedAppProvider::IsAssociationRemoved(const std::string& mime, const st
 	}
 
 	// 2. Check for a wildcard match (e.g., "image/*")
+	// Some implementations or users might ban an app from handling an entire category of types.
 	const size_t slash_pos = mime.find('/');
 	if (slash_pos != std::string::npos) {
 		const std::string wildcard_mime = mime.substr(0, slash_pos) + "/*";
@@ -646,7 +646,7 @@ bool XDGBasedAppProvider::IsAssociationRemoved(const std::string& mime, const st
 }
 
 
-// Converts the final map of candidates into a vector and sorts it.
+// Flattens the unique candidate map into a sorted vector for display.
 std::vector<XDGBasedAppProvider::RankedCandidate> XDGBasedAppProvider::BuildSortedRankedCandidatesList(const CandidateMap& candidate_map)
 {
 	// Convert the map of unique candidates to a vector for sorting.
@@ -672,7 +672,7 @@ std::vector<XDGBasedAppProvider::RankedCandidate> XDGBasedAppProvider::BuildSort
 }
 
 
-// Converts the sorted list of RankedCandidates into the final CandidateInfo list for the UI.
+// Transforms internal RankedCandidate objects into the UI-agnostic CandidateInfo structure.
 std::vector<CandidateInfo> XDGBasedAppProvider::FormatCandidatesForUI(
 	const std::vector<RankedCandidate>& ranked_candidates,
 	bool store_source_info)
@@ -769,7 +769,6 @@ XDGBasedAppProvider::RawMimeProfile XDGBasedAppProvider::GetRawMimeProfile(const
 		profile.stat_mime = "inode/blockdevice";
 	}
 
-	// Return the populated profile.
 	return profile;
 }
 
@@ -797,7 +796,6 @@ std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const
 	};
 
 	// --- Step 1: Initial, most specific MIME type detection ---
-	// Use the pre-detected types from the RawMimeProfile in order of priority.
 	add_unique(profile.xdg_mime);
 	add_unique(profile.file_mime);
 	add_unique(profile.magika_mime);
@@ -1202,12 +1200,10 @@ void XDGBasedAppProvider::IndexDirectoryRecursively(std::unordered_map<std::stri
 // Retrieves a DesktopEntry from the cache or parses it from disk if not present.
 const std::optional<XDGBasedAppProvider::DesktopEntry>& XDGBasedAppProvider::GetOrLoadDesktopEntry(const std::string& desktop_id)
 {
-	// 1. Check if the entry object is already cached.
 	if (auto it = _desktop_id_to_desktop_entry_cache.find(desktop_id); it != _desktop_id_to_desktop_entry_cache.end()) {
 		return it->second;
 	}
 
-	// 2. Resolve the ID to a file path using the index.
 	auto it_path = _op_desktop_id_to_path_index.find(desktop_id);
 	if (it_path != _op_desktop_id_to_path_index.end()) {
 		const std::string& filepath = it_path->second;
@@ -1667,7 +1663,7 @@ std::vector<std::string> XDGBasedAppProvider::GetMimeappsListSearchFilepaths()
 		add_path(dir + "/mimeapps.list");
 	}
 
-	// Data directory mimeapps.list files (user and system) are legacy locations.
+	// Data directory 'mimeapps.list' files (user and system) are legacy locations.
 	std::string xdg_data_home = GetEnv("XDG_DATA_HOME", "");
 	if (!xdg_data_home.empty() && xdg_data_home[0] == '/') {
 		add_path(xdg_data_home + "/applications/mimeapps.list");

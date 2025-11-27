@@ -74,7 +74,7 @@ private:
 		std::string not_show_in;
 		std::string terminal;
 
-		// Mutable cache for lazy parsing.
+		// Mutable cache for lazy parsing: analysis is performed only if the application is selected as a candidate.
 		mutable bool is_exec_parsed = false;
 		mutable ExecutionModel execution_model = ExecutionModel::LegacyImplicit;
 		mutable std::vector<ExecArgTemplate> arg_templates;
@@ -89,18 +89,16 @@ private:
 	// Represents the "raw" MIME profile of a file, derived from all available detection tools before any expansion.
 	struct RawMimeProfile
 	{
-		// MIME type results from different tools
 		std::string xdg_mime;		// result from 'xdg-mime query filetype'
 		std::string file_mime;		// result from 'file --mime-type'
 		std::string magika_mime;	// result from 'magika --format '%m''
 		std::string ext_mime;		// result from internal extension fallback map
 		std::string stat_mime;		// result from internal stat() analysis (e.g., inode/directory)
 
-		bool is_regular_file;           // True if S_ISREG
+		bool is_regular_file;		// true if S_ISREG
 
 		bool operator==(const RawMimeProfile& other) const
 		{
-			// Compare all fields that define the profile
 			return std::tie(is_regular_file, xdg_mime, file_mime, magika_mime, ext_mime, stat_mime) ==
 				   std::tie(other.is_regular_file, other.xdg_mime, other.file_mime, other.magika_mime, other.ext_mime, other.stat_mime);
 		}
@@ -113,14 +111,12 @@ private:
 				auto hash_combine = [](std::size_t& seed, std::size_t hash_val) {
 					seed ^= hash_val + 0x9e3779b9 + (seed << 6) + (seed >> 2);
 				};
-
 				std::size_t seed = std::hash<std::string>{}(s.xdg_mime);
 				hash_combine(seed, std::hash<std::string>{}(s.file_mime));
 				hash_combine(seed, std::hash<std::string>{}(s.magika_mime));
 				hash_combine(seed, std::hash<std::string>{}(s.ext_mime));
 				hash_combine(seed, std::hash<std::string>{}(s.stat_mime));
 				hash_combine(seed, std::hash<bool>{}(s.is_regular_file));
-
 				return seed;
 			}
 		};
@@ -132,8 +128,7 @@ private:
 	// Structures representing parsed data from 'mimeapps.list', 'mimeinfo.cache', etc.
 	// ******************************************************************************
 
-	// This struct represents a single association rule and links a handler's .desktop file
-	// to the configuration file (e.g., 'mimeapps.list' or 'mimeinfo.cache') that specified the rule.
+	// Links a Desktop ID to the source file ('mimeapps.list' or 'mimeinfo.cache') defining the association.
 	struct DesktopAssociation
 	{
 		std::string desktop_id;
@@ -145,7 +140,7 @@ private:
 	};
 
 
-	// Represents the combined associations from all parsed 'mimeapps.list' files.
+	// Represents the merged content of all parsed 'mimeapps.list' files found in XDG directories.
 	struct MimeappsListsConfig
 	{
 		// MIME type -> default application from [Default Applications].
@@ -165,12 +160,11 @@ private:
 	// Constants for the tiered ranking system.
 	struct Ranking
 	{
-		// A multiplier for MIME type specificity. Must be greater than the max source rank.
-		// This ensures that specificity is the primary sorting factor.
+		// Specificity determines the base tier (Specific MIME > Generic MIME > Fallback).
 		static constexpr int SPECIFICITY_MULTIPLIER = 100;
 
-		// Ranks for association sources, from highest to lowest.
-		static constexpr int SOURCE_RANK_GLOBAL_DEFAULT = 5;   // xdg-mime query default
+		// Within the same specificity tier, the source determines priority.
+		static constexpr int SOURCE_RANK_GLOBAL_DEFAULT = 5;   // 'xdg-mime query default'
 		static constexpr int SOURCE_RANK_MIMEAPPS_DEFAULT = 4; // [Default Applications] in 'mimeapps.list'
 		static constexpr int SOURCE_RANK_MIMEAPPS_ADDED = 3;   // [Added Associations] in 'mimeapps.list'
 		static constexpr int SOURCE_RANK_CACHE_OR_SCAN = 2;    // 'mimeinfo.cache' or full .desktop scan
@@ -178,6 +172,7 @@ private:
 
 
 	// Holds a non-owning pointer to a cached DesktopEntry and its calculated rank.
+	// Used for sorting candidates before display.
 	struct RankedCandidate
 	{
 		const DesktopEntry* desktop_entry = nullptr;
@@ -186,17 +181,18 @@ private:
 
 		bool operator<(const RankedCandidate& other) const {
 			if (rank != other.rank) {
-				return rank > other.rank; // primary sort: descending by rank (highest rank first).
+				return rank > other.rank; // Descending by rank.
 			}
 			if (desktop_entry && other.desktop_entry) {
-				return desktop_entry->name < other.desktop_entry->name;	// secondary sort: ascending by name
+				return desktop_entry->name < other.desktop_entry->name;	// Ascending by name.
 			}
 			return desktop_entry == nullptr && other.desktop_entry != nullptr;
 		}
 	};
 
 
-	// Tracks ranking score and provenance info to identify the highest-ranked association.
+	// Temporary structure to track the best score found for a specific Desktop ID
+	// while iterating through multiple MIME types (specific -> generic).
 	struct AssociationScore
 	{
 		int rank;
@@ -205,8 +201,8 @@ private:
 	};
 
 
-	// A key for the unique_candidates map to distinguish between different applications
-	// that might have the same name but different Exec commands (e.g., from different .desktop files).
+	// Unique identifier for a candidate in the final map.
+	// Used to deduplicate identical applications that might be defined in different .desktop files.
 	struct AppUniqueKey
 	{
 		std::string_view name;
@@ -235,6 +231,7 @@ private:
 
 	// A helper struct to define a platform setting, linking its INI key,
 	// localized UI display name, its corresponding class member variable, and default value.
+
 	struct PlatformSettingDefinition {
 		std::string key;
 		LanguageID  display_name_id;
@@ -247,7 +244,11 @@ private:
 	// Group 6: Lifecycle & State Management
 	// ******************************************************************************
 
-	// RAII helper to manage the lifecycle of the operation-scoped state.
+	// RAII helper to manage "Operation-Scoped" state.
+	// Caches expensive lookups (like parsing all .desktop files or checking tool existence)
+	// for the duration of a single user action (GetAppCandidates), then releases them.
+	// This avoids passing massive context structures through every function.
+
 	struct OperationContext
 	{
 		XDGBasedAppProvider& provider;
@@ -340,9 +341,8 @@ private:
 	// which would be invalidated by unordered_map rehashing.
 	std::map<std::string, std::optional<DesktopEntry>> _desktop_id_to_desktop_entry_cache;
 
-	// This cache maps a candidate's ID to its source info string from the last GetAppCandidates call.
+	// Maps a candidate's ID to its source info string from the last GetAppCandidates call for the single selected file.
 	// It's used by GetCandidateDetails to display where the association came from (e.g., 'mimeapps.list').
-	// This is only populated for single-file lookups.
 	std::map<std::wstring, std::string> _last_candidates_source_info;
 
 	// Caches all unique RawMimeProfile objects collected during the last GetAppCandidates call.
@@ -371,8 +371,8 @@ private:
 	// A pre-calculated lookup map (Key -> MemberPtr) for efficient updates in SetPlatformSettings.
 	std::map<std::wstring, bool XDGBasedAppProvider::*> _key_wide_to_member_map;
 
-	// Maps the setting's internal string key (e.g., "UseXdgMimeTool") to the command-line tool
-	// it depends on (e.g., "xdg-mime"). Used by GetPlatformSettings to check tool availability.
+	// Maps internal setting keys to required command-line tools.
+	// Used to disable settings in the UI if the required tool is missing.
 	using ToolKeyMap = std::map<std::string, std::string>;
 
 	inline static const ToolKeyMap s_tool_key_map = {
@@ -382,12 +382,10 @@ private:
 	};
 
 	// --- Operation-Scoped State ---
-	// These fields are managed by the OperationContext RAII helper.
-	// They are populated once at the start of GetAppCandidates and cleared at the end
-	// to avoid passing them as parameters through the entire call stack.
+	// Fields managed by OperationContext. Valid only during a GetAppCandidates call.
 
 	std::vector<std::string> _op_locale_suffixes;
-	std::optional<std::string> _op_current_desktop_env; // $XDG_CURRENT_DESKTOP
+	std::optional<std::string> _op_current_desktop_env; // from $XDG_CURRENT_DESKTOP
 	bool _op_xdg_mime_exists = false;
 	bool _op_file_tool_enabled_and_exists = false;
 	bool _op_magika_tool_enabled_and_exists = false;
@@ -395,13 +393,13 @@ private:
 	std::optional<std::vector<std::string>> _op_mimeapps_list_filepaths;
 	std::optional<std::vector<std::string>> _op_mime_database_dirpaths;
 	std::unordered_map<std::string, std::string> _op_desktop_id_to_path_index;
-	std::optional<std::unordered_map<std::string, std::string>> _op_alias_to_canonical_cache;
-	std::optional<std::unordered_map<std::string, std::vector<std::string>>> _op_canonical_to_aliases_cache;
-	std::optional<std::unordered_map<std::string, std::string>> _op_subclass_to_parent_cache;
-	std::optional<MimeappsListsConfig> _op_mimeapps_lists_cache;      // combined 'mimeapps.list' data
-	std::map<std::string, std::string> _op_mime_to_default_desktop_id_cache; // from 'xdg-mime query default'
-	std::optional<MimeToDesktopAssociationsMap> _op_mime_to_desktop_associations_index;	// from 'mimeinfo.cache'
-	std::optional<MimeToDesktopEntryIndex> _op_mime_to_desktop_entry_index;	// from full .desktop scan
+	std::optional<std::unordered_map<std::string, std::string>> _op_alias_to_canonical_cache;  // from 'aliases'
+	std::optional<std::unordered_map<std::string, std::vector<std::string>>> _op_canonical_to_aliases_cache;  // from 'aliases'
+	std::optional<std::unordered_map<std::string, std::string>> _op_subclass_to_parent_cache;  // from 'subclasses'
+	std::optional<MimeappsListsConfig> _op_mimeapps_lists_cache;  // from 'mimeapps.list'
+	std::map<std::string, std::string> _op_mime_to_default_desktop_id_cache;  // from 'xdg-mime query default'
+	std::optional<MimeToDesktopAssociationsMap> _op_mime_to_desktop_associations_index; 	// from 'mimeinfo.cache'
+	std::optional<MimeToDesktopEntryIndex> _op_mime_to_desktop_entry_index;  // from full .desktop scan
 };
 
 #endif
