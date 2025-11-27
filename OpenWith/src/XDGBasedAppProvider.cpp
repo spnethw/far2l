@@ -145,7 +145,7 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 
 		// Step 2: Candidate gathering.
 		// Resolve applications for each unique profile (K times, not N).
-		std::unordered_map<RawMimeProfile, CandidateMap, RawMimeProfile::Hash> candidate_cache;
+		std::unordered_map<RawMimeProfile, CandidateMap, RawMimeProfile::Hash> raw_mime_profile_to_candidate_map;
 		if (_last_unique_mime_profiles.empty()) {
 			return {};
 		}
@@ -156,7 +156,7 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 			if (candidates_for_profile.empty()) {
 				return {};
 			}
-			candidate_cache.try_emplace(profile, std::move(candidates_for_profile));
+			raw_mime_profile_to_candidate_map.try_emplace(profile, std::move(candidates_for_profile));
 		}
 
 		// Step 3: Intersection.
@@ -165,9 +165,9 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 		// Step 3a: Optimization (smallest set first).
 		// Start with the most restrictive set to minimize lookups and removals.
 		auto smallest_set_it = _last_unique_mime_profiles.begin();
-		size_t min_size = candidate_cache.at(*smallest_set_it).size();
+		size_t min_size = raw_mime_profile_to_candidate_map.at(*smallest_set_it).size();
 		for (auto it = std::next(smallest_set_it); it != _last_unique_mime_profiles.end(); ++it) {
-			size_t current_size = candidate_cache.at(*it).size();
+			size_t current_size = raw_mime_profile_to_candidate_map.at(*it).size();
 			if (current_size < min_size) {
 				min_size = current_size;
 				smallest_set_it = it;
@@ -178,14 +178,14 @@ std::vector<CandidateInfo> XDGBasedAppProvider::GetAppCandidates(const std::vect
 		const RawMimeProfile base_profile = *smallest_set_it;
 		// WARNING: candidate_cache.at(base_profile) becomes empty/invalid after this move.
 		// Safe because we explicitly skip 'base_profile' in the filtering loop below.
-		final_candidates = std::move(candidate_cache.at(base_profile));
+		final_candidates = std::move(raw_mime_profile_to_candidate_map.at(base_profile));
 
 		// Step 3c: Filter survivors against other profiles.
 		for (const auto& filter_profile : _last_unique_mime_profiles) {
 			if (filter_profile == base_profile) {
 				continue;
 			}
-			const CandidateMap& filter_candidates = candidate_cache.at(filter_profile);
+			const CandidateMap& filter_candidates = raw_mime_profile_to_candidate_map.at(filter_profile);
 			for (auto survivor_it = final_candidates.begin(); survivor_it != final_candidates.end(); ) {
 				const auto& survivor_key = survivor_it->first;
 				auto& survivor_candidate = survivor_it->second;
@@ -1103,27 +1103,27 @@ std::string XDGBasedAppProvider::GuessMimeTypeByExtension(const std::string& fil
 // ****************************** XDG database parsing & caching ******************************
 
 
-// Recursively scans search directories to build a map of Desktop File IDs to absolute file paths.
+// Recursively scans all XDG application directories to build an index mapping Desktop File IDs to their absolute file paths.
 std::unordered_map<std::string, std::string> XDGBasedAppProvider::IndexAllDesktopFiles()
 {
 	if (!_op_desktop_file_dirpaths.has_value()) {
 		return {};
 	}
 
-	std::unordered_map<std::string, std::string> id_to_path_map;
+	std::unordered_map<std::string, std::string> desktop_id_to_path_map;
 
 	VisitedInodeSet visited_inodes;
 
 	for (const auto& dirpath : *_op_desktop_file_dirpaths) {
-		IndexDirectoryRecursively(id_to_path_map, dirpath, dirpath, visited_inodes);
+		IndexDirectoryRecursively(desktop_id_to_path_map, dirpath, dirpath, visited_inodes);
 	}
 
-	return id_to_path_map;
+	return desktop_id_to_path_map;
 }
 
 
 // Recursive helper for directory scanning with loop protection.
-void XDGBasedAppProvider::IndexDirectoryRecursively(std::unordered_map<std::string, std::string>& result_map, const std::string& current_path, const std::string& base_dir_prefix, VisitedInodeSet &visited_inodes)
+void XDGBasedAppProvider::IndexDirectoryRecursively(std::unordered_map<std::string, std::string>& desktop_id_to_path_map, const std::string& current_path, const std::string& base_dir_prefix, VisitedInodeSet &visited_inodes)
 {
 	struct stat st;
 	if (stat(current_path.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) {
@@ -1181,7 +1181,7 @@ void XDGBasedAppProvider::IndexDirectoryRecursively(std::unordered_map<std::stri
 		}
 
 		if (is_dir) {
-			IndexDirectoryRecursively(result_map, full_path, base_dir_prefix, visited_inodes);
+			IndexDirectoryRecursively(desktop_id_to_path_map, full_path, base_dir_prefix, visited_inodes);
 		} else if (is_reg) {
 			if (name.size() > 8 && name.compare(name.size() - 8, 8, ".desktop") == 0) {
 				// Calculate ID: relative path from base_dir_prefix, with '/' replaced by '-'.
@@ -1189,7 +1189,7 @@ void XDGBasedAppProvider::IndexDirectoryRecursively(std::unordered_map<std::stri
 					std::string id = full_path.substr(base_dir_prefix.size() + 1); // +1 for the separator
 					std::replace(id.begin(), id.end(), '/', '-');
 					// Store in the map. First found wins.
-					result_map.try_emplace(std::move(id), full_path);
+					desktop_id_to_path_map.try_emplace(std::move(id), full_path);
 				}
 			}
 		}
@@ -1225,7 +1225,7 @@ const std::optional<XDGBasedAppProvider::DesktopEntry>& XDGBasedAppProvider::Get
 }
 
 
-// Builds the MIME index by iterating over all discovered Desktop IDs.
+// Builds a reverse index by iterating through all discovered Desktop IDs and parsing their fields.
 XDGBasedAppProvider::MimeToDesktopEntryIndex XDGBasedAppProvider::ParseAllDesktopFiles()
 {
 	MimeToDesktopEntryIndex index;
@@ -1252,7 +1252,7 @@ XDGBasedAppProvider::MimeToDesktopEntryIndex XDGBasedAppProvider::ParseAllDeskto
 }
 
 
-// Parses all 'mimeinfo.cache' files found in the XDG search paths into a single map, avoiding repeated file I/O.
+// Aggregates associations from all 'mimeinfo.cache' files found in the configured XDG data directories.
 XDGBasedAppProvider::MimeToDesktopAssociationsMap XDGBasedAppProvider::ParseAllMimeinfoCacheFiles()
 {
 	MimeToDesktopAssociationsMap mime_to_desktop_associations_map;
@@ -1266,7 +1266,7 @@ XDGBasedAppProvider::MimeToDesktopAssociationsMap XDGBasedAppProvider::ParseAllM
 }
 
 
-// Parses 'mimeinfo.cache' file format: [MIME Cache] section with mime/type=app1.desktop;app2.desktop;
+// Parses a single 'mimeinfo.cache' file. Extracts MIME-to-DesktopID mappings from the [MIME Cache] section.
 void XDGBasedAppProvider::ParseMimeinfoCache(const std::string& filepath, MimeToDesktopAssociationsMap& mime_to_desktop_associations_map)
 {
 	std::ifstream file(filepath);
@@ -1309,7 +1309,7 @@ void XDGBasedAppProvider::ParseMimeinfoCache(const std::string& filepath, MimeTo
 }
 
 
-// Combines multiple mimeapps.list files into a single association structure.
+// Reads and merges all 'mimeapps.list' configuration files in priority order into a single configuration object.
 XDGBasedAppProvider::MimeappsListsConfig XDGBasedAppProvider::ParseMimeappsLists()
 {
 	if (!_op_mimeapps_list_filepaths.has_value()) {
@@ -1323,7 +1323,7 @@ XDGBasedAppProvider::MimeappsListsConfig XDGBasedAppProvider::ParseMimeappsLists
 }
 
 
-// Parses a single mimeapps.list file, extracting Default/Added/Removed associations.
+// Parses a single 'mimeapps.list' file, extracting Default/Added/Removed associations.
 void XDGBasedAppProvider::ParseMimeappsList(const std::string& filepath, MimeappsListsConfig& mimeapps_lists_config)
 {
 	std::ifstream file(filepath);
@@ -1364,7 +1364,7 @@ void XDGBasedAppProvider::ParseMimeappsList(const std::string& filepath, Mimeapp
 }
 
 
-// Parses a .desktop file according to the Desktop Entry Specification.
+// Parses and validates a .desktop file from disk according to the Desktop Entry Specification.
 std::optional<XDGBasedAppProvider::DesktopEntry> XDGBasedAppProvider::ParseDesktopFile(const std::string& filepath)
 {
 	std::ifstream file(filepath);
@@ -1451,7 +1451,7 @@ std::optional<XDGBasedAppProvider::DesktopEntry> XDGBasedAppProvider::ParseDeskt
 }
 
 
-// Retrieves a localized string value for a given key following the Desktop Entry Specification priority rules.
+// Resolves the value of a key based on the current locale settings.
 // If no localized key is found, it falls back to the default (unlocalized) key.
 std::string XDGBasedAppProvider::GetLocalizedValue(const std::unordered_map<std::string, std::string>& kv_entries,
 												   const std::string& base_key) const
@@ -1636,7 +1636,7 @@ std::vector<std::string> XDGBasedAppProvider::GetDesktopFileSearchDirpaths()
 }
 
 
-// Returns XDG-compliant search paths for mimeapps.list files, ordered by priority.
+// Returns XDG-compliant search paths for 'mimeapps.list' files, ordered by priority.
 std::vector<std::string> XDGBasedAppProvider::GetMimeappsListSearchFilepaths()
 {
 	std::vector<std::string> filepaths;
@@ -1685,7 +1685,7 @@ std::vector<std::string> XDGBasedAppProvider::GetMimeappsListSearchFilepaths()
 }
 
 
-// Returns XDG-compliant search paths for MIME database files (aliases, subclasses, etc.)
+// Returns XDG-compliant search paths for MIME database files ('aliases', 'subclasses', etc.)
 std::vector<std::string> XDGBasedAppProvider::GetMimeDatabaseSearchDirpaths()
 {
 	std::vector<std::string> dirpaths;

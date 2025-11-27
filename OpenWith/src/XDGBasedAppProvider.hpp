@@ -295,7 +295,7 @@ private:
 
 	// --- XDG database parsing & caching ---
 	std::unordered_map<std::string, std::string> IndexAllDesktopFiles();
-	void IndexDirectoryRecursively(std::unordered_map<std::string, std::string>& result_map, const std::string& current_path, const std::string& base_dir_prefix, VisitedInodeSet& visited_inodes);
+	void IndexDirectoryRecursively(std::unordered_map<std::string, std::string>& desktop_id_to_path_map, const std::string& current_path, const std::string& base_dir_prefix, VisitedInodeSet& visited_inodes);
 	const std::optional<XDGBasedAppProvider::DesktopEntry>& GetOrLoadDesktopEntry(const std::string& desktop_id);
 	MimeToDesktopEntryIndex ParseAllDesktopFiles();
 	MimeToDesktopAssociationsMap ParseAllMimeinfoCacheFiles();
