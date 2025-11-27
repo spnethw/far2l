@@ -390,7 +390,7 @@ XDGBasedAppProvider::CandidateMap XDGBasedAppProvider::DiscoverCandidatesForExpa
 	AppendCandidatesFromMimeAppsLists(expanded_mimes, unique_candidates);
 
 	// Find candidates using the cache prepared by OperationContext.
-	if (_op_mime_to_desktop_associations_cache.has_value()) {
+	if (_op_mime_to_desktop_associations_index.has_value()) {
 		// Use the results from 'mimeinfo.cache' (it was successfully loaded and was not empty).
 		AppendCandidatesFromMimeinfoCache(expanded_mimes, unique_candidates);
 	} else {
@@ -463,7 +463,7 @@ void XDGBasedAppProvider::AppendCandidatesFromMimeAppsLists(const std::vector<st
 // Finds and registers candidates from the 'mimeinfo.cache' database: low source rank.
 void XDGBasedAppProvider::AppendCandidatesFromMimeinfoCache(const std::vector<std::string>& expanded_mimes, CandidateMap& unique_candidates)
 {
-	const auto& mime_to_desktop_associations = _op_mime_to_desktop_associations_cache.value();
+	const auto& mime_to_desktop_associations = _op_mime_to_desktop_associations_index.value();
 
 	// Tracks the highest score for each Desktop ID to avoid rank demotion by a less-specific MIME type.
 	std::unordered_map<std::string, AssociationScore> desktop_id_to_score_map;
@@ -507,7 +507,7 @@ void XDGBasedAppProvider::AppendCandidatesFromMimeinfoCache(const std::vector<st
 // Finds and registers candidates using the internal runtime index built during the fullscan by ParseAllDesktopFiles().
 void XDGBasedAppProvider::AppendCandidatesFromDesktopEntryIndex(const std::vector<std::string>& expanded_mimes, CandidateMap& unique_candidates)
 {
-	const auto& mime_to_desktop_entry = _op_mime_to_desktop_entry_cache.value();
+	const auto& mime_to_desktop_entry = _op_mime_to_desktop_entry_index.value();
 
 	// Tracks the highest score for each DesktopEntry* to avoid rank demotion by a less-specific MIME type.
 	std::unordered_map<const DesktopEntry*, AssociationScore> desktop_entry_to_score_map;
@@ -1208,8 +1208,8 @@ const std::optional<XDGBasedAppProvider::DesktopEntry>& XDGBasedAppProvider::Get
 	}
 
 	// 2. Resolve the ID to a file path using the index.
-	auto it_path = _op_desktop_id_to_path_cache.find(desktop_id);
-	if (it_path != _op_desktop_id_to_path_cache.end()) {
+	auto it_path = _op_desktop_id_to_path_index.find(desktop_id);
+	if (it_path != _op_desktop_id_to_path_index.end()) {
 		const std::string& filepath = it_path->second;
 		if (auto desktop_entry = ParseDesktopFile(filepath)) {
 			// Set the ID on the object, as ParseDesktopFile does not know it.
@@ -1231,7 +1231,7 @@ XDGBasedAppProvider::MimeToDesktopEntryIndex XDGBasedAppProvider::ParseAllDeskto
 	MimeToDesktopEntryIndex index;
 
 	// Iterate over all found IDs in the map.
-	for (const auto& [id, filepath] : _op_desktop_id_to_path_cache) {
+	for (const auto& [id, filepath] : _op_desktop_id_to_path_index) {
 
 		// This call populates _desktop_entry_cache via GetOrLoadDesktopEntry logic.
 		const auto& desktop_entry_opt = GetOrLoadDesktopEntry(id);
@@ -2193,7 +2193,7 @@ XDGBasedAppProvider::OperationContext::OperationContext(XDGBasedAppProvider& p) 
 	provider._op_desktop_file_dirpaths = provider.GetDesktopFileSearchDirpaths();
 	provider._op_mimeapps_list_filepaths = provider.GetMimeappsListSearchFilepaths();
 	provider._op_mime_database_dirpaths = provider.GetMimeDatabaseSearchDirpaths();
-	provider._op_desktop_id_to_path_cache = provider.IndexAllDesktopFiles();
+	provider._op_desktop_id_to_path_index = provider.IndexAllDesktopFiles();
 
 	// ----- Phase 3: Auxiliary MIME Databases & User Configuration -----
 
@@ -2227,18 +2227,18 @@ XDGBasedAppProvider::OperationContext::OperationContext(XDGBasedAppProvider& p) 
 
 	if (provider._use_mimeinfo_cache) {
 		// Attempt to load from 'mimeinfo.cache' first, as per user setting.
-		provider._op_mime_to_desktop_associations_cache = provider.ParseAllMimeinfoCacheFiles();
+		provider._op_mime_to_desktop_associations_index = provider.ParseAllMimeinfoCacheFiles();
 		// Fallback: If the cache is empty (files not found or all are empty),
 		// reset the optional. This will trigger the full scan logic below.
-		if (provider._op_mime_to_desktop_associations_cache.value().empty()) {
-			provider._op_mime_to_desktop_associations_cache.reset();
+		if (provider._op_mime_to_desktop_associations_index.value().empty()) {
+			provider._op_mime_to_desktop_associations_index.reset();
 		}
 	}
 
 	// If caching is disabled (by user) OR the fallback was triggered (cache was empty)...
-	if (!provider._op_mime_to_desktop_associations_cache.has_value()) {
+	if (!provider._op_mime_to_desktop_associations_index.has_value()) {
 		// ...populate the index by performing a full scan.
-		provider._op_mime_to_desktop_entry_cache = provider.ParseAllDesktopFiles();
+		provider._op_mime_to_desktop_entry_index = provider.ParseAllDesktopFiles();
 	}
 }
 
@@ -2254,14 +2254,14 @@ XDGBasedAppProvider::OperationContext::~OperationContext()
 	provider._op_desktop_file_dirpaths.reset();
 	provider._op_mimeapps_list_filepaths.reset();
 	provider._op_mime_database_dirpaths.reset();
-	provider._op_desktop_id_to_path_cache.clear();
+	provider._op_desktop_id_to_path_index.clear();
 	provider._op_alias_to_canonical_cache.reset();
 	provider._op_canonical_to_aliases_cache.reset();
 	provider._op_subclass_to_parent_cache.reset();
 	provider._op_mimeapps_lists_cache.reset();
 	provider._op_mime_to_default_desktop_id_cache.clear();
-	provider._op_mime_to_desktop_associations_cache.reset();
-	provider._op_mime_to_desktop_entry_cache.reset();
+	provider._op_mime_to_desktop_associations_index.reset();
+	provider._op_mime_to_desktop_entry_index.reset();
 }
 
 #endif

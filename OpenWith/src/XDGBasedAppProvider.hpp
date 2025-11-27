@@ -394,14 +394,14 @@ private:
 	std::optional<std::vector<std::string>> _op_desktop_file_dirpaths;
 	std::optional<std::vector<std::string>> _op_mimeapps_list_filepaths;
 	std::optional<std::vector<std::string>> _op_mime_database_dirpaths;
-	std::unordered_map<std::string, std::string> _op_desktop_id_to_path_cache;
+	std::unordered_map<std::string, std::string> _op_desktop_id_to_path_index;
 	std::optional<std::unordered_map<std::string, std::string>> _op_alias_to_canonical_cache;
 	std::optional<std::unordered_map<std::string, std::vector<std::string>>> _op_canonical_to_aliases_cache;
 	std::optional<std::unordered_map<std::string, std::string>> _op_subclass_to_parent_cache;
 	std::optional<MimeappsListsConfig> _op_mimeapps_lists_cache;      // combined 'mimeapps.list' data
 	std::map<std::string, std::string> _op_mime_to_default_desktop_id_cache; // from 'xdg-mime query default'
-	std::optional<MimeToDesktopAssociationsMap> _op_mime_to_desktop_associations_cache;	// from 'mimeinfo.cache'
-	std::optional<MimeToDesktopEntryIndex> _op_mime_to_desktop_entry_cache;	// from full .desktop scan
+	std::optional<MimeToDesktopAssociationsMap> _op_mime_to_desktop_associations_index;	// from 'mimeinfo.cache'
+	std::optional<MimeToDesktopEntryIndex> _op_mime_to_desktop_entry_index;	// from full .desktop scan
 };
 
 #endif
