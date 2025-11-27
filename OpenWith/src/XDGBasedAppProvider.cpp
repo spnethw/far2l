@@ -439,22 +439,18 @@ void XDGBasedAppProvider::AppendCandidatesFromMimeAppsLists(const std::vector<st
 		auto it_defaults = mimeapps_lists.defaults.find(mime);
 		if (it_defaults != mimeapps_lists.defaults.end()) {
 			const auto& default_app = it_defaults->second;
-			if (!IsAssociationRemoved(mime, default_app.desktop_id)) {
-				int rank = mime_specificity_rank * Ranking::SPECIFICITY_MULTIPLIER + Ranking::SOURCE_RANK_MIMEAPPS_DEFAULT;
-				auto source_info = default_app.source_filepath + StrWide2MB(m_GetMsg(MIn)) + " [Default Applications] " + StrWide2MB(m_GetMsg(MFor)) + mime;
-				RegisterCandidateById(unique_candidates, default_app.desktop_id, rank, source_info);
-			}
+			int rank = mime_specificity_rank * Ranking::SPECIFICITY_MULTIPLIER + Ranking::SOURCE_RANK_MIMEAPPS_DEFAULT;
+			auto source_info = default_app.source_filepath + StrWide2MB(m_GetMsg(MIn)) + " [Default Applications] " + StrWide2MB(m_GetMsg(MFor)) + mime;
+			RegisterCandidateById(unique_candidates, default_app.desktop_id, rank, source_info);
 		}
 
 		// 2. Process [Added Associations] from 'mimeapps.list': medium source rank.
 		auto it_added = mimeapps_lists.added.find(mime);
 		if (it_added != mimeapps_lists.added.end()) {
 			for (const auto& app_assoc : it_added->second) {
-				if (!IsAssociationRemoved(mime, app_assoc.desktop_id)) {
-					int rank = mime_specificity_rank * Ranking::SPECIFICITY_MULTIPLIER + Ranking::SOURCE_RANK_MIMEAPPS_ADDED;
-					auto source_info = app_assoc.source_filepath + StrWide2MB(m_GetMsg(MIn)) + "[Added Associations]" + StrWide2MB(m_GetMsg(MFor)) + mime;
-					RegisterCandidateById(unique_candidates, app_assoc.desktop_id, rank, source_info);
-				}
+				int rank = mime_specificity_rank * Ranking::SPECIFICITY_MULTIPLIER + Ranking::SOURCE_RANK_MIMEAPPS_ADDED;
+				auto source_info = app_assoc.source_filepath + StrWide2MB(m_GetMsg(MIn)) + "[Added Associations]" + StrWide2MB(m_GetMsg(MFor)) + mime;
+				RegisterCandidateById(unique_candidates, app_assoc.desktop_id, rank, source_info);
 			}
 		}
 	}
@@ -1311,16 +1307,17 @@ XDGBasedAppProvider::MimeappsListsConfig XDGBasedAppProvider::ParseMimeappsLists
 	if (!_op_mimeapps_list_filepaths.has_value()) {
 		return {};
 	}
-	MimeappsListsConfig mimeapps_lists_config;
+	MimeappsListsConfig mimeapps_lists;
+	std::unordered_set<std::string> accumulation_blacklist;
 	for (const auto& filepath : *_op_mimeapps_list_filepaths) {
-		ParseMimeappsList(filepath, mimeapps_lists_config);
+		ParseMimeappsList(filepath, mimeapps_lists, accumulation_blacklist);
 	}
-	return mimeapps_lists_config;
+	return mimeapps_lists;
 }
 
 
 // Parses a single 'mimeapps.list' file, extracting Default/Added/Removed associations.
-void XDGBasedAppProvider::ParseMimeappsList(const std::string& filepath, MimeappsListsConfig& mimeapps_lists_config)
+void XDGBasedAppProvider::ParseMimeappsList(const std::string& filepath, MimeappsListsConfig& mimeapps_lists, std::unordered_set<std::string>& blacklist)
 {
 	std::ifstream file(filepath);
 	if (!file.is_open()) return;
@@ -1345,15 +1342,20 @@ void XDGBasedAppProvider::ParseMimeappsList(const std::string& filepath, Mimeapp
 		if (desktop_ids.empty()) continue;
 
 		if (current_section == "[Default Applications]") {
-			// Only use the first default if not already set, as higher priority files are parsed first.			
-			mimeapps_lists_config.defaults.try_emplace(mime, desktop_ids[0], filepath);
+			// Only use the first default if not already set, as higher priority files are parsed first.
+			if (!blacklist.count(desktop_ids[0])) {
+				mimeapps_lists.defaults.try_emplace(mime, desktop_ids[0], filepath);
+			}
 		} else if (current_section == "[Added Associations]") {
 			for (const auto& desktop_id : desktop_ids) {
-				mimeapps_lists_config.added[mime].push_back(DesktopAssociation(desktop_id, filepath));
+				if (blacklist.find(desktop_id) == blacklist.end()) {
+					mimeapps_lists.added[mime].push_back(DesktopAssociation(desktop_id, filepath));
+				}
 			}
 		} else if (current_section == "[Removed Associations]") {
 			for(const auto& desktop_id : desktop_ids) {
-				mimeapps_lists_config.removed[mime].insert(desktop_id);
+				blacklist.insert(desktop_id);
+				mimeapps_lists.removed[mime].insert(desktop_id);
 			}
 		}
 	}

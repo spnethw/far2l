@@ -302,7 +302,7 @@ private:
 	MimeToDesktopAssociationsMap ParseAllMimeinfoCacheFiles();
 	static void ParseMimeinfoCache(const std::string& filepath, MimeToDesktopAssociationsMap& mime_to_desktop_associations_map);
 	MimeappsListsConfig ParseMimeappsLists();
-	static void ParseMimeappsList(const std::string& filepath, MimeappsListsConfig& mimeapps_lists_config);
+	static void ParseMimeappsList(const std::string& filepath, MimeappsListsConfig& mimeapps_lists, std::unordered_set<std::string>& blacklist);
 	std::optional<XDGBasedAppProvider::DesktopEntry> ParseDesktopFile(const std::string& filepath);
 	std::string GetLocalizedValue(const std::unordered_map<std::string, std::string>& kv_entries, const std::string& base_key) const;
 	static std::vector<std::string> GenerateLocaleSuffixes();
