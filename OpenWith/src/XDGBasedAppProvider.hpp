@@ -310,7 +310,7 @@ private:
 	static std::string_view GetMajorMimeType(const std::string& mime);
 	std::unordered_map<std::string, std::string> LoadMimeSubclasses();
 	static std::vector<std::string> GetDesktopFileSearchDirpaths();
-	static std::vector<std::string> GetMimeappsListSearchFilepaths();
+	std::vector<std::string> GetMimeappsListSearchFilepaths();
 	static std::vector<std::string> GetMimeDatabaseSearchDirpaths();
 
 	// --- Launch command constructing ---
@@ -383,8 +383,8 @@ private:
 
 	// --- Operation-Scoped State ---
 	// Fields managed by OperationContext. Valid only during a GetAppCandidates call.
-
 	std::vector<std::string> _op_locale_suffixes;
+	std::vector<std::string> _op_current_desktop_names;  // from $XDG_CURRENT_DESKTOP
 	std::optional<std::string> _op_current_desktop_env; // from $XDG_CURRENT_DESKTOP
 	bool _op_xdg_mime_exists = false;
 	bool _op_file_tool_enabled_and_exists = false;

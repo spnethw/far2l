@@ -1229,7 +1229,7 @@ XDGBasedAppProvider::MimeToDesktopEntryIndex XDGBasedAppProvider::ParseAllDeskto
 	// Iterate over all found IDs in the map.
 	for (const auto& [id, filepath] : _op_desktop_id_to_path_index) {
 
-		// This call populates _desktop_entry_cache via GetOrLoadDesktopEntry logic.
+		// This call populates _desktop_id_to_desktop_entry_cache via GetOrLoadDesktopEntry logic.
 		const auto& desktop_entry_opt = GetOrLoadDesktopEntry(id);
 		if (!desktop_entry_opt.has_value()) {
 			continue;
@@ -1638,43 +1638,91 @@ std::vector<std::string> XDGBasedAppProvider::GetMimeappsListSearchFilepaths()
 	std::vector<std::string> filepaths;
 	std::unordered_set<std::string> seen_filepaths;
 
-	// This helper only adds paths that point to existing, readable files.
-	auto add_path = [&](const std::string& p) {
-		if (p.empty() || !seen_filepaths.insert(p).second) return;
-		if (IsReadableFile(p)) {
-			filepaths.push_back(p);
+	// Helper lambda to check existence and add unique paths.
+	auto add_path = [&](const std::string& path) {
+		if (path.empty()) return;
+		if (seen_filepaths.find(path) != seen_filepaths.end()) {
+			return;
+		}
+		seen_filepaths.insert(path);
+		if (IsReadableFile(path)) {
+			filepaths.push_back(path);
 		}
 	};
 
+	// Helper lambda to process a single base directory.
+	// It handles the logic of checking desktop-specific files first, then the generic file.
+	auto process_directory = [&](const std::string& base_dir, bool is_legacy_data_dir) {
+		if (base_dir.empty()) return;
+		std::string dir = base_dir;
+		// For XDG_DATA_HOME and XDG_DATA_DIRS, the spec requires the files to be
+		// in the "applications" subdirectory.
+		if (is_legacy_data_dir) {
+			// Ensure we don't double-slash if base_dir already ends with '/'
+			if (dir.back() != '/') {
+				dir += '/';
+			}
+			dir += "applications";
+		}
 
-	// User config directory ($XDG_CONFIG_HOME or ~/.config) has the highest priority.
-	std::string home = GetEnv("HOME", "");
+		// 1. Desktop-specific associations: $desktop-mimeapps.list
+		for (const auto& desktop_name : _op_current_desktop_names) {
+			if (desktop_name.empty()) continue;
+			// The spec requires the ascii-lowercase form of the desktop name.
+			std::string lower_name = desktop_name;
+			std::transform(lower_name.begin(), lower_name.end(), lower_name.begin(), [](unsigned char c){ return std::tolower(c); });
+			// Construct path: dir/gnome-mimeapps.list
+			std::string specific_path = dir;
+			if (specific_path.back() != '/') specific_path += '/';
+			specific_path += lower_name + "-mimeapps.list";
+			add_path(specific_path);
+		}
+
+		// 2. Generic associations: mimeapps.list
+		std::string generic_path = dir;
+		if (generic_path.back() != '/') generic_path += '/';
+		generic_path += "mimeapps.list";
+		add_path(generic_path);
+	};
+
+	// --- Level 1: User Configuration (XDG_CONFIG_HOME) ---
+	// Highest priority. User overrides.
 	std::string xdg_config_home = GetEnv("XDG_CONFIG_HOME", "");
-	if (!xdg_config_home.empty() && xdg_config_home[0] == '/') {
-		add_path(xdg_config_home + "/mimeapps.list");
-	} else if (!home.empty()) {
-		add_path(home + "/.config/mimeapps.list");
+	if (!xdg_config_home.empty()) {
+		process_directory(xdg_config_home, false);
+	} else {
+		// Default: $HOME/.config
+		std::string home = GetEnv("HOME", "");
+		if (!home.empty()) {
+			process_directory(home + "/.config", false);
+		}
 	}
 
-	// System-wide config directories ($XDG_CONFIG_DIRS) have lower priority.
+	// --- Level 2: System Configuration (XDG_CONFIG_DIRS) ---
+	// Admin overrides.
 	std::string xdg_config_dirs = GetEnv("XDG_CONFIG_DIRS", "/etc/xdg");
 	for (const auto& dir : SplitString(xdg_config_dirs, ':')) {
-		if (dir.empty() || dir[0] != '/') continue;
-		add_path(dir + "/mimeapps.list");
+		process_directory(dir, false);
 	}
 
-	// Data directory 'mimeapps.list' files (user and system) are legacy locations.
+	// --- Level 3: User Data (Legacy) (XDG_DATA_HOME) ---
+	// Deprecated but required for compatibility.
 	std::string xdg_data_home = GetEnv("XDG_DATA_HOME", "");
-	if (!xdg_data_home.empty() && xdg_data_home[0] == '/') {
-		add_path(xdg_data_home + "/applications/mimeapps.list");
-	} else if (!home.empty()) {
-		add_path(home + "/.local/share/applications/mimeapps.list");
+	if (!xdg_data_home.empty()) {
+		process_directory(xdg_data_home, true);
+	} else {
+		// Default: $HOME/.local/share
+		std::string home = GetEnv("HOME", "");
+		if (!home.empty()) {
+			process_directory(home + "/.local/share", true);
+		}
 	}
 
+	// --- Level 4: Distribution Data (Legacy) (XDG_DATA_DIRS) ---
+	// Deprecated. Distribution defaults.
 	std::string xdg_data_dirs = GetEnv("XDG_DATA_DIRS", "/usr/local/share:/usr/share");
 	for (const auto& dir : SplitString(xdg_data_dirs, ':')) {
-		if (dir.empty() || dir[0] != '/') continue;
-		add_path(dir + "/applications/mimeapps.list");
+		process_directory(dir, true);
 	}
 
 	return filepaths;
@@ -2048,7 +2096,7 @@ bool XDGBasedAppProvider::IsTraversableDirectory(const std::string& dirpath)
 }
 
 
-// Checks if an executable exists and is runnable.
+// Checks if a command exists and is runnable.
 // If the command contains a slash, it's checked directly. Otherwise, it's searched in $PATH.
 bool XDGBasedAppProvider::IsExecutableAvailable(const std::string& command)
 {
@@ -2179,6 +2227,7 @@ XDGBasedAppProvider::OperationContext::OperationContext(XDGBasedAppProvider& p) 
 	// ----- Phase 1: Environment Setup & Tool Availability Checks -----
 
 	provider._op_locale_suffixes = provider.GenerateLocaleSuffixes();
+	provider._op_current_desktop_names = provider.SplitString(provider.GetEnv("XDG_CURRENT_DESKTOP", ""), ':');
 	provider._op_current_desktop_env = provider._filter_by_show_in ? provider.GetEnv("XDG_CURRENT_DESKTOP", "") : "";
 	provider._op_xdg_mime_exists = provider.IsExecutableAvailable("xdg-mime");
 	provider._op_file_tool_enabled_and_exists = provider._use_file_tool && provider.IsExecutableAvailable("file");
