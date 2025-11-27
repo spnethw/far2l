@@ -90,9 +90,9 @@ private:
 	struct RawMimeProfile
 	{
 		// MIME type results from different tools
-		std::string xdg_mime;		// result from xdg-mime query filetype
-		std::string file_mime;		// result from file --mime-type
-		std::string magika_mime;	// result from magika --format '%m'
+		std::string xdg_mime;		// result from 'xdg-mime query filetype'
+		std::string file_mime;		// result from 'file --mime-type'
+		std::string magika_mime;	// result from 'magika --format '%m''
 		std::string ext_mime;		// result from internal extension fallback map
 		std::string stat_mime;		// result from internal stat() analysis (e.g., inode/directory)
 
@@ -129,11 +129,11 @@ private:
 
 	// ******************************************************************************
 	// Group 3: Association Database Types
-	// Structures representing parsed data from mimeapps.list, mimeinfo.cache, etc.
+	// Structures representing parsed data from 'mimeapps.list', 'mimeinfo.cache', etc.
 	// ******************************************************************************
 
 	// This struct represents a single association rule and links a handler's .desktop file
-	// to the configuration file (e.g., mimeapps.list or mimeinfo.cache) that specified the rule.
+	// to the configuration file (e.g., 'mimeapps.list' or 'mimeinfo.cache') that specified the rule.
 	struct DesktopAssociation
 	{
 		std::string desktop_id;
@@ -145,7 +145,7 @@ private:
 	};
 
 
-	// Represents the combined associations from all parsed mimeapps.list files.
+	// Represents the combined associations from all parsed 'mimeapps.list' files.
 	struct MimeappsListsConfig
 	{
 		// MIME type -> default application from [Default Applications].
@@ -171,9 +171,9 @@ private:
 
 		// Ranks for association sources, from highest to lowest.
 		static constexpr int SOURCE_RANK_GLOBAL_DEFAULT = 5;   // xdg-mime query default
-		static constexpr int SOURCE_RANK_MIMEAPPS_DEFAULT = 4; // [Default Applications] in mimeapps.list
-		static constexpr int SOURCE_RANK_MIMEAPPS_ADDED = 3;   // [Added Associations] in mimeapps.list
-		static constexpr int SOURCE_RANK_CACHE_OR_SCAN = 2;    // mimeinfo.cache or full .desktop scan
+		static constexpr int SOURCE_RANK_MIMEAPPS_DEFAULT = 4; // [Default Applications] in 'mimeapps.list'
+		static constexpr int SOURCE_RANK_MIMEAPPS_ADDED = 3;   // [Added Associations] in 'mimeapps.list'
+		static constexpr int SOURCE_RANK_CACHE_OR_SCAN = 2;    // 'mimeinfo.cache' or full .desktop scan
 	};
 
 
@@ -300,14 +300,14 @@ private:
 	MimeToDesktopEntryIndex ParseAllDesktopFiles();
 	MimeToDesktopAssociationsMap ParseAllMimeinfoCacheFiles();
 	static void ParseMimeinfoCache(const std::string& filepath, MimeToDesktopAssociationsMap& mime_to_desktop_associations_map);
-	static MimeappsListsConfig ParseMimeappsLists(const std::vector<std::string>& filepaths);
+	MimeappsListsConfig ParseMimeappsLists();
 	static void ParseMimeappsList(const std::string& filepath, MimeappsListsConfig& mimeapps_lists_config);
 	std::optional<XDGBasedAppProvider::DesktopEntry> ParseDesktopFile(const std::string& filepath);
 	std::string GetLocalizedValue(const std::unordered_map<std::string, std::string>& kv_entries, const std::string& base_key) const;
 	static std::vector<std::string> GenerateLocaleSuffixes();
-	static std::unordered_map<std::string, std::string> LoadMimeAliases();
+	std::unordered_map<std::string, std::string> LoadMimeAliases();
 	static std::string_view GetMajorMimeType(const std::string& mime);
-	static std::unordered_map<std::string, std::string> LoadMimeSubclasses();
+	std::unordered_map<std::string, std::string> LoadMimeSubclasses();
 	static std::vector<std::string> GetDesktopFileSearchDirpaths();
 	static std::vector<std::string> GetMimeappsListSearchFilepaths();
 	static std::vector<std::string> GetMimeDatabaseSearchDirpaths();
@@ -338,10 +338,10 @@ private:
 	// CRITICAL: Must use std::map (not std::unordered_map) to guarantee pointer stability!
 	// RankedCandidate holds non-owning pointers to DesktopEntry objects stored here,
 	// which would be invalidated by unordered_map rehashing.
-	std::map<std::string, std::optional<DesktopEntry>> _desktop_entry_cache;
+	std::map<std::string, std::optional<DesktopEntry>> _desktop_id_to_desktop_entry_cache;
 
 	// This cache maps a candidate's ID to its source info string from the last GetAppCandidates call.
-	// It's used by GetCandidateDetails to display where the association came from (e.g., mimeapps.list).
+	// It's used by GetCandidateDetails to display where the association came from (e.g., 'mimeapps.list').
 	// This is only populated for single-file lookups.
 	std::map<std::wstring, std::string> _last_candidates_source_info;
 
@@ -386,29 +386,22 @@ private:
 	// They are populated once at the start of GetAppCandidates and cleared at the end
 	// to avoid passing them as parameters through the entire call stack.
 
-	std::optional<std::unordered_map<std::string, std::string>> _op_alias_to_canonical_map;
-	std::optional<std::unordered_map<std::string, std::vector<std::string>>> _op_canonical_to_aliases_map;
-	std::optional<std::unordered_map<std::string, std::string>> _op_subclass_to_parent_map;
-	std::optional<MimeappsListsConfig> _op_mimeapps_lists_config;      // combined mimeapps.list data
-	std::optional<std::vector<std::string>> _op_desktop_file_dirpaths; // XDG .desktop file search paths
+	std::vector<std::string> _op_locale_suffixes;
 	std::optional<std::string> _op_current_desktop_env; // $XDG_CURRENT_DESKTOP
-	std::vector<std::string> _locale_suffixes;
-
-	// Tool availability flags, cached for the duration of one GetAppCandidates operation.
-	// They are calculated in OperationContext::OperationContext.
 	bool _op_xdg_mime_exists = false;
 	bool _op_file_tool_enabled_and_exists = false;
 	bool _op_magika_tool_enabled_and_exists = false;
-
-	// One of the following two caches will be populated based on settings.
-	std::optional<MimeToDesktopAssociationsMap> _op_mime_to_desktop_associations_map;	// from mimeinfo.cache
-	std::optional<MimeToDesktopEntryIndex> _op_mime_to_desktop_entry_map;	// from full .desktop scan
-
-	// Maps a Desktop File ID to its absolute filepath.
-	std::unordered_map<std::string, std::string> _id_to_path_map;
-
-	// Cache for 'xdg-mime query default' results (MIME type -> Desktop File ID)
-	std::map<std::string, std::string> _op_default_app_cache;
+	std::optional<std::vector<std::string>> _op_desktop_file_dirpaths;
+	std::optional<std::vector<std::string>> _op_mimeapps_list_filepaths;
+	std::optional<std::vector<std::string>> _op_mime_database_dirpaths;
+	std::unordered_map<std::string, std::string> _op_desktop_id_to_path_cache;
+	std::optional<std::unordered_map<std::string, std::string>> _op_alias_to_canonical_cache;
+	std::optional<std::unordered_map<std::string, std::vector<std::string>>> _op_canonical_to_aliases_cache;
+	std::optional<std::unordered_map<std::string, std::string>> _op_subclass_to_parent_cache;
+	std::optional<MimeappsListsConfig> _op_mimeapps_lists_cache;      // combined 'mimeapps.list' data
+	std::map<std::string, std::string> _op_mime_to_default_desktop_id_cache; // from 'xdg-mime query default'
+	std::optional<MimeToDesktopAssociationsMap> _op_mime_to_desktop_associations_cache;	// from 'mimeinfo.cache'
+	std::optional<MimeToDesktopEntryIndex> _op_mime_to_desktop_entry_cache;	// from full .desktop scan
 };
 
 #endif
