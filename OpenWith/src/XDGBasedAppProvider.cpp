@@ -1609,8 +1609,8 @@ std::vector<std::string> XDGBasedAppProvider::GetDesktopFileSearchDirpaths()
 		}
 	};
 
-	std::string home = GetEnv("HOME", "");
-	std::string xdg_data_home = GetEnv("XDG_DATA_HOME", "");
+	std::string home = GetEnv("HOME");
+	std::string xdg_data_home = GetEnv("XDG_DATA_HOME");
 	std::string xdg_data_dirs = GetEnv("XDG_DATA_DIRS", "/usr/local/share:/usr/share");
 
 	// User-specific data directory ($XDG_DATA_HOME or ~/.local/share) has the highest priority.
@@ -1661,12 +1661,12 @@ std::vector<std::string> XDGBasedAppProvider::GetMimeappsListSearchFilepaths()
 	bases.reserve(4);
 
 	// Level 1: User Configuration (XDG_CONFIG_HOME)
-	std::string xdg_config_home = GetEnv("XDG_CONFIG_HOME", "");
+	std::string xdg_config_home = GetEnv("XDG_CONFIG_HOME");
 	if (!xdg_config_home.empty() && xdg_config_home[0] != '/') {
 		xdg_config_home.clear();
 	}
 	if (xdg_config_home.empty()) {
-		std::string home = GetEnv("HOME", "");
+		std::string home = GetEnv("HOME");
 		if (!home.empty()) {
 			xdg_config_home = home + "/.config";
 		}
@@ -1679,9 +1679,9 @@ std::vector<std::string> XDGBasedAppProvider::GetMimeappsListSearchFilepaths()
 	bases.push_back({GetEnv("XDG_CONFIG_DIRS", "/etc/xdg"), false});
 
 	// Level 3: User Data (Legacy) (XDG_DATA_HOME)
-	std::string xdg_data_home = GetEnv("XDG_DATA_HOME", "");
+	std::string xdg_data_home = GetEnv("XDG_DATA_HOME");
 	if (xdg_data_home.empty()) {
-		std::string home = GetEnv("HOME", "");
+		std::string home = GetEnv("HOME");
 		if (!home.empty()) {
 			xdg_data_home = home + "/.local/share";
 		}
@@ -1731,8 +1731,8 @@ std::vector<std::string> XDGBasedAppProvider::GetMimeDatabaseSearchDirpaths()
 		}
 	};
 
-	std::string home = XDGBasedAppProvider::GetEnv("HOME", "");
-	std::string xdg_data_home = XDGBasedAppProvider::GetEnv("XDG_DATA_HOME", "");
+	std::string home = XDGBasedAppProvider::GetEnv("HOME");
+	std::string xdg_data_home = XDGBasedAppProvider::GetEnv("XDG_DATA_HOME");
 	std::string xdg_data_dirs = XDGBasedAppProvider::GetEnv("XDG_DATA_DIRS", "/usr/local/share:/usr/share");
 
 	if (!xdg_data_home.empty() && xdg_data_home[0] == '/') {
@@ -2062,6 +2062,10 @@ std::string XDGBasedAppProvider::UnescapeGKeyFileString(const std::string& str)
 // Checks if a filepath is a regular file (S_ISREG) AND is readable (R_OK).
 bool XDGBasedAppProvider::IsReadableFile(const std::string& filepath)
 {
+	if (filepath.empty()) {
+		return false;
+	}
+
 	struct stat st;
 	// Use stat() to follow symlinks
 	if (stat(filepath.c_str(), &st) == 0) {
@@ -2077,6 +2081,10 @@ bool XDGBasedAppProvider::IsReadableFile(const std::string& filepath)
 // Checks if a dirpath is a directory (S_ISDIR) AND is traversable (X_OK).
 bool XDGBasedAppProvider::IsTraversableDirectory(const std::string& dirpath)
 {
+	if (dirpath.empty()) {
+		return false;
+	}
+
 	struct stat st;
 	// Use stat() to follow symlinks
 	if (stat(dirpath.c_str(), &st) == 0) {
@@ -2093,7 +2101,9 @@ bool XDGBasedAppProvider::IsTraversableDirectory(const std::string& dirpath)
 // If the command contains a slash, it's checked directly. Otherwise, it's searched in $PATH.
 bool XDGBasedAppProvider::IsExecutableAvailable(const std::string& command)
 {
-	if (command.empty()) return false;
+	if (command.empty()) {
+		return false;
+	}
 
 	auto check = [](const std::string& p) {
 		struct stat st;
@@ -2121,6 +2131,10 @@ bool XDGBasedAppProvider::IsExecutableAvailable(const std::string& command)
 // Runs a shell command and captures its standard output.
 std::string XDGBasedAppProvider::RunCommandAndCaptureOutput(const std::string& cmd)
 {
+	if (cmd.empty()) {
+		return "";
+	}
+
 	std::string result;
 	return POpen(result, cmd.c_str()) ? Trim(result) : "";
 }
@@ -2235,7 +2249,7 @@ XDGBasedAppProvider::OperationContext::OperationContext(XDGBasedAppProvider& p) 
 	// ----- Phase 1: Environment Setup & Tool Availability Checks -----
 
 	provider._op_locale_suffixes = provider.GenerateLocaleSuffixes();
-	provider._op_current_desktop_names = provider.SplitString(provider.GetEnv("XDG_CURRENT_DESKTOP", ""), ':');
+	provider._op_current_desktop_names = provider.SplitString(provider.GetEnv("XDG_CURRENT_DESKTOP"), ':');
 	provider._op_xdg_mime_exists = provider.IsExecutableAvailable("xdg-mime");
 	provider._op_file_tool_enabled_and_exists = provider._use_file_tool && provider.IsExecutableAvailable("file");
 	provider._op_magika_tool_enabled_and_exists = provider._use_magika_tool && provider.IsExecutableAvailable("magika");
