@@ -1081,8 +1081,7 @@ std::string XDGBasedAppProvider::GuessMimeTypeByExtension(const std::string& fil
 	auto filename = GetBaseName(filepath);
 	auto dot_pos = filename.rfind('.');
 	if (dot_pos != std::string::npos) {
-		std::string ext = filename.substr(dot_pos);
-		std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
+		std::string ext = ToLowerASCII(filename.substr(dot_pos));
 		auto it = s_ext_to_mime_map.find(ext);
 		if (it != s_ext_to_mime_map.end()) {
 			return it->second;
@@ -1605,7 +1604,7 @@ std::vector<std::string> XDGBasedAppProvider::GetDesktopFileSearchDirpaths()
 	std::unordered_set<std::string> seen_dirpaths;
 
 	auto add_path = [&](const std::string& p) {
-		if (!p.empty() && IsTraversableDirectory(p) && seen_dirpaths.insert(p).second) {
+		if (!p.empty() && seen_dirpaths.insert(p).second && IsTraversableDirectory(p)) {
 			dirpaths.push_back(p);
 		}
 	};
@@ -1639,94 +1638,76 @@ std::vector<std::string> XDGBasedAppProvider::GetMimeappsListSearchFilepaths()
 {
 	std::vector<std::string> filepaths;
 	std::unordered_set<std::string> seen_filepaths;
+	filepaths.reserve(16);
 
 	// Helper lambda to check existence and add unique paths.
-	auto add_path = [&](const std::string& path) {
-		if (path.empty()) return;
-		if (seen_filepaths.find(path) != seen_filepaths.end()) {
-			return;
-		}
-		seen_filepaths.insert(path);
-		if (IsReadableFile(path)) {
-			filepaths.push_back(path);
+	auto add_path = [&](std::string path) {
+		if (!path.empty() && seen_filepaths.insert(path).second && IsReadableFile(path)) {
+			filepaths.push_back(std::move(path));
 		}
 	};
 
-	// Helper lambda to process a single base directory.
-	// It handles the logic of checking desktop-specific files first, then the generic file.
-	auto process_directory = [&](const std::string& base_dir, bool is_legacy_data_dir) {
-		if (base_dir.empty()) return;
-		std::string dir = base_dir;
-		// For XDG_DATA_HOME and XDG_DATA_DIRS, the spec requires the files to be
-		// in the "applications" subdirectory.
-		if (is_legacy_data_dir) {
-			// Ensure we don't double-slash if base_dir already ends with '/'
+	// Defines search bases according to XDG spec priorities.
+	struct SearchBase {
+		std::string path_list_str;
+		bool is_legacy; // If true, implies XDG_DATA_* dirs where "/applications" suffix is required.
+	};
+
+	std::vector<SearchBase> bases;
+	bases.reserve(4);
+
+	// Level 1: User Configuration (XDG_CONFIG_HOME)
+	std::string xdg_config_home = GetEnv("XDG_CONFIG_HOME", "");
+	if (xdg_config_home.empty()) {
+		std::string home = GetEnv("HOME", "");
+		if (!home.empty()) {
+			xdg_config_home = home + "/.config";
+		}
+	}
+	if (!xdg_config_home.empty()) {
+		bases.push_back({std::move(xdg_config_home), false});
+	}
+
+	// Level 2: System Configuration (XDG_CONFIG_DIRS)
+	bases.push_back({GetEnv("XDG_CONFIG_DIRS", "/etc/xdg"), false});
+
+	// Level 3: User Data (Legacy) (XDG_DATA_HOME)
+	std::string xdg_data_home = GetEnv("XDG_DATA_HOME", "");
+	if (xdg_data_home.empty()) {
+		std::string home = GetEnv("HOME", "");
+		if (!home.empty()) {
+			xdg_data_home = home + "/.local/share";
+		}
+	}
+	if (!xdg_data_home.empty()) {
+		bases.push_back({std::move(xdg_data_home), true});
+	}
+
+	// Level 4: Distribution Data (Legacy) (XDG_DATA_DIRS)
+	bases.push_back({GetEnv("XDG_DATA_DIRS", "/usr/local/share:/usr/share"), true});
+
+	// Iterate through all bases in strict priority order defined by the specification.
+	for (const auto& base : bases) {
+		for (const auto& raw_dir : SplitString(base.path_list_str, ':')) {
+			if (raw_dir.empty()) continue;
+			std::string dir = raw_dir;
 			if (dir.back() != '/') {
 				dir += '/';
 			}
-			dir += "applications";
-		}
-
-		// 1. Desktop-specific associations: $desktop-mimeapps.list
-		for (const auto& desktop_name : _op_current_desktop_names) {
-			if (desktop_name.empty()) continue;
-			// The spec requires the ascii-lowercase form of the desktop name.
-			std::string lower_name = desktop_name;
-			std::transform(lower_name.begin(), lower_name.end(), lower_name.begin(), [](unsigned char c){ return std::tolower(c); });
-			// Construct path: dir/gnome-mimeapps.list
-			std::string specific_path = dir;
-			if (specific_path.back() != '/') specific_path += '/';
-			specific_path += lower_name + "-mimeapps.list";
-			add_path(specific_path);
-		}
-
-		// 2. Generic associations: mimeapps.list
-		std::string generic_path = dir;
-		if (generic_path.back() != '/') generic_path += '/';
-		generic_path += "mimeapps.list";
-		add_path(generic_path);
-	};
-
-	// --- Level 1: User Configuration (XDG_CONFIG_HOME) ---
-	// Highest priority. User overrides.
-	std::string xdg_config_home = GetEnv("XDG_CONFIG_HOME", "");
-	if (!xdg_config_home.empty()) {
-		process_directory(xdg_config_home, false);
-	} else {
-		// Default: $HOME/.config
-		std::string home = GetEnv("HOME", "");
-		if (!home.empty()) {
-			process_directory(home + "/.config", false);
+			// For XDG_DATA_HOME and XDG_DATA_DIRS, the spec requires the files to be in the "applications" subdirectory.
+			if (base.is_legacy) {
+				dir += "applications/";
+			}
+			// 1. Desktop-specific associations: $desktop-mimeapps.list
+			for (const auto& current_desktop_name : _op_current_desktop_names) {
+				if (current_desktop_name.empty()) continue;
+				std::string filename = ToLowerASCII(current_desktop_name) + "-mimeapps.list";
+				add_path(dir + filename);
+			}
+			// 2. Generic associations: mimeapps.list
+			add_path(dir + "mimeapps.list");
 		}
 	}
-
-	// --- Level 2: System Configuration (XDG_CONFIG_DIRS) ---
-	// Admin overrides.
-	std::string xdg_config_dirs = GetEnv("XDG_CONFIG_DIRS", "/etc/xdg");
-	for (const auto& dir : SplitString(xdg_config_dirs, ':')) {
-		process_directory(dir, false);
-	}
-
-	// --- Level 3: User Data (Legacy) (XDG_DATA_HOME) ---
-	// Deprecated but required for compatibility.
-	std::string xdg_data_home = GetEnv("XDG_DATA_HOME", "");
-	if (!xdg_data_home.empty()) {
-		process_directory(xdg_data_home, true);
-	} else {
-		// Default: $HOME/.local/share
-		std::string home = GetEnv("HOME", "");
-		if (!home.empty()) {
-			process_directory(home + "/.local/share", true);
-		}
-	}
-
-	// --- Level 4: Distribution Data (Legacy) (XDG_DATA_DIRS) ---
-	// Deprecated. Distribution defaults.
-	std::string xdg_data_dirs = GetEnv("XDG_DATA_DIRS", "/usr/local/share:/usr/share");
-	for (const auto& dir : SplitString(xdg_data_dirs, ':')) {
-		process_directory(dir, true);
-	}
-
 	return filepaths;
 }
 
@@ -1738,7 +1719,7 @@ std::vector<std::string> XDGBasedAppProvider::GetMimeDatabaseSearchDirpaths()
 	std::unordered_set<std::string> seen_dirpaths;
 
 	auto add_path = [&](const std::string& p) {
-		if (!p.empty() && IsTraversableDirectory(p) && seen_dirpaths.insert(p).second) {
+		if (!p.empty() && seen_dirpaths.insert(p).second && IsTraversableDirectory(p)) {
 			dirpaths.push_back(p);
 		}
 	};
@@ -2216,6 +2197,18 @@ std::vector<std::string> XDGBasedAppProvider::SplitString(const std::string& str
 		}
 	}
 	return tokens;
+}
+
+
+// Converts a string to lowercase assuming ASCII encoding (A-Z -> a-z only).
+std::string XDGBasedAppProvider::ToLowerASCII(std::string str)
+{
+	for (char& c : str) {
+		if (c >= 'A' && c <= 'Z') {
+			c += ('a' - 'A');
+		}
+	}
+	return str;
 }
 
 

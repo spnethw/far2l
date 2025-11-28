@@ -331,6 +331,7 @@ private:
 	static std::string GetBaseName(const std::string& filepath);
 	static std::string Trim(std::string str);
 	static std::vector<std::string> SplitString(const std::string& str, char delimiter);
+	static std::string ToLowerASCII(std::string str);
 
 	// ******************************************************************************
 	// DATA MEMBERS
