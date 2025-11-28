@@ -386,7 +386,6 @@ private:
 	// Fields managed by OperationContext. Valid only during a GetAppCandidates call.
 	std::vector<std::string> _op_locale_suffixes;
 	std::vector<std::string> _op_current_desktop_names;  // from $XDG_CURRENT_DESKTOP
-	std::optional<std::string> _op_current_desktop_env; // from $XDG_CURRENT_DESKTOP
 	bool _op_xdg_mime_exists = false;
 	bool _op_file_tool_enabled_and_exists = false;
 	bool _op_magika_tool_enabled_and_exists = false;

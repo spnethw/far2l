@@ -425,10 +425,9 @@ std::string XDGBasedAppProvider::QuerySystemDefaultApplication(const std::string
 void XDGBasedAppProvider::AppendCandidatesFromMimeAppsLists(const std::vector<std::string>& expanded_mimes, CandidateMap& unique_candidates)
 {
 	const auto& mimeapps_lists = _op_mimeapps_lists_cache.value();
-
-	// Iterate through the expanded MIME types list (ordered from most specific to least specific).
 	const int total_mimes = expanded_mimes.size();
 
+	// Iterate through the expanded MIME types list (ordered from most specific to least specific).
 	for (int i = 0; i < total_mimes; ++i) {
 		const auto& mime = expanded_mimes[i];
 
@@ -461,13 +460,12 @@ void XDGBasedAppProvider::AppendCandidatesFromMimeAppsLists(const std::vector<st
 void XDGBasedAppProvider::AppendCandidatesFromMimeinfoCache(const std::vector<std::string>& expanded_mimes, CandidateMap& unique_candidates)
 {
 	const auto& mime_to_desktop_associations = _op_mime_to_desktop_associations_index.value();
+	const int total_mimes = expanded_mimes.size();
 
 	// Tracks the highest score for each Desktop ID to avoid rank demotion by a less-specific MIME type.
 	std::unordered_map<std::string, AssociationScore> desktop_id_to_score_map;
 
 	// Iterate through the expanded MIME types list (ordered from most specific to least specific).
-	const int total_mimes = expanded_mimes.size();
-
 	for (int i = 0; i < total_mimes; ++i) {
 		const auto& mime = expanded_mimes[i];
 		auto it_cache = mime_to_desktop_associations.find(mime);
@@ -505,13 +503,12 @@ void XDGBasedAppProvider::AppendCandidatesFromMimeinfoCache(const std::vector<st
 void XDGBasedAppProvider::AppendCandidatesFromDesktopEntryIndex(const std::vector<std::string>& expanded_mimes, CandidateMap& unique_candidates)
 {
 	const auto& mime_to_desktop_entry = _op_mime_to_desktop_entry_index.value();
+	const int total_mimes = expanded_mimes.size();
 
 	// Tracks the highest score for each DesktopEntry* to avoid rank demotion by a less-specific MIME type.
 	std::unordered_map<const DesktopEntry*, AssociationScore> desktop_entry_to_score_map;
 
 	// Iterate through the expanded MIME types list (ordered from most specific to least specific).
-	const int total_mimes = expanded_mimes.size();
-
 	for (int i = 0; i < total_mimes; ++i) {
 		const auto& mime = expanded_mimes[i];
 		auto it_index = mime_to_desktop_entry.find(mime);
@@ -565,31 +562,48 @@ void XDGBasedAppProvider::RegisterCandidateById(CandidateMap& unique_candidates,
 
 // Core validation, filtering and registration logic for a candidate application.
 void XDGBasedAppProvider::RegisterCandidateFromDesktopEntry(CandidateMap& unique_candidates, const DesktopEntry& desktop_entry,
-											int rank, const std::string& source_info)
+															int rank, const std::string& source_info)
 {
 	// Optionally validate the TryExec key to ensure the executable exists.
-	if (_validate_try_exec && !desktop_entry.try_exec.empty() && !IsExecutableAvailable(UnescapeGKeyFileString(desktop_entry.try_exec))) {
-		return;
+	if (_validate_try_exec && !desktop_entry.try_exec.empty()) {
+		std::string try_exec_path = UnescapeGKeyFileString(desktop_entry.try_exec);
+		if (!IsExecutableAvailable(try_exec_path)) {
+			return;
+		}
 	}
-
-	const auto& current_desktop_env = _op_current_desktop_env.value();
 
 	// Optionally filter applications based on the current desktop environment
 	// using the OnlyShowIn and NotShowIn keys.
-	if (_filter_by_show_in && !current_desktop_env.empty()) {
-		if (!desktop_entry.only_show_in.empty()) {
-			bool found = false;
-			for (const auto& desktop : SplitString(desktop_entry.only_show_in, ';')) {
-				if (desktop == current_desktop_env) { found = true; break; }
+	if (_filter_by_show_in && !_op_current_desktop_names.empty()) {
+		bool only_show_in_present = !desktop_entry.only_show_in.empty();
+		bool not_show_in_present = !desktop_entry.not_show_in.empty();
+		if (only_show_in_present || not_show_in_present) {
+			std::vector<std::string> allowed_desktops;
+			std::vector<std::string> forbidden_desktops;
+			if (only_show_in_present) {
+				allowed_desktops = SplitString(desktop_entry.only_show_in, ';');
 			}
-			if (!found) return;
-		}
-		if (!desktop_entry.not_show_in.empty()) {
-			bool found = false;
-			for (const auto& desktop : SplitString(desktop_entry.not_show_in, ';')) {
-				if (desktop == current_desktop_env) { found = true; break; }
+			if (not_show_in_present) {
+				forbidden_desktops = SplitString(desktop_entry.not_show_in, ';');
 			}
-			if (found) return;
+			bool explicitly_allowed = false;
+			for (const auto& current_desktop_name : _op_current_desktop_names) {
+				if (current_desktop_name.empty()) continue;
+				if (only_show_in_present) {
+					if (std::find(allowed_desktops.begin(), allowed_desktops.end(), current_desktop_name) != allowed_desktops.end()) {
+						explicitly_allowed = true;
+						break; // Found a high-priority match explicitly allowing the app. Stop checking.
+					}
+				}
+				if (not_show_in_present) {
+					if (std::find(forbidden_desktops.begin(), forbidden_desktops.end(), current_desktop_name) != forbidden_desktops.end()) {
+						return; // Found a high-priority match explicitly forbidding the app. Reject immediately.
+					}
+				}
+			}
+			if (only_show_in_present && !explicitly_allowed) {
+				return;
+			}
 		}
 	}
 
@@ -2223,7 +2237,6 @@ XDGBasedAppProvider::OperationContext::OperationContext(XDGBasedAppProvider& p) 
 
 	provider._op_locale_suffixes = provider.GenerateLocaleSuffixes();
 	provider._op_current_desktop_names = provider.SplitString(provider.GetEnv("XDG_CURRENT_DESKTOP", ""), ':');
-	provider._op_current_desktop_env = provider._filter_by_show_in ? provider.GetEnv("XDG_CURRENT_DESKTOP", "") : "";
 	provider._op_xdg_mime_exists = provider.IsExecutableAvailable("xdg-mime");
 	provider._op_file_tool_enabled_and_exists = provider._use_file_tool && provider.IsExecutableAvailable("file");
 	provider._op_magika_tool_enabled_and_exists = provider._use_magika_tool && provider.IsExecutableAvailable("magika");
@@ -2287,7 +2300,7 @@ XDGBasedAppProvider::OperationContext::OperationContext(XDGBasedAppProvider& p) 
 XDGBasedAppProvider::OperationContext::~OperationContext()
 {
 	provider._op_locale_suffixes.clear();
-	provider._op_current_desktop_env.reset();
+	provider._op_current_desktop_names.clear();
 	provider._op_xdg_mime_exists = false;
 	provider._op_file_tool_enabled_and_exists = false;
 	provider._op_magika_tool_enabled_and_exists = false;
