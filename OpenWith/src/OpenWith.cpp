@@ -250,71 +250,73 @@ namespace OpenWith {
 	{
 		constexpr int DETAILS_DIALOG_MIN_WIDTH = 40;
 		constexpr int DETAILS_DIALOG_DESIRED_WIDTH = 90;
+		const int screen_width = GetScreenWidth();
+		const int details_dialog_max_width = std::max(DETAILS_DIALOG_MIN_WIDTH, screen_width - 4);
+		const int dialog_width = std::clamp(DETAILS_DIALOG_DESIRED_WIDTH, DETAILS_DIALOG_MIN_WIDTH, details_dialog_max_width);
+		const int dialog_height = static_cast<int>(file_info.size() + application_info.size() + 9);
 
-		int details_dialog_max_width = std::max(DETAILS_DIALOG_MIN_WIDTH, GetScreenWidth() - 4);
-		int details_dialog_width = std::clamp(DETAILS_DIALOG_DESIRED_WIDTH, DETAILS_DIALOG_MIN_WIDTH, details_dialog_max_width);
-
-		int details_dialog_height = file_info.size() + application_info.size() + 9;
-
-		// Calculate the maximum label width (in cells) across all sections.
-		auto max_di_text_length = static_cast<int>(std::max({
+		const auto max_label_len = static_cast<int>(std::max({
 			GetFieldLabelWidth(launch_command),
 			GetMaxFieldLabelWidth(file_info),
 			GetMaxFieldLabelWidth(application_info)
 		}));
 
-		// Calculate coordinates for dialog items to right-align all text labels.
-		int di_text_x2 = max_di_text_length + 4;
-		int di_edit_x1 = max_di_text_length + 6;
-		int di_edit_x2 = details_dialog_width - 6;
+		const int col_label_end_x = max_label_len + 4;
+		const int col_edit_start_x = max_label_len + 6;
+		const int col_edit_end_x = dialog_width - 6;
 
 		std::vector<FarDialogItem> di;
+		di.reserve(dialog_height + 5);
 
-		di.push_back({ DI_DOUBLEBOX, 3,  1, details_dialog_width - 4,  details_dialog_height - 2, FALSE, {}, 0, 0, GetMsg(MDetails), 0 });
+		int current_y = 1;
 
-		int cur_line = 2;
+		auto add_field_row = [&](const Field& field) {
+			int label_start_x = col_label_end_x - static_cast<int>(GetFieldLabelWidth(field)) + 1;
+			di.push_back({ DI_TEXT, label_start_x, current_y, col_label_end_x, current_y, FALSE, {}, 0, 0, field.label.c_str(), 0 });
+			di.push_back({ DI_EDIT, col_edit_start_x, current_y, col_edit_end_x, current_y, FALSE, {}, DIF_READONLY | DIF_SELECTONENTRY, 0, field.content.c_str(), 0 });
+			current_y++;
+		};
 
-		for (auto &field : file_info) {
-			int di_text_x1 = di_text_x2 - static_cast<int>(GetFieldLabelWidth(field)) + 1;
-			di.push_back({ DI_TEXT, di_text_x1, cur_line,  di_text_x2, cur_line, FALSE, {}, 0, 0, field.label.c_str(), 0 });
-			di.push_back({ DI_EDIT, di_edit_x1, cur_line,  di_edit_x2, cur_line, FALSE, {}, DIF_READONLY | DIF_SELECTONENTRY, 0,  field.content.c_str(), 0});
-			++cur_line;
+		auto add_separator = [&]() {
+			di.push_back({ DI_TEXT, 5, current_y, 0, current_y, FALSE, {}, DIF_SEPARATOR, 0, L"", 0 });
+			current_y++;
+		};
+
+
+		di.push_back({ DI_DOUBLEBOX, 3, 1, dialog_width - 4, dialog_height - 2, FALSE, {}, 0, 0, GetMsg(MDetails), 0 });
+		current_y++;
+
+		for (const auto& field : file_info) {
+			add_field_row(field);
 		}
 
-		di.push_back({ DI_TEXT, 5,  cur_line,  0,  cur_line, FALSE, {}, DIF_SEPARATOR, 0, L"", 0 });
-		++cur_line;
+		add_separator();
 
-		for (auto &field : application_info) {
-			int di_text_x1 = di_text_x2 - static_cast<int>(GetFieldLabelWidth(field)) + 1;
-			di.push_back({ DI_TEXT, di_text_x1, cur_line,  di_text_x2, cur_line, FALSE, {}, 0, 0, field.label.c_str(), 0 });
-			di.push_back({ DI_EDIT, di_edit_x1, cur_line,  di_edit_x2, cur_line, FALSE, {}, DIF_READONLY | DIF_SELECTONENTRY, 0,  field.content.c_str(), 0});
-			++cur_line;
+		for (const auto& field : application_info) {
+			add_field_row(field);
 		}
 
-		di.push_back({ DI_TEXT, 5,  cur_line,  0,  cur_line, FALSE, {}, DIF_SEPARATOR, 0, L"", 0 });
-		++cur_line;
+		add_separator();
 
-		int di_text_x1 = di_text_x2 - static_cast<int>(GetFieldLabelWidth(launch_command)) + 1;
-		di.push_back({ DI_TEXT, di_text_x1, cur_line,  di_text_x2, cur_line, FALSE, {}, 0, 0, launch_command.label.c_str(), 0 });
-		di.push_back({ DI_EDIT, di_edit_x1, cur_line,  di_edit_x2, cur_line, FALSE, {}, DIF_READONLY | DIF_SELECTONENTRY, 0,  launch_command.content.c_str(), 0});
-		++cur_line;
+		add_field_row(launch_command);
 
-		di.push_back({ DI_TEXT, 5,  cur_line,  0,  cur_line, FALSE, {}, DIF_SEPARATOR, 0, L"", 0 });
-		++cur_line;
+		add_separator();
 
-		di.push_back({ DI_BUTTON, 0,  cur_line,  0,  cur_line, TRUE, {}, DIF_CENTERGROUP, 0, GetMsg(MClose), 0 });
-
+		di.push_back({ DI_BUTTON, 0, current_y, 0, current_y, TRUE, {}, DIF_CENTERGROUP, 0, GetMsg(MClose), 0 });
 		di.back().DefaultButton = TRUE;
+		di.push_back({ DI_BUTTON, 0, current_y, 0, current_y, FALSE, {}, DIF_CENTERGROUP, 0, GetMsg(MLaunch), 0 });
+		const int launch_btn_index = static_cast<int>(di.size()) - 1;
 
-		di.push_back({ DI_BUTTON, 0,  cur_line,  0,  cur_line, TRUE, {}, DIF_CENTERGROUP, 0, GetMsg(MLaunch), 0 });
+		HANDLE dlg = s_info.DialogInit(s_info.ModuleNumber, -1, -1, dialog_width, dialog_height,
+									   L"InformationDialog", di.data(), static_cast<int>(di.size()),
+									   0, 0, nullptr, 0);
 
-		HANDLE dlg = s_info.DialogInit(s_info.ModuleNumber, -1, -1, details_dialog_width, details_dialog_height, L"InformationDialog",
-									   di.data(), static_cast<int>(di.size()), 0, 0, nullptr, 0);
 		if (dlg != INVALID_HANDLE_VALUE) {
 			int exit_code = s_info.DialogRun(dlg);
 			s_info.DialogFree(dlg);
-			return (exit_code == (int)di.size() - 1); // last element is button "Launch"
+			return (exit_code == launch_btn_index);
 		}
+
 		return false;
 	}
 
