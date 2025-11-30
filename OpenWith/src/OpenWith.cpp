@@ -256,28 +256,11 @@ namespace OpenWith {
 
 		int details_dialog_height = file_info.size() + application_info.size() + 9;
 
-		// Helper lambda to get the console cell width of a field's label string.
-		// This is crucial for correct UI alignment with non-ASCII characters.
-		auto get_label_cell_width = [](const Field& f) -> size_t {
-			return s_fsf.StrCellsCount(f.label.c_str(), f.label.size());
-		};
-
-		// Helper lambda to find the maximum label length (in cells) in a vector of Fields for alignment.
-		auto max_in = [&](const std::vector<Field>& v) -> size_t {
-			if (v.empty()) return 0;
-			// Use a custom comparator that measures string width in console cells.
-			// The inner lambda captures '[&]' to access the get_label_cell_width helper.
-			return get_label_cell_width(*std::max_element(v.begin(), v.end(),
-														  [&](const Field& x, const Field& y){
-															  return get_label_cell_width(x) < get_label_cell_width(y);
-														  }));
-		};
-
 		// Calculate the maximum label width (in cells) across all sections.
 		auto max_di_text_length = static_cast<int>(std::max({
-			get_label_cell_width(launch_command),
-			max_in(file_info),
-			max_in(application_info)
+			GetFieldLabelWidth(launch_command),
+			GetMaxFieldLabelWidth(file_info),
+			GetMaxFieldLabelWidth(application_info)
 		}));
 
 		// Calculate coordinates for dialog items to right-align all text labels.
@@ -292,7 +275,7 @@ namespace OpenWith {
 		int cur_line = 2;
 
 		for (auto &field : file_info) {
-			int di_text_x1 = di_text_x2 - static_cast<int>(get_label_cell_width(field)) + 1;
+			int di_text_x1 = di_text_x2 - static_cast<int>(GetFieldLabelWidth(field)) + 1;
 			di.push_back({ DI_TEXT, di_text_x1, cur_line,  di_text_x2, cur_line, FALSE, {}, 0, 0, field.label.c_str(), 0 });
 			di.push_back({ DI_EDIT, di_edit_x1, cur_line,  di_edit_x2, cur_line, FALSE, {}, DIF_READONLY | DIF_SELECTONENTRY, 0,  field.content.c_str(), 0});
 			++cur_line;
@@ -302,7 +285,7 @@ namespace OpenWith {
 		++cur_line;
 
 		for (auto &field : application_info) {
-			int di_text_x1 = di_text_x2 - static_cast<int>(get_label_cell_width(field)) + 1;
+			int di_text_x1 = di_text_x2 - static_cast<int>(GetFieldLabelWidth(field)) + 1;
 			di.push_back({ DI_TEXT, di_text_x1, cur_line,  di_text_x2, cur_line, FALSE, {}, 0, 0, field.label.c_str(), 0 });
 			di.push_back({ DI_EDIT, di_edit_x1, cur_line,  di_edit_x2, cur_line, FALSE, {}, DIF_READONLY | DIF_SELECTONENTRY, 0,  field.content.c_str(), 0});
 			++cur_line;
@@ -311,7 +294,7 @@ namespace OpenWith {
 		di.push_back({ DI_TEXT, 5,  cur_line,  0,  cur_line, FALSE, {}, DIF_SEPARATOR, 0, L"", 0 });
 		++cur_line;
 
-		int di_text_x1 = di_text_x2 - static_cast<int>(get_label_cell_width(launch_command)) + 1;
+		int di_text_x1 = di_text_x2 - static_cast<int>(GetFieldLabelWidth(launch_command)) + 1;
 		di.push_back({ DI_TEXT, di_text_x1, cur_line,  di_text_x2, cur_line, FALSE, {}, 0, 0, launch_command.label.c_str(), 0 });
 		di.push_back({ DI_EDIT, di_edit_x1, cur_line,  di_edit_x2, cur_line, FALSE, {}, DIF_READONLY | DIF_SELECTONENTRY, 0,  launch_command.content.c_str(), 0});
 		++cur_line;
@@ -589,6 +572,22 @@ namespace OpenWith {
 			result += vec[i];
 		}
 		return result;
+	}
+
+
+	size_t OpenWithPlugin::GetFieldLabelWidth(const Field& field)
+	{
+		return s_fsf.StrCellsCount(field.label.c_str(), field.label.size());
+	}
+
+
+	size_t OpenWithPlugin::GetMaxFieldLabelWidth(const std::vector<Field>& fields)
+	{
+		size_t max_width = 0;
+		for (const auto& field : fields) {
+			max_width = std::max(max_width, GetFieldLabelWidth(field));
+		}
+		return max_width;
 	}
 
 
