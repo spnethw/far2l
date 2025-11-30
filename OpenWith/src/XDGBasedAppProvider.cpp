@@ -695,7 +695,7 @@ std::vector<CandidateInfo> XDGBasedAppProvider::FormatCandidatesForUI(
 CandidateInfo XDGBasedAppProvider::ConvertDesktopEntryToCandidateInfo(const DesktopEntry& desktop_entry)
 {
 	CandidateInfo candidate;
-	candidate.terminal = (desktop_entry.terminal == "true");
+	candidate.terminal = (desktop_entry.terminal == "true" || desktop_entry.terminal == "1");
 	candidate.name = StrMB2Wide(UnescapeGKeyFileString(desktop_entry.name));
 	candidate.id = StrMB2Wide(desktop_entry.id);
 

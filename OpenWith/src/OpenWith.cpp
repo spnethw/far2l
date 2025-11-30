@@ -250,30 +250,29 @@ namespace OpenWith {
 	{
 		constexpr int DETAILS_DIALOG_MIN_WIDTH = 40;
 		constexpr int DETAILS_DIALOG_DESIRED_WIDTH = 90;
+
 		const int screen_width = GetScreenWidth();
 		const int details_dialog_max_width = std::max(DETAILS_DIALOG_MIN_WIDTH, screen_width - 4);
-		const int dialog_width = std::clamp(DETAILS_DIALOG_DESIRED_WIDTH, DETAILS_DIALOG_MIN_WIDTH, details_dialog_max_width);
-		const int dialog_height = static_cast<int>(file_info.size() + application_info.size() + 9);
+		const int details_dialog_width = std::clamp(DETAILS_DIALOG_DESIRED_WIDTH, DETAILS_DIALOG_MIN_WIDTH, details_dialog_max_width);
+		const int details_dialog_height = static_cast<int>(file_info.size() + application_info.size() + 9);
 
-		const auto max_label_len = static_cast<int>(std::max({
-			GetFieldLabelWidth(launch_command),
-			GetMaxFieldLabelWidth(file_info),
-			GetMaxFieldLabelWidth(application_info)
+		const auto max_label_cell_width = static_cast<int>(std::max({
+			GetLabelCellWidth(launch_command),
+			GetMaxLabelCellWidth(file_info),
+			GetMaxLabelCellWidth(application_info)
 		}));
 
-		const int col_label_end_x = max_label_len + 4;
-		const int col_edit_start_x = max_label_len + 6;
-		const int col_edit_end_x = dialog_width - 6;
+		const int label_end_x = max_label_cell_width + 4;
+		const int edit_start_x = max_label_cell_width + 6;
+		const int edit_end_x = details_dialog_width - 6;
 
 		std::vector<FarDialogItem> di;
-		di.reserve(dialog_height + 5);
-
 		int current_y = 1;
 
 		auto add_field_row = [&](const Field& field) {
-			int label_start_x = col_label_end_x - static_cast<int>(GetFieldLabelWidth(field)) + 1;
-			di.push_back({ DI_TEXT, label_start_x, current_y, col_label_end_x, current_y, FALSE, {}, 0, 0, field.label.c_str(), 0 });
-			di.push_back({ DI_EDIT, col_edit_start_x, current_y, col_edit_end_x, current_y, FALSE, {}, DIF_READONLY | DIF_SELECTONENTRY, 0, field.content.c_str(), 0 });
+			int label_start_x = label_end_x - static_cast<int>(GetLabelCellWidth(field)) + 1;
+			di.push_back({ DI_TEXT, label_start_x, current_y, label_end_x, current_y, FALSE, {}, 0, 0, field.label.c_str(), 0 });
+			di.push_back({ DI_EDIT, edit_start_x, current_y, edit_end_x, current_y, FALSE, {}, DIF_READONLY | DIF_SELECTONENTRY, 0, field.content.c_str(), 0 });
 			current_y++;
 		};
 
@@ -282,32 +281,23 @@ namespace OpenWith {
 			current_y++;
 		};
 
-
-		di.push_back({ DI_DOUBLEBOX, 3, 1, dialog_width - 4, dialog_height - 2, FALSE, {}, 0, 0, GetMsg(MDetails), 0 });
-		current_y++;
-
+		di.push_back({ DI_DOUBLEBOX, 3, current_y++, details_dialog_width - 4, details_dialog_height - 2, FALSE, {}, 0, 0, GetMsg(MDetails), 0 });
 		for (const auto& field : file_info) {
 			add_field_row(field);
 		}
-
 		add_separator();
-
 		for (const auto& field : application_info) {
 			add_field_row(field);
 		}
-
 		add_separator();
-
 		add_field_row(launch_command);
-
 		add_separator();
-
 		di.push_back({ DI_BUTTON, 0, current_y, 0, current_y, TRUE, {}, DIF_CENTERGROUP, 0, GetMsg(MClose), 0 });
 		di.back().DefaultButton = TRUE;
 		di.push_back({ DI_BUTTON, 0, current_y, 0, current_y, FALSE, {}, DIF_CENTERGROUP, 0, GetMsg(MLaunch), 0 });
 		const int launch_btn_index = static_cast<int>(di.size()) - 1;
 
-		HANDLE dlg = s_info.DialogInit(s_info.ModuleNumber, -1, -1, dialog_width, dialog_height,
+		HANDLE dlg = s_info.DialogInit(s_info.ModuleNumber, -1, -1, details_dialog_width, details_dialog_height,
 									   L"InformationDialog", di.data(), static_cast<int>(di.size()),
 									   0, 0, nullptr, 0);
 
@@ -316,7 +306,6 @@ namespace OpenWith {
 			s_info.DialogFree(dlg);
 			return (exit_code == launch_btn_index);
 		}
-
 		return false;
 	}
 
@@ -338,7 +327,6 @@ namespace OpenWith {
 			file_info.push_back({ GetMsg(MPathname), count_msg });
 		}
 
-		// Use the pre-fetched mime profiles instead of re-calculating them.
 		file_info.push_back({ GetMsg(MMimeType), JoinStrings(unique_mime_profiles, L"; ") });
 
 		std::wstring all_cmds = JoinStrings(cmds, L"; ");
@@ -582,17 +570,19 @@ namespace OpenWith {
 	}
 
 
-	size_t OpenWithPlugin::GetFieldLabelWidth(const Field& field)
+	// Gets the console cell width of a field's label string.
+	size_t OpenWithPlugin::GetLabelCellWidth(const Field& field)
 	{
 		return s_fsf.StrCellsCount(field.label.c_str(), field.label.size());
 	}
 
 
-	size_t OpenWithPlugin::GetMaxFieldLabelWidth(const std::vector<Field>& fields)
+	// Finds the maximum label width (in cells) in a vector of Fields for alignment.
+	size_t OpenWithPlugin::GetMaxLabelCellWidth(const std::vector<Field>& fields)
 	{
 		size_t max_width = 0;
 		for (const auto& field : fields) {
-			max_width = std::max(max_width, GetFieldLabelWidth(field));
+			max_width = std::max(max_width, GetLabelCellWidth(field));
 		}
 		return max_width;
 	}

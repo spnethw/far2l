@@ -50,8 +50,8 @@ private:
 	static void SaveOptions();
 	static void ShowError(const wchar_t *title, const std::vector<std::wstring>& text);
 	static std::wstring JoinStrings(const std::vector<std::wstring>& vec, const std::wstring& delimiter);
-	static size_t GetFieldLabelWidth(const Field& field);
-	static size_t GetMaxFieldLabelWidth(const std::vector<Field>& fields);
+	static size_t GetLabelCellWidth(const Field& field);
+	static size_t GetMaxLabelCellWidth(const std::vector<Field>& fields);
 	static int GetScreenWidth();
 };
 
