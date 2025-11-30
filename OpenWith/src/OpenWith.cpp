@@ -404,34 +404,9 @@ namespace OpenWith {
 		// A cache for MIME profiles. It will be populated (lazily) only if the user presses F3 or if no apps are found.
 		std::optional<std::vector<std::wstring>> unique_mime_profiles_cache;
 
-		// Helper lambda to lazily get or populate the MIME profiles cache.
-		// It's called only when the MIME info is actually needed.
-		auto get_unique_mime_profiles = [&]() -> const std::vector<std::wstring>& {
-			if (!unique_mime_profiles_cache.has_value()) {
-				unique_mime_profiles_cache = provider->GetMimeTypes();
-			}
-			return *unique_mime_profiles_cache;
-		};
-
 		std::vector<CandidateInfo> candidates;
 
-		// Lambda to fetch and filter application candidates.
-		auto update_candidates = [&]() {
-			// Fetch the raw list of candidates from the platform-specific provider.
-			candidates = provider->GetAppCandidates(filepaths);
-
-			// When multiple files are selected and the internal far2l console is used, we must filter out terminal-based applications
-			// because the internal console cannot handle multiple concurrent instances.
-			if (filepaths.size() > 1 && !s_use_external_terminal) {
-				candidates.erase(
-					std::remove_if(candidates.begin(), candidates.end(),
-								   [](const CandidateInfo& c) { return c.terminal && !c.multi_file_aware; }),
-					candidates.end());
-			}
-		};
-
-		// Perform the initial fetch and filtering of application candidates.
-		update_candidates();
+		UpdateAppCandidates(provider.get(), filepaths, candidates);
 
 		constexpr int BREAK_KEYS[] = {VK_F3, VK_F9, 0};
 		constexpr int KEY_F3_DETAILS = 0;
@@ -446,7 +421,7 @@ namespace OpenWith {
 				std::vector<std::wstring> error_lines = { GetMsg(MNoAppsFound) };
 
 				// Get the MIME types (lazily) only now that we need them for the error message.
-				const auto& unique_mimes = get_unique_mime_profiles();
+				const auto& unique_mimes = GetOrUpdateMimeProfiles(provider.get(), unique_mime_profiles_cache);
 
 				error_lines.push_back(JoinStrings(unique_mimes, L"; "));
 
@@ -477,7 +452,8 @@ namespace OpenWith {
 				// Repeat until user either launches the application or closes the dialog to go back.
 				while (true) {
 					// Get MIME profiles (lazily) and pass them to the details dialog.
-					bool wants_to_launch = ShowDetailsDialog(provider.get(), selected_app, filepaths, cmds, get_unique_mime_profiles());
+					bool wants_to_launch = ShowDetailsDialog(provider.get(), selected_app, filepaths, cmds,
+															 GetOrUpdateMimeProfiles(provider.get(), unique_mime_profiles_cache));
 					if (!wants_to_launch) {
 						// User clicked "Close", break the inner loop to return to the main menu.
 						break;
@@ -501,7 +477,7 @@ namespace OpenWith {
 					provider->LoadPlatformSettings();
 
 					// Re-run the candidate fetch and filter logic to update the menu.
-					update_candidates();
+					UpdateAppCandidates(provider.get(), filepaths, candidates);
 
 					// Reset the active menu item to the first one, as the list may have changed.
 					active_idx = 0;
@@ -517,6 +493,35 @@ namespace OpenWith {
 					return; // Exit the plugin after a successful launch.
 				}
 			}
+		}
+	}
+
+
+	// Lazily gets or populates the MIME profiles cache. It's called only when the MIME info is actually needed.
+	const std::vector<std::wstring>& OpenWithPlugin::GetOrUpdateMimeProfiles(AppProvider* provider,  std::optional<std::vector<std::wstring>>& cache)
+	{
+		if (!cache.has_value()) {
+			cache = provider->GetMimeTypes();
+		}
+		return *cache;
+	}
+
+
+	// Fetch and filter application candidates.
+	void OpenWithPlugin::UpdateAppCandidates(AppProvider* provider, const std::vector<std::wstring>& filepaths, std::vector<CandidateInfo>& candidates)
+	{
+		// Fetch the raw list of candidates from the platform-specific provider.
+		candidates = provider->GetAppCandidates(filepaths);
+
+		// When multiple files are selected and the internal far2l console is used, we must filter out terminal-based applications
+		// because the internal console cannot handle multiple concurrent instances.
+		if (filepaths.size() > 1 && !s_use_external_terminal) {
+			candidates.erase(
+				std::remove_if(candidates.begin(), candidates.end(),
+							   [](const CandidateInfo& c) {
+								   return c.terminal && !c.multi_file_aware;
+							   }),
+				candidates.end());
 		}
 	}
 
