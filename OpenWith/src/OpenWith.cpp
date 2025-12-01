@@ -154,24 +154,24 @@ namespace OpenWith {
 		provider->LoadPlatformSettings();
 
 		const bool old_use_external_terminal = s_use_external_terminal;
-		std::vector<ProviderSetting> old_platform_settings = provider->GetPlatformSettings();
+		const std::vector<ProviderSetting> old_platform_settings = provider->GetPlatformSettings();
 
 		std::vector<FarDialogItem> di;
 		int current_y = 1;
 
-		auto add_item = [&](FarDialogItem item) -> size_t {
+		auto add_item = [&di](const FarDialogItem& item) -> size_t {
 			di.push_back(item);
 			auto item_idx = di.size() - 1;
 			return item_idx;
 		};
 
-		auto add_checkbox = [&](const wchar_t* text, bool is_checked, bool is_disabled = false) -> size_t {
+		auto add_checkbox = [&add_item, &current_y](const wchar_t* text, bool is_checked, bool is_disabled = false) -> size_t {
 			auto item_idx = add_item({ DI_CHECKBOX, 5, current_y, 0, current_y, FALSE, {(DWORD_PTR)is_checked}, is_disabled ? DIF_DISABLE : DIF_NONE, FALSE, text, 0 });
 			current_y++;
 			return item_idx;
 		};
 
-		auto add_separator = [&]() -> size_t {
+		auto add_separator = [&add_item, &current_y]() -> size_t {
 			auto item_idx = add_item({ DI_TEXT, 5, current_y, 0, current_y, FALSE, {}, DIF_SEPARATOR, FALSE, L"", 0 });
 			current_y++;
 			return item_idx;
@@ -217,10 +217,10 @@ namespace OpenWith {
 		int exit_code = s_info.DialogRun(dlg);
 		ConfigureResult result;
 
-		if (exit_code == (int)ok_btn_idx) {
+		if (exit_code == static_cast<int>(ok_btn_idx)) {
 			result.settings_saved = true;
 
-			auto is_checked = [&](size_t i) -> bool {
+			auto is_checked = [&dlg](size_t i) -> bool {
 				return s_info.SendDlgMessage(dlg, DM_GETCHECK, i, 0) == BSTATE_CHECKED;
 			};
 
@@ -287,16 +287,18 @@ namespace OpenWith {
 		const int edit_end_x = details_dialog_width - 6;
 
 		std::vector<FarDialogItem> di;
+		di.reserve(file_info.size() * 2 + application_info.size() * 2 + 8);
+
 		int current_y = 1;
 
-		auto add_field_row = [&](const Field& field) {
+		auto add_field_row = [&di, &current_y, label_end_x, edit_start_x, edit_end_x](const Field& field) {
 			int label_start_x = label_end_x - static_cast<int>(GetLabelCellWidth(field)) + 1;
 			di.push_back({ DI_TEXT, label_start_x, current_y, label_end_x, current_y, FALSE, {}, 0, 0, field.label.c_str(), 0 });
 			di.push_back({ DI_EDIT, edit_start_x, current_y, edit_end_x, current_y, FALSE, {}, DIF_READONLY | DIF_SELECTONENTRY, 0, field.content.c_str(), 0 });
 			current_y++;
 		};
 
-		auto add_separator = [&]() {
+		auto add_separator = [&di, &current_y]() {
 			di.push_back({ DI_TEXT, 5, current_y, 0, current_y, FALSE, {}, DIF_SEPARATOR, 0, L"", 0 });
 			current_y++;
 		};
