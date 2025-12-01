@@ -161,24 +161,24 @@ namespace OpenWith {
 
 		auto add_item = [&](FarDialogItem item) -> size_t {
 			di.push_back(item);
-			auto idx = di.size() - 1;
-			return idx;
+			auto item_idx = di.size() - 1;
+			return item_idx;
 		};
 
 		auto add_checkbox = [&](const wchar_t* text, bool is_checked, bool is_disabled = false) -> size_t {
-			auto idx = add_item({ DI_CHECKBOX, 5, current_y, 0, current_y, 0, {(DWORD_PTR)is_checked}, is_disabled ? DIF_DISABLE : DIF_NONE, 0, text, 0 });
+			auto item_idx = add_item({ DI_CHECKBOX, 5, current_y, 0, current_y, FALSE, {(DWORD_PTR)is_checked}, is_disabled ? DIF_DISABLE : DIF_NONE, FALSE, text, 0 });
 			current_y++;
-			return idx;
+			return item_idx;
 		};
 
 		auto add_separator = [&]() -> size_t {
-			auto idx = add_item({ DI_TEXT, 5, current_y, 0, current_y, 0, {}, DIF_SEPARATOR, 0, L"", 0 });
+			auto item_idx = add_item({ DI_TEXT, 5, current_y, 0, current_y, FALSE, {}, DIF_SEPARATOR, FALSE, L"", 0 });
 			current_y++;
-			return idx;
+			return item_idx;
 		};
 
 
-		add_item({ DI_DOUBLEBOX, 3, current_y++, CONFIG_DIALOG_WIDTH - 4, 0, FALSE, {}, 0, 0, GetMsg(MConfigTitle), 0 });
+		add_item({ DI_DOUBLEBOX, 3, current_y++, CONFIG_DIALOG_WIDTH - 4, 0, FALSE, {}, DIF_NONE, FALSE, GetMsg(MConfigTitle), 0 });
 
 		auto use_external_terminal_idx          = add_checkbox(GetMsg(MUseExternalTerminal), s_use_external_terminal);
 		auto no_wait_for_command_completion_idx = add_checkbox(GetMsg(MNoWaitForCommandCompletion), s_no_wait_for_command_completion);
@@ -188,8 +188,9 @@ namespace OpenWith {
 		const wchar_t* confirm_launch_label = GetMsg(MConfirmLaunchOption);
 		int confirm_launch_label_width = static_cast<int>(s_fsf.StrCellsCount(confirm_launch_label, wcslen(confirm_launch_label)));
 
-		auto confirm_launch_chkbx_idx = add_item({ DI_CHECKBOX, 5, current_y, 0, 0, 0, {(DWORD_PTR)s_confirm_launch}, 0, 0, confirm_launch_label, 0 });
-		auto confirm_launch_edit_idx  = add_item({ DI_FIXEDIT, confirm_launch_label_width + 10, current_y++, confirm_launch_label_width + 13, 0, FALSE, {(DWORD_PTR)L"9999"}, DIF_MASKEDIT, 0, threshold_str.c_str(), 0 });
+		auto confirm_launch_chkbx_idx = add_item({ DI_CHECKBOX, 5, current_y, 0, current_y, FALSE, {(DWORD_PTR)s_confirm_launch}, DIF_NONE, FALSE, confirm_launch_label, 0 });
+		auto confirm_launch_edit_idx  = add_item({ DI_FIXEDIT, confirm_launch_label_width + 10, current_y, confirm_launch_label_width + 13, current_y, FALSE, {(DWORD_PTR)L"9999"}, DIF_MASKEDIT, FALSE, threshold_str.c_str(), 0 });
+		current_y++;
 
 		std::vector<std::pair<size_t, ProviderSetting>> dynamic_settings;
 		dynamic_settings.reserve(old_platform_settings.size());
@@ -202,8 +203,8 @@ namespace OpenWith {
 		}
 
 		add_separator();
-		auto launch_btn_idx = add_item({ DI_BUTTON, 0, current_y, 0, 0, 0, {}, DIF_CENTERGROUP, 1, GetMsg(MOk), 0 });
-		add_item({ DI_BUTTON, 0, current_y, 0, 0, 0, {}, DIF_CENTERGROUP, 0, GetMsg(MCancel), 0 });
+		auto ok_btn_idx = add_item({ DI_BUTTON, 0, current_y, 0, current_y, FALSE, {}, DIF_CENTERGROUP, TRUE, GetMsg(MOk), 0 });
+		add_item({ DI_BUTTON, 0, current_y, 0, current_y, FALSE, {}, DIF_CENTERGROUP, FALSE, GetMsg(MCancel), 0 });
 
 		int config_dialog_height = current_y + 3;
 		di[0].Y2 = config_dialog_height - 2;
@@ -216,7 +217,7 @@ namespace OpenWith {
 		int exit_code = s_info.DialogRun(dlg);
 		ConfigureResult result;
 
-		if (exit_code == (int)launch_btn_idx) {
+		if (exit_code == (int)ok_btn_idx) {
 			result.settings_saved = true;
 
 			auto is_checked = [&](size_t i) -> bool {
@@ -241,7 +242,9 @@ namespace OpenWith {
 
 				for (const auto& [idx, setting] : dynamic_settings) {
 					bool new_value = is_checked(idx);
-					if (setting.value != new_value) is_platform_settings_changed = true;
+					if (setting.value != new_value) {
+						is_platform_settings_changed = true;
+					}
 					new_platform_settings.push_back({ setting.internal_key, setting.display_name, new_value });
 				}
 
