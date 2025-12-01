@@ -142,58 +142,70 @@ namespace OpenWith {
 
 	// ****************************** Private implementation ******************************
 
-
 	// The core implementation of the configuration logic.
 	// It returns a detailed result, allowing the caller to know if the application list needs to be refreshed.
 	OpenWithPlugin::ConfigureResult OpenWithPlugin::ConfigureImpl()
 	{
+		constexpr int CONFIG_DIALOG_WIDTH = 70;
+
 		LoadOptions();
 
 		auto provider = AppProvider::CreateAppProvider(&OpenWithPlugin::GetMsg);
 		provider->LoadPlatformSettings();
 
 		const bool old_use_external_terminal = s_use_external_terminal;
-
-		// Store the state of platform-specific settings *before* showing the dialog.
-		// This is crucial for detecting changes later.
 		std::vector<ProviderSetting> old_platform_settings = provider->GetPlatformSettings();
 
 		std::vector<FarDialogItem> di;
-		int y = 0;
-		di.push_back({ DI_DOUBLEBOX, 3, ++y, 0, 0, FALSE, {}, 0, 0, GetMsg(MConfigTitle), 0 });
-		di.push_back({ DI_CHECKBOX, 5, ++y, 0, 0, TRUE, { s_use_external_terminal }, 0, 0, GetMsg(MUseExternalTerminal), 0 });
-		di.push_back({ DI_CHECKBOX, 5, ++y, 0, 0, 0, { s_no_wait_for_command_completion },  0, 0, GetMsg(MNoWaitForCommandCompletion), 0});
-		di.push_back({ DI_CHECKBOX, 5, ++y, 0, 0, 0, { s_clear_selection },  0, 0, GetMsg(MClearSelection), 0});
+		int current_y = 1;
 
-		auto threshold_wstr = std::to_wstring(s_confirm_launch_threshold);
-		const wchar_t* confirm_label = GetMsg(MConfirmLaunchOption);
-		size_t confirm_label_width = s_fsf.StrCellsCount(confirm_label, wcslen(confirm_label));
+		auto add_item = [&](FarDialogItem item) -> size_t {
+			di.push_back(item);
+			auto idx = di.size() - 1;
+			return idx;
+		};
 
-		y++;
-		di.push_back({ DI_CHECKBOX, 5, y, 0, 0, 0,  { s_confirm_launch }, 0, 0, confirm_label, 0 });
-		di.push_back({ DI_FIXEDIT, (int)(confirm_label_width + 11), y, (int)(confirm_label_width + 14), 0, FALSE, {(DWORD_PTR)L"9999"}, DIF_MASKEDIT, 0, threshold_wstr.c_str(), 0});
+		auto add_checkbox = [&](const wchar_t* text, bool is_checked, bool is_disabled = false) -> size_t {
+			auto idx = add_item({ DI_CHECKBOX, 5, current_y, 0, current_y, 0, {(DWORD_PTR)is_checked}, is_disabled ? DIF_DISABLE : DIF_NONE, 0, text, 0 });
+			current_y++;
+			return idx;
+		};
 
-		int first_platform_item_idx {};
+		auto add_separator = [&]() -> size_t {
+			auto idx = add_item({ DI_TEXT, 5, current_y, 0, current_y, 0, {}, DIF_SEPARATOR, 0, L"", 0 });
+			current_y++;
+			return idx;
+		};
+
+
+		add_item({ DI_DOUBLEBOX, 3, current_y++, CONFIG_DIALOG_WIDTH - 4, 0, FALSE, {}, 0, 0, GetMsg(MConfigTitle), 0 });
+
+		auto use_external_terminal_idx          = add_checkbox(GetMsg(MUseExternalTerminal), s_use_external_terminal);
+		auto no_wait_for_command_completion_idx = add_checkbox(GetMsg(MNoWaitForCommandCompletion), s_no_wait_for_command_completion);
+		auto clear_selection_idx                = add_checkbox(GetMsg(MClearSelection), s_clear_selection);
+
+		auto threshold_str = std::to_wstring(s_confirm_launch_threshold);
+		const wchar_t* confirm_launch_label = GetMsg(MConfirmLaunchOption);
+		int confirm_launch_label_width = static_cast<int>(s_fsf.StrCellsCount(confirm_launch_label, wcslen(confirm_launch_label)));
+
+		auto confirm_launch_chkbx_idx = add_item({ DI_CHECKBOX, 5, current_y, 0, 0, 0, {(DWORD_PTR)s_confirm_launch}, 0, 0, confirm_launch_label, 0 });
+		auto confirm_launch_edit_idx  = add_item({ DI_FIXEDIT, confirm_launch_label_width + 10, current_y++, confirm_launch_label_width + 13, 0, FALSE, {(DWORD_PTR)L"9999"}, DIF_MASKEDIT, 0, threshold_str.c_str(), 0 });
+
+		std::vector<std::pair<size_t, ProviderSetting>> dynamic_settings;
+		dynamic_settings.reserve(old_platform_settings.size());
 
 		if (!old_platform_settings.empty()) {
-			di.push_back({ DI_TEXT, 5, ++y, 0, 0, FALSE, {}, DIF_SEPARATOR, 0, L"", 0 });
-			first_platform_item_idx = (int)di.size();
-			for (const auto& setting : old_platform_settings) {
-				di.push_back({ DI_CHECKBOX, 5, ++y, 0, 0, FALSE, { setting.value }, setting.disabled ? DIF_DISABLE : DIF_NONE, 0, setting.display_name.c_str(), 0 });
+			add_separator();
+			for (const auto& s : old_platform_settings) {
+				dynamic_settings.emplace_back(add_checkbox(s.display_name.c_str(), s.value, s.disabled), s);
 			}
 		}
 
-		di.push_back({ DI_TEXT, 5, ++y, 0, 0, FALSE, {}, DIF_SEPARATOR, 0, L"", 0 });
-		y++;
-		di.push_back({ DI_BUTTON, 0, y, 0, 0, FALSE, {}, DIF_CENTERGROUP, 0, GetMsg(MOk), 0 });
-		di.back().DefaultButton = TRUE;
-		di.push_back({ DI_BUTTON, 0, y, 0, 0, FALSE, {}, DIF_CENTERGROUP, 0, GetMsg(MCancel), 0 });
+		add_separator();
+		auto launch_btn_idx = add_item({ DI_BUTTON, 0, current_y, 0, 0, 0, {}, DIF_CENTERGROUP, 1, GetMsg(MOk), 0 });
+		add_item({ DI_BUTTON, 0, current_y, 0, 0, 0, {}, DIF_CENTERGROUP, 0, GetMsg(MCancel), 0 });
 
-		int config_dialog_height = y + 3;
-		constexpr int CONFIG_DIALOG_WIDTH = 70;
-
-		// Update dynamically calculated DI_DOUBLEBOX coordinates
-		di[0].X2 = CONFIG_DIALOG_WIDTH - 4;
+		int config_dialog_height = current_y + 3;
 		di[0].Y2 = config_dialog_height - 2;
 
 		HANDLE dlg = s_info.DialogInit(s_info.ModuleNumber, -1, -1, CONFIG_DIALOG_WIDTH, config_dialog_height, L"ConfigurationDialog", di.data(), di.size(), 0, 0, nullptr, 0);
@@ -203,41 +215,46 @@ namespace OpenWith {
 
 		int exit_code = s_info.DialogRun(dlg);
 		ConfigureResult result;
-		auto ok_button_index = (int)di.size() - 2;
 
-		if (exit_code == ok_button_index) {
+		if (exit_code == (int)launch_btn_idx) {
 			result.settings_saved = true;
-			// Save platform-independent settings
-			s_use_external_terminal = (s_info.SendDlgMessage(dlg, DM_GETCHECK, 1, 0) == BSTATE_CHECKED);
-			s_no_wait_for_command_completion = (s_info.SendDlgMessage(dlg, DM_GETCHECK, 2, 0) == BSTATE_CHECKED);
-			s_clear_selection = (s_info.SendDlgMessage(dlg, DM_GETCHECK, 3, 0) == BSTATE_CHECKED);
-			s_confirm_launch = (s_info.SendDlgMessage(dlg, DM_GETCHECK, 4, 0) == BSTATE_CHECKED);
-			const wchar_t* threshold_val_str = (const wchar_t*)s_info.SendDlgMessage(dlg, DM_GETCONSTTEXTPTR, 5, 0);
-			s_confirm_launch_threshold = wcstol(threshold_val_str, NULL, 10);
+
+			auto is_checked = [&](size_t i) -> bool {
+				return s_info.SendDlgMessage(dlg, DM_GETCHECK, i, 0) == BSTATE_CHECKED;
+			};
+
+			s_use_external_terminal          = is_checked(use_external_terminal_idx);
+			s_no_wait_for_command_completion = is_checked(no_wait_for_command_completion_idx);
+			s_clear_selection                = is_checked(clear_selection_idx);
+			s_confirm_launch                 = is_checked(confirm_launch_chkbx_idx);
+
+			auto threshold_str = (const wchar_t*)s_info.SendDlgMessage(dlg, DM_GETCONSTTEXTPTR, confirm_launch_edit_idx, 0);
+			s_confirm_launch_threshold = wcstol(threshold_str, nullptr, 10);
 
 			SaveOptions();
 
-			bool platform_settings_changed = false;
-			if (!old_platform_settings.empty()) {
-				std::vector<ProviderSetting> new_settings;
+			bool is_platform_settings_changed = false;
 
-				for (size_t i = 0; i < old_platform_settings.size(); ++i) {
-					bool new_value = (s_info.SendDlgMessage(dlg, DM_GETCHECK, first_platform_item_idx + i, 0) == BSTATE_CHECKED);
-					// If any platform-specific setting has changed, the candidate list must be regenerated.
-					if (old_platform_settings[i].value != new_value) {
-						platform_settings_changed = true;
-					}
-					new_settings.push_back({ old_platform_settings[i].internal_key, old_platform_settings[i].display_name, new_value });
+			if (!dynamic_settings.empty()) {
+				std::vector<ProviderSetting> new_platform_settings;
+				new_platform_settings.reserve(dynamic_settings.size());
+
+				for (const auto& [idx, setting] : dynamic_settings) {
+					bool new_value = is_checked(idx);
+					if (setting.value != new_value) is_platform_settings_changed = true;
+					new_platform_settings.push_back({ setting.internal_key, setting.display_name, new_value });
 				}
-				provider->SetPlatformSettings(new_settings);
-				provider->SavePlatformSettings();
+
+				if (is_platform_settings_changed) {
+					provider->SetPlatformSettings(new_platform_settings);
+					provider->SavePlatformSettings();
+				}
 			}
 
-			if (platform_settings_changed || (old_use_external_terminal != s_use_external_terminal)) {
+			if (is_platform_settings_changed || (old_use_external_terminal != s_use_external_terminal)) {
 				result.refresh_needed = true;
 			}
 		}
-
 		s_info.DialogFree(dlg);
 		return result;
 	}
@@ -257,9 +274,9 @@ namespace OpenWith {
 		const int details_dialog_height = static_cast<int>(file_info.size() + application_info.size() + 9);
 
 		const auto max_label_cell_width = static_cast<int>(std::max({
-			GetLabelCellWidth(launch_command),
 			GetMaxLabelCellWidth(file_info),
-			GetMaxLabelCellWidth(application_info)
+			GetMaxLabelCellWidth(application_info),
+			GetLabelCellWidth(launch_command)
 		}));
 
 		const int label_end_x = max_label_cell_width + 4;
@@ -295,7 +312,7 @@ namespace OpenWith {
 		di.push_back({ DI_BUTTON, 0, current_y, 0, current_y, TRUE, {}, DIF_CENTERGROUP, 0, GetMsg(MClose), 0 });
 		di.back().DefaultButton = TRUE;
 		di.push_back({ DI_BUTTON, 0, current_y, 0, current_y, FALSE, {}, DIF_CENTERGROUP, 0, GetMsg(MLaunch), 0 });
-		const int launch_btn_index = static_cast<int>(di.size()) - 1;
+		const int launch_btn_idx = static_cast<int>(di.size()) - 1;
 
 		HANDLE dlg = s_info.DialogInit(s_info.ModuleNumber, -1, -1, details_dialog_width, details_dialog_height,
 									   L"InformationDialog", di.data(), static_cast<int>(di.size()),
@@ -304,7 +321,7 @@ namespace OpenWith {
 		if (dlg != INVALID_HANDLE_VALUE) {
 			int exit_code = s_info.DialogRun(dlg);
 			s_info.DialogFree(dlg);
-			return (exit_code == launch_btn_index);
+			return (exit_code == launch_btn_idx);
 		}
 		return false;
 	}
@@ -352,7 +369,6 @@ namespace OpenWith {
 
 
 	// Executes one or more command lines to launch the application.
-	// If multiple commands are provided, it forces asynchronous execution to avoid blocking the UI.
 	void OpenWithPlugin::LaunchApplication(const CandidateInfo& app, const std::vector<std::wstring>& cmds)
 	{
 		if (cmds.empty()) return;
@@ -360,11 +376,11 @@ namespace OpenWith {
 		// If we have multiple commands to run, force asynchronous execution to avoid blocking.
 		bool force_no_wait = cmds.size() > 1;
 
-		unsigned int flags = 0;
+		unsigned int flags {};
 		if (app.terminal) {
 			flags = s_use_external_terminal ? EF_EXTERNALTERM : 0;
 		} else {
-			flags = (s_no_wait_for_command_completion || force_no_wait) ? EF_NOWAIT : 0;
+			flags = (s_no_wait_for_command_completion || force_no_wait) ? EF_NOWAIT | EF_HIDEOUT : 0;
 		}
 
 		for (const auto& cmd : cmds) {
@@ -388,91 +404,72 @@ namespace OpenWith {
 			return;
 		}
 
-		// Get a platform-specific application provider.
 		auto provider = AppProvider::CreateAppProvider(&OpenWithPlugin::GetMsg);
-
-		// A cache for MIME profiles. It will be populated (lazily) only if the user presses F3 or if no apps are found.
 		std::optional<std::vector<std::wstring>> unique_mime_profiles_cache;
+		std::vector<CandidateInfo> app_candidates;
 
-		std::vector<CandidateInfo> candidates;
-
-		UpdateAppCandidates(provider.get(), filepaths, candidates);
+		UpdateAppCandidates(provider.get(), filepaths, app_candidates);
 
 		constexpr int BREAK_KEYS[] = {VK_F3, VK_F9, 0};
 		constexpr int KEY_F3_DETAILS = 0;
 		constexpr int KEY_F9_OPTIONS = 1;
 
-		int break_code = -1;
-		int active_idx = 0;
+		int menu_break_code = -1;
+		int active_menu_idx = 0;
 
 		// Main application selection menu loop.
 		while(true) {
-			if (candidates.empty()) {
+
+			if (app_candidates.empty()) {
 				std::vector<std::wstring> error_lines = { GetMsg(MNoAppsFound) };
-
-				// Get the MIME types (lazily) only now that we need them for the error message.
 				const auto& unique_mimes = GetOrUpdateMimeProfiles(provider.get(), unique_mime_profiles_cache);
-
 				error_lines.push_back(JoinStrings(unique_mimes, L"; "));
-
 				ShowError(GetMsg(MError), error_lines);
-				return;	// No application candidates; exit the plugin entirely
+				return;	// No application candidates; exit the plugin entirely.
 			}
 
-			std::vector<FarMenuItem> menu_items(candidates.size());
-			for (size_t i = 0; i < candidates.size(); ++i) {
-				menu_items[i].Text = candidates[i].name.c_str();
+			std::vector<FarMenuItem> menu_items(app_candidates.size());
+			for (size_t i = 0; i < app_candidates.size(); ++i) {
+				menu_items[i].Text = app_candidates[i].name.c_str();
 			}
 
-			menu_items[active_idx].Selected = true;
+			menu_items[active_menu_idx].Selected = true;
 
 			// Display the menu and get the user's selection.
-			int selected_idx = s_info.Menu(s_info.ModuleNumber, -1, -1, 0, FMENU_WRAPMODE | FMENU_SHOWAMPERSAND | FMENU_CHANGECONSOLETITLE,
-										   GetMsg(MChooseApplication), L"F3 F9 Ctrl+Alt+F", L"Contents", BREAK_KEYS, &break_code, menu_items.data(), menu_items.size());
+			int selected_menu_idx = s_info.Menu(s_info.ModuleNumber, -1, -1, 0, FMENU_WRAPMODE | FMENU_SHOWAMPERSAND | FMENU_CHANGECONSOLETITLE,
+										   GetMsg(MChooseApplication), L"F3 F9 Ctrl+Alt+F", L"Contents", BREAK_KEYS, &menu_break_code, menu_items.data(), menu_items.size());
 
-			if (selected_idx == -1) {
+			if (selected_menu_idx == -1) {
 				return; // User cancelled the menu (e.g., with Esc); exit the plugin entirely
 			}
 
-			active_idx = selected_idx;
-			const auto& selected_app = candidates[selected_idx];
+			active_menu_idx = selected_menu_idx;
+			const auto& selected_app = app_candidates[selected_menu_idx];
 
-			if (break_code == KEY_F3_DETAILS) {
+			if (menu_break_code == KEY_F3_DETAILS) {
 				std::vector<std::wstring> cmds = provider->ConstructLaunchCommands(selected_app, filepaths);
 				// Repeat until user either launches the application or closes the dialog to go back.
 				while (true) {
-					// Get MIME profiles (lazily) and pass them to the details dialog.
 					bool wants_to_launch = ShowDetailsDialog(provider.get(), selected_app, filepaths, cmds,
 															 GetOrUpdateMimeProfiles(provider.get(), unique_mime_profiles_cache));
 					if (!wants_to_launch) {
-						// User clicked "Close", break the inner loop to return to the main menu.
-						break;
+						break; // User clicked "Close", break the inner loop to return to the main menu.
 					}
 
-					// User clicked "Launch", so ask for confirmation if needed.
 					if (AskForLaunchConfirmation(selected_app, filepaths)) {
-						// Confirmation was given. Launch the application and exit the plugin entirely.
-						LaunchApplication(selected_app, cmds);
+						LaunchApplication(selected_app, cmds); // Launch the application and exit the plugin entirely.
 						return;
 					}
 				}
 
-			} else if (break_code == KEY_F9_OPTIONS) {
+			} else if (menu_break_code == KEY_F9_OPTIONS) {
 				const auto configure_result = ConfigureImpl();
-
-				// Check if settings were saved AND if a refresh is required. A refresh is needed if any setting that affects
-				// the candidate list (e.g., s_UseExternalTerminal or any platform-specific option) has been changed.
+				// Refresh is needed if any setting that affects the candidate list (e.g., s_UseExternalTerminal
+				// or any platform-specific option) has been changed.
 				if (configure_result.settings_saved && configure_result.refresh_needed) {
-					// The provider needs to reload its own settings from the config file.
 					provider->LoadPlatformSettings();
-
-					// Re-run the candidate fetch and filter logic to update the menu.
-					UpdateAppCandidates(provider.get(), filepaths, candidates);
-
-					// Reset the active menu item to the first one, as the list may have changed.
-					active_idx = 0;
-
-					// Invalidate the mime cache, as settings affecting it might have changed.
+					UpdateAppCandidates(provider.get(), filepaths, app_candidates);
+					active_menu_idx = 0;
 					unique_mime_profiles_cache.reset();
 				}
 
