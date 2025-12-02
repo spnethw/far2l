@@ -16,22 +16,21 @@ class OpenWithPlugin
 {
 public:
 
+	static void SetStartupInfo(const PluginStartupInfo *plugin_startup_info);
+	static void GetPluginInfo(PluginInfo *plugin_info);
+	static HANDLE OpenPlugin(int open_from, INT_PTR item);
+	static int Configure(int item_number);
+	static void Exit();
+	static const wchar_t* GetMsg(int msg_id);
+
+private:
+
 	// Result structure for the configuration dialog.
 	struct ConfigureResult
 	{
 		bool settings_saved = false;  // True if the user clicked "Ok" and settings were successfully saved.
 		bool refresh_needed = false;  // True if a setting affecting the candidate list (e.g. platform specifics) was changed.
 	};
-
-	static void SetStartupInfo(const PluginStartupInfo *plugin_startup_info);
-	static void GetPluginInfo(PluginInfo *plugin_info);
-	static HANDLE OpenPlugin(int open_from, INT_PTR item);
-	static ConfigureResult ConfigureImpl();
-	static int Configure(int item_number);
-	static void Exit();
-	static const wchar_t* GetMsg(int msg_id);
-
-private:
 
 	// Global context provided by far2l.
 	static PluginStartupInfo s_info;
@@ -44,13 +43,14 @@ private:
 	static bool s_confirm_launch;
 	static int s_confirm_launch_threshold;
 
-	static bool ShowDetailsDialogImpl(const std::vector<Field>& file_info, const std::vector<Field>& application_info, const Field& launch_command);
-	static bool ShowDetailsDialog(AppProvider* provider, const CandidateInfo& app, const std::vector<std::wstring>& filepaths,  const std::vector<std::wstring>& cmds, const std::vector<std::wstring>& unique_mime_profiles);
+	static void ProcessFiles(const std::vector<std::wstring>& filepaths);
+	static void UpdateAppCandidates(AppProvider* provider,  const std::vector<std::wstring>& filepaths, std::vector<CandidateInfo>& candidates);
+	static const std::vector<std::wstring>& GetMimeProfiles(AppProvider* provider, std::optional<std::vector<std::wstring>>& cache);
 	static bool AskForLaunchConfirmation(const CandidateInfo& app, const std::vector<std::wstring>& filepaths);
 	static void LaunchApplication(const CandidateInfo& app, const std::vector<std::wstring>& cmds);
-	static void ProcessFiles(const std::vector<std::wstring>& filepaths);
-	static const std::vector<std::wstring>& GetMimeProfiles(AppProvider* provider, std::optional<std::vector<std::wstring>>& cache);
-	static void UpdateAppCandidates(AppProvider* provider,  const std::vector<std::wstring>& filepaths, std::vector<CandidateInfo>& candidates);
+	static bool ShowDetailsDialog(AppProvider* provider, const CandidateInfo& app, const std::vector<std::wstring>& filepaths,  const std::vector<std::wstring>& cmds, const std::vector<std::wstring>& unique_mime_profiles);
+	static bool ShowDetailsDialogImpl(const std::vector<Field>& file_info, const std::vector<Field>& application_info, const Field& launch_command);
+	static ConfigureResult ConfigureImpl();
 	static void LoadOptions();
 	static void SaveOptions();
 	static void ShowError(const wchar_t *title, const std::vector<std::wstring>& text);
