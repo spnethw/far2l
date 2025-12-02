@@ -434,8 +434,7 @@ void OpenWithPlugin::ProcessFiles(const std::vector<std::wstring>& filepaths)
 
 		if (app_candidates.empty()) {
 			std::vector<std::wstring> error_lines = { GetMsg(MNoAppsFound) };
-			// MIME profiles are fetched only for the error message if no apps are found.
-			const auto& unique_mimes = GetOrUpdateMimeProfiles(provider.get(), unique_mime_profiles_cache);
+			const auto& unique_mimes = GetMimeProfiles(provider.get(), unique_mime_profiles_cache);
 			error_lines.push_back(JoinStrings(unique_mimes, L"; "));
 			ShowError(GetMsg(MError), error_lines);
 			return;	// No application candidates; exit the plugin entirely.
@@ -464,7 +463,7 @@ void OpenWithPlugin::ProcessFiles(const std::vector<std::wstring>& filepaths)
 			// Repeat until user either launches the application or closes the dialog to go back.
 			while (true) {
 				bool wants_to_launch = ShowDetailsDialog(provider.get(), selected_app, filepaths, cmds,
-														 GetOrUpdateMimeProfiles(provider.get(), unique_mime_profiles_cache));
+														 GetMimeProfiles(provider.get(), unique_mime_profiles_cache));
 				if (!wants_to_launch) {
 					break; // User clicked "Close", break the inner loop to return to the main menu.
 				}
@@ -497,7 +496,7 @@ void OpenWithPlugin::ProcessFiles(const std::vector<std::wstring>& filepaths)
 
 
 // Lazy loader for MIME profiles. Fetches data from the provider only if requested.
-const std::vector<std::wstring>& OpenWithPlugin::GetOrUpdateMimeProfiles(AppProvider* provider,  std::optional<std::vector<std::wstring>>& cache)
+const std::vector<std::wstring>& OpenWithPlugin::GetMimeProfiles(AppProvider* provider,  std::optional<std::vector<std::wstring>>& cache)
 {
 	if (!cache.has_value()) {
 		cache = provider->GetMimeTypes();
@@ -525,7 +524,7 @@ void OpenWithPlugin::UpdateAppCandidates(AppProvider* provider, const std::vecto
 }
 
 
-// Loads platform-independent configuration from the INI file using the KeyFile helper.
+// Loads platform-independent configuration from the INI file.
 void OpenWithPlugin::LoadOptions()
 {
 	KeyFileReadSection kfh(INI_LOCATION, INI_SECTION);
@@ -554,7 +553,7 @@ void OpenWithPlugin::SaveOptions()
 }
 
 
-// Helper wrapper around the far2l message box API for error reporting.
+// Error reporting wrapper around the far2l message box API.
 void OpenWithPlugin::ShowError(const wchar_t *title, const std::vector<std::wstring>& text)
 {
 	std::vector<const wchar_t*> items;

@@ -49,7 +49,7 @@ private:
 	static bool AskForLaunchConfirmation(const CandidateInfo& app, const std::vector<std::wstring>& filepaths);
 	static void LaunchApplication(const CandidateInfo& app, const std::vector<std::wstring>& cmds);
 	static void ProcessFiles(const std::vector<std::wstring>& filepaths);
-	static const std::vector<std::wstring>& GetOrUpdateMimeProfiles(AppProvider* provider, std::optional<std::vector<std::wstring>>& cache);
+	static const std::vector<std::wstring>& GetMimeProfiles(AppProvider* provider, std::optional<std::vector<std::wstring>>& cache);
 	static void UpdateAppCandidates(AppProvider* provider,  const std::vector<std::wstring>& filepaths, std::vector<CandidateInfo>& candidates);
 	static void LoadOptions();
 	static void SaveOptions();
