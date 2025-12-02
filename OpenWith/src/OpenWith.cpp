@@ -151,7 +151,7 @@ OpenWithPlugin::ConfigureResult OpenWithPlugin::ConfigureImpl()
 {
 	constexpr int CONFIG_DIALOG_WIDTH = 70;
 
-	// Load platform-independent settings.
+	// Load general platform-independent settings.
 	LoadOptions();
 
 	// Create a temporary provider to access platform-specific settings.
@@ -202,7 +202,7 @@ OpenWithPlugin::ConfigureResult OpenWithPlugin::ConfigureImpl()
 	auto confirm_launch_edit_idx  = add_item({ DI_FIXEDIT, confirm_launch_label_width + 10, current_y, confirm_launch_label_width + 13, current_y, FALSE, {(DWORD_PTR)L"9999"}, DIF_MASKEDIT, FALSE, threshold_str.c_str(), 0 });
 	current_y++;
 
-	// ----- Add Platform-Specific Settings. -----
+	// ----- Add platform-specific settings. -----
 	std::vector<std::pair<size_t, ProviderSetting>> dynamic_settings;
 	dynamic_settings.reserve(old_platform_settings.size());
 
@@ -517,7 +517,6 @@ const std::vector<std::wstring>& OpenWithPlugin::GetMimeProfiles(AppProvider* pr
 // Fetch and filter application candidates.
 void OpenWithPlugin::UpdateAppCandidates(AppProvider* provider, const std::vector<std::wstring>& filepaths, std::vector<CandidateInfo>& candidates)
 {
-	// Fetch the raw list of candidates from the platform-specific provider.
 	candidates = provider->GetAppCandidates(filepaths);
 
 	// When multiple files are selected and the internal far2l console is used, we must filter out terminal-based applications
@@ -533,7 +532,7 @@ void OpenWithPlugin::UpdateAppCandidates(AppProvider* provider, const std::vecto
 }
 
 
-// Loads platform-independent configuration from the INI file.
+// Loads general platform-independent configuration from the INI file.
 void OpenWithPlugin::LoadOptions()
 {
 	KeyFileReadSection kfh(INI_LOCATION, INI_SECTION);
@@ -546,7 +545,7 @@ void OpenWithPlugin::LoadOptions()
 }
 
 
-// Saves current platform-independent configuration to the INI file.
+// Saves current general platform-independent configuration to the INI file.
 void OpenWithPlugin::SaveOptions()
 {
 	KeyFileHelper kfh(INI_LOCATION);
