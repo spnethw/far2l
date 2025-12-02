@@ -33,7 +33,7 @@ void OpenWithPlugin::SetStartupInfo(const PluginStartupInfo *plugin_startup_info
 }
 
 
-// Populates the plugin information structure required by Far Manager.
+// Populates the plugin information structure required by far2l.
 // Sets up the menu strings displayed in the Plugins menu and Configuration menu.
 void OpenWithPlugin::GetPluginInfo(PluginInfo *plugin_info)
 {
@@ -51,17 +51,15 @@ void OpenWithPlugin::GetPluginInfo(PluginInfo *plugin_info)
 }
 
 
-// Public entry point for the configuration dialog called by Far Manager.
-// Returns 1 if settings were saved, 0 otherwise.
+// Called to configure the plugin via the Plugin menu.  Returns 1 if settings were saved, 0 otherwise.
 int OpenWithPlugin::Configure(int item_number)
 {
 	return ConfigureImpl().settings_saved;
 }
 
 
-// Main execution entry point.
-// Validates the panel state, retrieves selected files (or the file under cursor),
-// and initiates the processing workflow.
+// Called when the user activates the plugin. Validates the panel state, retrieves selected files
+// (or the file under cursor), and initiates the processing workflow.
 HANDLE OpenWithPlugin::OpenPlugin(int open_from, INT_PTR item)
 {
 	if (open_from != OPEN_PLUGINSMENU) {
@@ -74,7 +72,6 @@ HANDLE OpenWithPlugin::OpenPlugin(int open_from, INT_PTR item)
 		return INVALID_HANDLE_VALUE;
 	}
 
-	// Ensure we are working with a file panel and it is not empty.
 	if (pi.PanelType != PTYPE_FILEPANEL || pi.ItemsNumber <= 0) {
 		return INVALID_HANDLE_VALUE;
 	}
@@ -87,8 +84,6 @@ HANDLE OpenWithPlugin::OpenPlugin(int open_from, INT_PTR item)
 
 	std::vector<std::wstring> selected_filepaths;
 
-	// Retrieve the current directory of the active panel.
-	// First query the required size, then fetch the data.
 	int dir_size = s_info.Control(PANEL_ACTIVE, FCTL_GETPANELDIR, 0, 0);
 	if (dir_size <= 0) {
 		return INVALID_HANDLE_VALUE;
@@ -100,7 +95,6 @@ HANDLE OpenWithPlugin::OpenPlugin(int open_from, INT_PTR item)
 	}
 
 	std::wstring base_path(dir_buf.get());
-	// Ensure the directory path ends with a separator for correct concatenation.
 	if (!base_path.empty() && base_path.back() != L'/') {
 		base_path += L'/';
 	}
@@ -133,13 +127,13 @@ HANDLE OpenWithPlugin::OpenPlugin(int open_from, INT_PTR item)
 }
 
 
-// Cleanup routine. Nothing specific to release here.
+// Cleanup routine before the plugin is unloaded.
 void OpenWithPlugin::Exit()
 {
 }
 
 
-// Helper to retrieve localized strings from the language file.
+// Retrieves a localized message string from the language file by its ID.
 const wchar_t* OpenWithPlugin::GetMsg(int msg_id)
 {
 	return s_info.GetMsg(s_info.ModuleNumber, msg_id);
@@ -148,9 +142,9 @@ const wchar_t* OpenWithPlugin::GetMsg(int msg_id)
 
 // ****************************** Private implementation ******************************
 
-// Implementation of the configuration dialog.
-// Dynamically builds the UI based on general options and platform-specific settings provided by AppProvider.
-// Returns status indicating if the candidate list should be refreshed.
+
+// Implementation of the configuration dialog.  Dynamically builds the UI based on general options and platform-specific settings
+// provided by AppProvider. Returns status indicating if the candidate list should be refreshed.
 OpenWithPlugin::ConfigureResult OpenWithPlugin::ConfigureImpl()
 {
 	constexpr int CONFIG_DIALOG_WIDTH = 70;
@@ -167,21 +161,18 @@ OpenWithPlugin::ConfigureResult OpenWithPlugin::ConfigureImpl()
 	std::vector<FarDialogItem> di;
 	int current_y = 1;
 
-	// Helper lambda to append an item to the dialog vector.
 	auto add_item = [&di](const FarDialogItem& item) -> size_t {
 		di.push_back(item);
 		auto item_idx = di.size() - 1;
 		return item_idx;
 	};
 
-	// Helper lambda to add a checkbox item.
 	auto add_checkbox = [&add_item, &current_y](const wchar_t* text, bool is_checked, bool is_disabled = false) -> size_t {
 		auto item_idx = add_item({ DI_CHECKBOX, 5, current_y, 0, current_y, FALSE, {(DWORD_PTR)is_checked}, is_disabled ? DIF_DISABLE : DIF_NONE, FALSE, text, 0 });
 		current_y++;
 		return item_idx;
 	};
 
-	// Helper lambda to add a separator line.
 	auto add_separator = [&add_item, &current_y]() -> size_t {
 		auto item_idx = add_item({ DI_TEXT, 5, current_y, 0, current_y, FALSE, {}, DIF_SEPARATOR, FALSE, L"", 0 });
 		current_y++;
@@ -191,12 +182,11 @@ OpenWithPlugin::ConfigureResult OpenWithPlugin::ConfigureImpl()
 
 	add_item({ DI_DOUBLEBOX, 3, current_y++, CONFIG_DIALOG_WIDTH - 4, 0, FALSE, {}, DIF_NONE, FALSE, GetMsg(MConfigTitle), 0 });
 
-	// Add General Settings.
+	// ----- Add general platform-independent settings. -----
 	auto use_external_terminal_idx          = add_checkbox(GetMsg(MUseExternalTerminal), s_use_external_terminal);
 	auto no_wait_for_command_completion_idx = add_checkbox(GetMsg(MNoWaitForCommandCompletion), s_no_wait_for_command_completion);
 	auto clear_selection_idx                = add_checkbox(GetMsg(MClearSelection), s_clear_selection);
 
-	// Add confirmation threshold setting (checkbox + edit field).
 	auto threshold_str = std::to_wstring(s_confirm_launch_threshold);
 	const wchar_t* confirm_launch_label = GetMsg(MConfirmLaunchOption);
 	int confirm_launch_label_width = static_cast<int>(s_fsf.StrCellsCount(confirm_launch_label, wcslen(confirm_launch_label)));
@@ -205,7 +195,7 @@ OpenWithPlugin::ConfigureResult OpenWithPlugin::ConfigureImpl()
 	auto confirm_launch_edit_idx  = add_item({ DI_FIXEDIT, confirm_launch_label_width + 10, current_y, confirm_launch_label_width + 13, current_y, FALSE, {(DWORD_PTR)L"9999"}, DIF_MASKEDIT, FALSE, threshold_str.c_str(), 0 });
 	current_y++;
 
-	// Add Platform-Specific Settings.
+	// ----- Add Platform-Specific Settings. -----
 	std::vector<std::pair<size_t, ProviderSetting>> dynamic_settings;
 	dynamic_settings.reserve(old_platform_settings.size());
 
@@ -231,7 +221,7 @@ OpenWithPlugin::ConfigureResult OpenWithPlugin::ConfigureImpl()
 	int exit_code = s_info.DialogRun(dlg);
 	ConfigureResult result;
 
-	// Process results if "OK" was pressed.
+	// ----- Process results if "OK" was pressed. -----
 	if (exit_code == static_cast<int>(ok_btn_idx)) {
 		result.settings_saved = true;
 
@@ -249,7 +239,6 @@ OpenWithPlugin::ConfigureResult OpenWithPlugin::ConfigureImpl()
 
 		SaveOptions();
 
-		// Check if any platform settings changed.
 		bool is_platform_settings_changed = false;
 
 		if (!dynamic_settings.empty()) {
@@ -270,7 +259,6 @@ OpenWithPlugin::ConfigureResult OpenWithPlugin::ConfigureImpl()
 			}
 		}
 
-		// Determine if a refresh of the candidate list is required.
 		if (is_platform_settings_changed || (old_use_external_terminal != s_use_external_terminal)) {
 			result.refresh_needed = true;
 		}
@@ -280,9 +268,8 @@ OpenWithPlugin::ConfigureResult OpenWithPlugin::ConfigureImpl()
 }
 
 
-// Low-level implementation of the details dialog.
-// Calculates layout, constructs dialog items, and handles the execution result.
-// Returns true if the user clicked "Launch", false otherwise (e.g. "Close" or Esc).
+// Low-level implementation of the details dialog. Calculates layout, constructs dialog items, and handles
+// the execution result. Returns true if the user clicked "Launch", false otherwise (e.g. "Close" or Esc).
 bool OpenWithPlugin::ShowDetailsDialogImpl(const std::vector<Field>& file_info,
 										   const std::vector<Field>& application_info,
 										   const Field& launch_command)
@@ -353,8 +340,7 @@ bool OpenWithPlugin::ShowDetailsDialogImpl(const std::vector<Field>& file_info,
 }
 
 
-// Prepares data for the Details dialog.
-// Handles single file path display vs multiple file count summary.
+// High-level wrapper for the details dialog. Prepares formatted data before calling the implementation.
 bool OpenWithPlugin::ShowDetailsDialog(AppProvider* provider, const CandidateInfo& app,
 									   const std::vector<std::wstring>& filepaths,
 									   const std::vector<std::wstring>& cmds,
@@ -380,8 +366,7 @@ bool OpenWithPlugin::ShowDetailsDialog(AppProvider* provider, const CandidateInf
 }
 
 
-// Prompts for confirmation if the number of selected files exceeds the threshold.
-// Returns true if launch is allowed.
+// Prompts the user for confirmation if the number of files exceeds the configured threshold.
 bool OpenWithPlugin::AskForLaunchConfirmation(const CandidateInfo& app, const std::vector<std::wstring>& filepaths)
 {
 	if (!s_confirm_launch || filepaths.size() <= static_cast<size_t>(s_confirm_launch_threshold)) {
@@ -395,8 +380,7 @@ bool OpenWithPlugin::AskForLaunchConfirmation(const CandidateInfo& app, const st
 }
 
 
-// Executes one or more command lines to launch the application.
-// Supports external terminals and async execution flags.
+// Executes one or more command lines to launch the selected application.
 void OpenWithPlugin::LaunchApplication(const CandidateInfo& app, const std::vector<std::wstring>& cmds)
 {
 	if (cmds.empty()) return;
@@ -424,10 +408,8 @@ void OpenWithPlugin::LaunchApplication(const CandidateInfo& app, const std::vect
 }
 
 
-// Main workflow orchestrator:
-// 1. Resolves application candidates.
-// 2. Displays the selection menu.
-// 3. Handles F3 (Details), F9 (Configure), and Enter (Launch).
+// Main workflow orchestrator: resolves application candidates, displays the selection menu,
+// and handles user actions: F3 (Details), F9 (Settings), Enter (Launch).
 void OpenWithPlugin::ProcessFiles(const std::vector<std::wstring>& filepaths)
 {
 	if (filepaths.empty()) {
@@ -438,14 +420,14 @@ void OpenWithPlugin::ProcessFiles(const std::vector<std::wstring>& filepaths)
 	std::optional<std::vector<std::wstring>> unique_mime_profiles_cache;
 	std::vector<CandidateInfo> app_candidates;
 
-	UpdateAppCandidates(provider.get(), filepaths, app_candidates);
-
 	constexpr int BREAK_KEYS[] = {VK_F3, VK_F9, 0};
 	constexpr int KEY_F3_DETAILS = 0;
 	constexpr int KEY_F9_OPTIONS = 1;
 
 	int menu_break_code = -1;
 	int active_menu_idx = 0;
+
+	UpdateAppCandidates(provider.get(), filepaths, app_candidates);
 
 	// Main application selection menu loop.
 	while(true) {
@@ -495,8 +477,7 @@ void OpenWithPlugin::ProcessFiles(const std::vector<std::wstring>& filepaths)
 
 		} else if (menu_break_code == KEY_F9_OPTIONS) {
 			const auto configure_result = ConfigureImpl();
-			// Refresh is needed if any setting that affects the candidate list (e.g., s_UseExternalTerminal
-			// or any platform-specific option) has been changed.
+			// Refresh is needed if any setting that affects the candidate list has been changed.
 			if (configure_result.settings_saved && configure_result.refresh_needed) {
 				provider->LoadPlatformSettings();
 				UpdateAppCandidates(provider.get(), filepaths, app_candidates);
@@ -515,7 +496,7 @@ void OpenWithPlugin::ProcessFiles(const std::vector<std::wstring>& filepaths)
 }
 
 
-// Lazily gets or populates the MIME profiles cache. It's called only when the MIME info is actually needed.
+// Lazy loader for MIME profiles. Fetches data from the provider only if requested.
 const std::vector<std::wstring>& OpenWithPlugin::GetOrUpdateMimeProfiles(AppProvider* provider,  std::optional<std::vector<std::wstring>>& cache)
 {
 	if (!cache.has_value()) {
@@ -526,7 +507,6 @@ const std::vector<std::wstring>& OpenWithPlugin::GetOrUpdateMimeProfiles(AppProv
 
 
 // Fetch and filter application candidates.
-// Handles the specific constraint where the internal far2l terminal cannot handle multiple file inputs.
 void OpenWithPlugin::UpdateAppCandidates(AppProvider* provider, const std::vector<std::wstring>& filepaths, std::vector<CandidateInfo>& candidates)
 {
 	// Fetch the raw list of candidates from the platform-specific provider.
@@ -545,7 +525,7 @@ void OpenWithPlugin::UpdateAppCandidates(AppProvider* provider, const std::vecto
 }
 
 
-// Loads options from the INI file using the KeyFile helper.
+// Loads platform-independent configuration from the INI file using the KeyFile helper.
 void OpenWithPlugin::LoadOptions()
 {
 	KeyFileReadSection kfh(INI_LOCATION, INI_SECTION);
@@ -553,13 +533,12 @@ void OpenWithPlugin::LoadOptions()
 	s_no_wait_for_command_completion = kfh.GetInt("NoWaitForCommandCompletion", 1) != 0;
 	s_clear_selection = kfh.GetInt("ClearSelection", 0) != 0;
 	s_confirm_launch = kfh.GetInt("ConfirmLaunch", 1) != 0;
-
 	s_confirm_launch_threshold = kfh.GetInt("ConfirmLaunchThreshold", 10);
 	s_confirm_launch_threshold = std::clamp(s_confirm_launch_threshold, 1, 9999);
 }
 
 
-// Saves options to the INI file.
+// Saves current platform-independent configuration to the INI file.
 void OpenWithPlugin::SaveOptions()
 {
 	KeyFileHelper kfh(INI_LOCATION);
@@ -567,17 +546,15 @@ void OpenWithPlugin::SaveOptions()
 	kfh.SetInt(INI_SECTION, "NoWaitForCommandCompletion", s_no_wait_for_command_completion);
 	kfh.SetInt(INI_SECTION, "ClearSelection", s_clear_selection);
 	kfh.SetInt(INI_SECTION, "ConfirmLaunch", s_confirm_launch);
-
 	s_confirm_launch_threshold = std::clamp(s_confirm_launch_threshold, 1, 9999);
 	kfh.SetInt(INI_SECTION, "ConfirmLaunchThreshold", s_confirm_launch_threshold);
-
 	if (!kfh.Save()) {
 		ShowError(GetMsg(MError), { GetMsg(MSaveConfigError) });
 	}
 }
 
 
-// Helper wrapper around the Far Manager message box API for error reporting.
+// Helper wrapper around the far2l message box API for error reporting.
 void OpenWithPlugin::ShowError(const wchar_t *title, const std::vector<std::wstring>& text)
 {
 	std::vector<const wchar_t*> items;
@@ -589,7 +566,7 @@ void OpenWithPlugin::ShowError(const wchar_t *title, const std::vector<std::wstr
 }
 
 
-// Helper function to join a vector of wstrings with a delimiter.
+// Joins a vector of strings with a specified delimiter.
 std::wstring OpenWithPlugin::JoinStrings(const std::vector<std::wstring>& vec, const std::wstring& delimiter)
 {
 	if (vec.empty()) return L"";
@@ -603,7 +580,6 @@ std::wstring OpenWithPlugin::JoinStrings(const std::vector<std::wstring>& vec, c
 
 
 // Gets the console cell width of a field's label string.
-// Uses Far Manager API to correctly account for wide characters.
 size_t OpenWithPlugin::GetLabelCellWidth(const Field& field)
 {
 	return s_fsf.StrCellsCount(field.label.c_str(), field.label.size());
@@ -640,6 +616,7 @@ bool OpenWithPlugin::s_no_wait_for_command_completion = true;
 bool OpenWithPlugin::s_clear_selection = false;
 bool OpenWithPlugin::s_confirm_launch = true;
 int OpenWithPlugin::s_confirm_launch_threshold = 10;
+
 
 
 // Plugin entry points
