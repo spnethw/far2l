@@ -155,7 +155,6 @@ void OpenWithPlugin::ProcessFiles(const std::vector<std::wstring>& filepaths)
 
 	auto provider = AppProvider::CreateAppProvider(&OpenWithPlugin::GetMsg);
 	std::optional<std::vector<std::wstring>> unique_mime_profiles_cache;
-	std::vector<CandidateInfo> app_candidates;
 
 	constexpr int BREAK_KEYS[] = {VK_F3, VK_F9, 0};
 	constexpr int KEY_F3_DETAILS = 0;
@@ -164,17 +163,13 @@ void OpenWithPlugin::ProcessFiles(const std::vector<std::wstring>& filepaths)
 	int menu_break_code = -1;
 	int active_menu_idx = 0;
 
-	UpdateAppCandidates(provider.get(), filepaths, app_candidates);
+	auto app_candidates = FetchAppCandidates(provider.get(), filepaths);
 
 	// Main application selection menu loop.
 	while(true) {
-
 		if (app_candidates.empty()) {
-			std::vector<std::wstring> error_lines = { GetMsg(MNoAppsFound) };
-			const auto& unique_mimes = GetMimeProfiles(provider.get(), unique_mime_profiles_cache);
-			error_lines.push_back(JoinStrings(unique_mimes, L"; "));
-			ShowError(GetMsg(MError), error_lines);
-			return;	// No application candidates; exit the plugin entirely.
+			ShowNoAppsError(provider.get(), unique_mime_profiles_cache);
+			return; // No application candidates; exit the plugin entirely.
 		}
 
 		std::vector<FarMenuItem> menu_items(app_candidates.size());
@@ -216,7 +211,7 @@ void OpenWithPlugin::ProcessFiles(const std::vector<std::wstring>& filepaths)
 			// Refresh is needed if any setting that affects the candidate list has been changed.
 			if (configure_result.settings_saved && configure_result.refresh_needed) {
 				provider->LoadPlatformSettings();
-				UpdateAppCandidates(provider.get(), filepaths, app_candidates);
+				app_candidates = FetchAppCandidates(provider.get(), filepaths);
 				active_menu_idx = 0;
 				unique_mime_profiles_cache.reset();
 			}
@@ -232,11 +227,19 @@ void OpenWithPlugin::ProcessFiles(const std::vector<std::wstring>& filepaths)
 }
 
 
-// Fetch and filter application candidates.
-void OpenWithPlugin::UpdateAppCandidates(AppProvider* provider, const std::vector<std::wstring>& filepaths, std::vector<CandidateInfo>& candidates)
+void OpenWithPlugin::ShowNoAppsError(AppProvider* provider, std::optional<std::vector<std::wstring>>& mime_cache)
 {
-	candidates = provider->GetAppCandidates(filepaths);
+	std::vector<std::wstring> error_lines = { GetMsg(MNoAppsFound) };
+	const auto& mime_profiles = GetMimeProfiles(provider, mime_cache);
+	error_lines.push_back(JoinStrings(mime_profiles, L"; "));
+	ShowError(GetMsg(MError), error_lines);
+}
 
+
+// Fetch and filter application candidates.
+std::vector<CandidateInfo> OpenWithPlugin::FetchAppCandidates(AppProvider* provider, const std::vector<std::wstring>& filepaths)
+{
+	auto candidates = provider->GetAppCandidates(filepaths);
 	// When multiple files are selected and the internal far2l console is used, we must filter out terminal-based applications
 	// because the internal console cannot manage multiple concurrent instances.
 	if (filepaths.size() > 1 && !s_use_external_terminal) {
@@ -247,6 +250,7 @@ void OpenWithPlugin::UpdateAppCandidates(AppProvider* provider, const std::vecto
 						   }),
 			candidates.end());
 	}
+	return candidates;
 }
 
 
