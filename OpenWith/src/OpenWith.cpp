@@ -106,7 +106,9 @@ HANDLE OpenWithPlugin::OpenPlugin(int open_from, INT_PTR item)
 		for (int i = 0; i < pi.SelectedItemsNumber; ++i) {
 			// Query item buffer size.
 			int item_size = s_info.Control(PANEL_ACTIVE, FCTL_GETSELECTEDPANELITEM, i, 0);
-			if (item_size <= 0) continue;
+			if (item_size <= 0) {
+				continue;
+			}
 
 			auto item_buf = std::make_unique<unsigned char[]>(item_size);
 			PluginPanelItem* pi_item = reinterpret_cast<PluginPanelItem*>(item_buf.get());
@@ -159,17 +161,19 @@ OpenWithPlugin::ConfigureResult OpenWithPlugin::ConfigureImpl()
 	const bool old_use_external_terminal = s_use_external_terminal;
 	const std::vector<ProviderSetting> old_platform_settings = provider->GetPlatformSettings();
 
-	std::vector<FarDialogItem> di;
+	std::vector<FarDialogItem> config_dialog_items;
 	int current_y = 1;
 
-	auto add_item = [&di](const FarDialogItem& item) -> size_t {
-		di.push_back(item);
-		auto item_idx = di.size() - 1;
+	auto add_item = [&config_dialog_items](const FarDialogItem& item) -> size_t {
+		config_dialog_items.push_back(item);
+		auto item_idx = config_dialog_items.size() - 1;
 		return item_idx;
 	};
 
 	auto add_checkbox = [&add_item, &current_y](const wchar_t* text, bool is_checked, bool is_disabled = false) -> size_t {
-		auto item_idx = add_item({ DI_CHECKBOX, 5, current_y, 0, current_y, FALSE, {(DWORD_PTR)is_checked}, is_disabled ? DIF_DISABLE : DIF_NONE, FALSE, text, 0 });
+		FarDialogItem chkbox = { DI_CHECKBOX, 5, current_y, 0, current_y, FALSE, {}, is_disabled ? DIF_DISABLE : DIF_NONE, FALSE, text, 0 };
+		chkbox.Param.Selected = is_checked;
+		auto item_idx = add_item(chkbox);
 		current_y++;
 		return item_idx;
 	};
@@ -192,7 +196,9 @@ OpenWithPlugin::ConfigureResult OpenWithPlugin::ConfigureImpl()
 	const wchar_t* confirm_launch_label = GetMsg(MConfirmLaunchOption);
 	int confirm_launch_label_width = static_cast<int>(s_fsf.StrCellsCount(confirm_launch_label, wcslen(confirm_launch_label)));
 
-	auto confirm_launch_chkbx_idx = add_item({ DI_CHECKBOX, 5, current_y, 0, current_y, FALSE, {(DWORD_PTR)s_confirm_launch}, DIF_NONE, FALSE, confirm_launch_label, 0 });
+	FarDialogItem confirm_launch_chkbx = { DI_CHECKBOX, 5, current_y, 0, current_y, FALSE, {}, DIF_NONE, FALSE, confirm_launch_label, 0 };
+	confirm_launch_chkbx.Param.Selected  = s_confirm_launch;
+	auto confirm_launch_chkbx_idx = add_item(confirm_launch_chkbx);
 	auto confirm_launch_edit_idx  = add_item({ DI_FIXEDIT, confirm_launch_label_width + 10, current_y, confirm_launch_label_width + 13, current_y, FALSE, {(DWORD_PTR)L"9999"}, DIF_MASKEDIT, FALSE, threshold_str.c_str(), 0 });
 	current_y++;
 
@@ -212,10 +218,10 @@ OpenWithPlugin::ConfigureResult OpenWithPlugin::ConfigureImpl()
 	add_item({ DI_BUTTON, 0, current_y, 0, current_y, FALSE, {}, DIF_CENTERGROUP, FALSE, GetMsg(MCancel), 0 });
 
 	int config_dialog_height = current_y + 3;
-	di[0].Y2 = config_dialog_height - 2;
+	config_dialog_items[0].Y2 = config_dialog_height - 2;
 
 	HANDLE dlg = s_info.DialogInit(s_info.ModuleNumber, -1, -1, CONFIG_DIALOG_WIDTH, config_dialog_height, L"ConfigurationDialog",
-								   di.data(), static_cast<unsigned int>(di.size()), 0, 0, nullptr, 0);
+								   config_dialog_items.data(), static_cast<unsigned int>(config_dialog_items.size()), 0, 0, nullptr, 0);
 	if (dlg == INVALID_HANDLE_VALUE) {
 		return {};
 	}
@@ -295,25 +301,25 @@ bool OpenWithPlugin::ShowDetailsDialogImpl(const std::vector<Field>& file_info,
 	const int edit_start_x = max_label_cell_width + 6;
 	const int edit_end_x = details_dialog_width - 6;
 
-	std::vector<FarDialogItem> di;
-	di.reserve(file_info.size() * 2 + application_info.size() * 2 + 8);
+	std::vector<FarDialogItem> details_dialog_items;
+	details_dialog_items.reserve(file_info.size() * 2 + application_info.size() * 2 + 8);
 
 	int current_y = 1;
 
 	// Lambda to add a label/value pair.
-	auto add_field_row = [&di, &current_y, label_end_x, edit_start_x, edit_end_x](const Field& field) {
+	auto add_field_row = [&details_dialog_items, &current_y, label_end_x, edit_start_x, edit_end_x](const Field& field) {
 		int label_start_x = label_end_x - static_cast<int>(GetLabelCellWidth(field)) + 1;
-		di.push_back({ DI_TEXT, label_start_x, current_y, label_end_x, current_y, FALSE, {}, 0, 0, field.label.c_str(), 0 });
-		di.push_back({ DI_EDIT, edit_start_x, current_y, edit_end_x, current_y, FALSE, {}, DIF_READONLY | DIF_SELECTONENTRY, 0, field.content.c_str(), 0 });
+		details_dialog_items.push_back({ DI_TEXT, label_start_x, current_y, label_end_x, current_y, FALSE, {}, 0, 0, field.label.c_str(), 0 });
+		details_dialog_items.push_back({ DI_EDIT, edit_start_x, current_y, edit_end_x, current_y, FALSE, {}, DIF_READONLY | DIF_SELECTONENTRY, 0, field.content.c_str(), 0 });
 		current_y++;
 	};
 
-	auto add_separator = [&di, &current_y]() {
-		di.push_back({ DI_TEXT, 5, current_y, 0, current_y, FALSE, {}, DIF_SEPARATOR, 0, L"", 0 });
+	auto add_separator = [&details_dialog_items, &current_y]() {
+		details_dialog_items.push_back({ DI_TEXT, 5, current_y, 0, current_y, FALSE, {}, DIF_SEPARATOR, 0, L"", 0 });
 		current_y++;
 	};
 
-	di.push_back({ DI_DOUBLEBOX, 3, current_y++, details_dialog_width - 4, details_dialog_height - 2, FALSE, {}, 0, 0, GetMsg(MDetails), 0 });
+	details_dialog_items.push_back({ DI_DOUBLEBOX, 3, current_y++, details_dialog_width - 4, details_dialog_height - 2, FALSE, {}, 0, 0, GetMsg(MDetails), 0 });
 	for (const auto& field : file_info) {
 		add_field_row(field);
 	}
@@ -324,13 +330,13 @@ bool OpenWithPlugin::ShowDetailsDialogImpl(const std::vector<Field>& file_info,
 	add_separator();
 	add_field_row(launch_command);
 	add_separator();
-	di.push_back({ DI_BUTTON, 0, current_y, 0, current_y, TRUE, {}, DIF_CENTERGROUP, 0, GetMsg(MClose), 0 });
-	di.back().DefaultButton = TRUE; // Default action is "Close" for safety.
-	di.push_back({ DI_BUTTON, 0, current_y, 0, current_y, FALSE, {}, DIF_CENTERGROUP, 0, GetMsg(MLaunch), 0 });
-	const int launch_btn_idx = static_cast<int>(di.size()) - 1;
+	details_dialog_items.push_back({ DI_BUTTON, 0, current_y, 0, current_y, TRUE, {}, DIF_CENTERGROUP, 0, GetMsg(MClose), 0 });
+	details_dialog_items.back().DefaultButton = TRUE; // Default action is "Close" for safety.
+	details_dialog_items.push_back({ DI_BUTTON, 0, current_y, 0, current_y, FALSE, {}, DIF_CENTERGROUP, 0, GetMsg(MLaunch), 0 });
+	const int launch_btn_idx = static_cast<int>(details_dialog_items.size()) - 1;
 
 	HANDLE dlg = s_info.DialogInit(s_info.ModuleNumber, -1, -1, details_dialog_width, details_dialog_height, L"InformationDialog",
-								   di.data(), static_cast<unsigned int>(di.size()), 0, 0, nullptr, 0);
+								   details_dialog_items.data(), static_cast<unsigned int>(details_dialog_items.size()), 0, 0, nullptr, 0);
 
 	if (dlg != INVALID_HANDLE_VALUE) {
 		int exit_code = s_info.DialogRun(dlg);
@@ -384,7 +390,9 @@ bool OpenWithPlugin::AskForLaunchConfirmation(const CandidateInfo& app, const st
 // Executes one or more command lines to launch the selected application.
 void OpenWithPlugin::LaunchApplication(const CandidateInfo& app, const std::vector<std::wstring>& cmds)
 {
-	if (cmds.empty()) return;
+	if (cmds.empty()) {
+		return;
+	}
 
 	// If we have multiple commands to run, force asynchronous execution to avoid blocking.
 	bool force_no_wait = cmds.size() > 1;
@@ -569,7 +577,9 @@ void OpenWithPlugin::ShowError(const wchar_t *title, const std::vector<std::wstr
 // Joins a vector of strings with a specified delimiter.
 std::wstring OpenWithPlugin::JoinStrings(const std::vector<std::wstring>& vec, const std::wstring& delimiter)
 {
-	if (vec.empty()) return L"";
+	if (vec.empty()) {
+		return L"";
+	}
 	std::wstring result = vec[0];
 	for (size_t i = 1; i < vec.size(); ++i) {
 		result += delimiter;
