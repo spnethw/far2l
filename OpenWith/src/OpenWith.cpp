@@ -149,9 +149,10 @@ OpenWithPlugin::ConfigureResult OpenWithPlugin::ConfigureImpl()
 {
 	constexpr int CONFIG_DIALOG_WIDTH = 70;
 
+	// Load platform-independent settings.
 	LoadOptions();
 
-	// Create a temporary provider to access platform-specific settings definitions.
+	// Create a temporary provider to access platform-specific settings.
 	auto provider = AppProvider::CreateAppProvider(&OpenWithPlugin::GetMsg);
 	provider->LoadPlatformSettings();
 
@@ -213,7 +214,8 @@ OpenWithPlugin::ConfigureResult OpenWithPlugin::ConfigureImpl()
 	int config_dialog_height = current_y + 3;
 	di[0].Y2 = config_dialog_height - 2;
 
-	HANDLE dlg = s_info.DialogInit(s_info.ModuleNumber, -1, -1, CONFIG_DIALOG_WIDTH, config_dialog_height, L"ConfigurationDialog", di.data(), di.size(), 0, 0, nullptr, 0);
+	HANDLE dlg = s_info.DialogInit(s_info.ModuleNumber, -1, -1, CONFIG_DIALOG_WIDTH, config_dialog_height, L"ConfigurationDialog",
+								   di.data(), static_cast<unsigned int>(di.size()), 0, 0, nullptr, 0);
 	if (dlg == INVALID_HANDLE_VALUE) {
 		return {};
 	}
@@ -327,9 +329,8 @@ bool OpenWithPlugin::ShowDetailsDialogImpl(const std::vector<Field>& file_info,
 	di.push_back({ DI_BUTTON, 0, current_y, 0, current_y, FALSE, {}, DIF_CENTERGROUP, 0, GetMsg(MLaunch), 0 });
 	const int launch_btn_idx = static_cast<int>(di.size()) - 1;
 
-	HANDLE dlg = s_info.DialogInit(s_info.ModuleNumber, -1, -1, details_dialog_width, details_dialog_height,
-								   L"InformationDialog", di.data(), static_cast<int>(di.size()),
-								   0, 0, nullptr, 0);
+	HANDLE dlg = s_info.DialogInit(s_info.ModuleNumber, -1, -1, details_dialog_width, details_dialog_height, L"InformationDialog",
+								   di.data(), static_cast<unsigned int>(di.size()), 0, 0, nullptr, 0);
 
 	if (dlg != INVALID_HANDLE_VALUE) {
 		int exit_code = s_info.DialogRun(dlg);
@@ -448,8 +449,8 @@ void OpenWithPlugin::ProcessFiles(const std::vector<std::wstring>& filepaths)
 		menu_items[active_menu_idx].Selected = true;
 
 		// Display the menu and get the user's selection.
-		int selected_menu_idx = s_info.Menu(s_info.ModuleNumber, -1, -1, 0, FMENU_WRAPMODE | FMENU_SHOWAMPERSAND | FMENU_CHANGECONSOLETITLE,
-											GetMsg(MChooseApplication), L"F3 F9 Ctrl+Alt+F", L"Contents", BREAK_KEYS, &menu_break_code, menu_items.data(), menu_items.size());
+		int selected_menu_idx = s_info.Menu(s_info.ModuleNumber, -1, -1, 0, FMENU_WRAPMODE | FMENU_SHOWAMPERSAND | FMENU_CHANGECONSOLETITLE, GetMsg(MChooseApplication),
+											L"F3 F9 Ctrl+Alt+F", L"Contents", BREAK_KEYS, &menu_break_code, menu_items.data(), static_cast<int>(menu_items.size()));
 
 		if (selected_menu_idx == -1) {
 			return; // User cancelled the menu (e.g., with Esc); exit the plugin entirely
