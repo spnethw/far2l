@@ -566,7 +566,9 @@ void OpenWithPlugin::ShowError(const wchar_t *title, const std::vector<std::wstr
 	std::vector<const wchar_t*> items;
 	items.reserve(text.size() + 2);
 	items.push_back(title);
-	for (const auto &line : text) items.push_back(line.c_str());
+	for (const auto &line : text) {
+		items.push_back(line.c_str());
+	}
 	items.push_back(GetMsg(MOk));
 	s_info.Message(s_info.ModuleNumber, FMSG_WARNING, nullptr, items.data(), items.size(), 1);
 }
