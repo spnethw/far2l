@@ -49,12 +49,11 @@ private:
 	static const std::vector<std::wstring>& GetMimeProfiles(AppProvider* provider, std::optional<std::vector<std::wstring>>& cache);
 	static bool AskForLaunchConfirmation(const CandidateInfo& app, const std::vector<std::wstring>& filepaths);
 	static void LaunchApplication(const CandidateInfo& app, const std::vector<std::wstring>& cmds);
-	static bool ShowDetailsDialog(AppProvider* provider, const CandidateInfo& app, const std::vector<std::wstring>& filepaths,  const std::vector<std::wstring>& cmds, const std::vector<std::wstring>& unique_mime_profiles);
-	static bool ShowDetailsDialogImpl(const std::vector<Field>& file_info, const std::vector<Field>& application_info, const Field& launch_command);
+	static bool ShowDetailsDialog(const std::vector<std::wstring>& filepaths, const std::vector<std::wstring>& unique_mime_profiles, std::vector<Field> application_info, const std::vector<std::wstring>& cmds);
 	static ConfigureResult ConfigureImpl();
 	static void LoadOptions();
 	static void SaveOptions();
-	static void ShowError(const wchar_t *title, const std::vector<std::wstring>& text);
+	static void ShowError(const std::vector<std::wstring>& error_lines);
 	static std::wstring JoinStrings(const std::vector<std::wstring>& vec, const std::wstring& delimiter);
 	static size_t GetLabelCellWidth(const Field& field);
 	static size_t GetMaxLabelCellWidth(const std::vector<Field>& fields);

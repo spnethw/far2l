@@ -71,7 +71,7 @@ HANDLE OpenWithPlugin::OpenPlugin(int open_from, INT_PTR item)
 
 	// The plugin requires real paths to pass to external applications.
 	if (pi.Plugin && !(pi.Flags & PFLAGS_REALNAMES)) {
-		ShowError(GetMsg(MError), {GetMsg(MNotRealNames)});
+		ShowError({GetMsg(MNotRealNames)});
 		return INVALID_HANDLE_VALUE;
 	}
 
@@ -191,11 +191,11 @@ void OpenWithPlugin::ProcessFiles(const std::vector<std::wstring>& filepaths)
 		const auto& selected_app = app_candidates[selected_menu_idx];
 
 		if (menu_break_code == KEY_F3_DETAILS) {
-			std::vector<std::wstring> cmds = provider->ConstructLaunchCommands(selected_app, filepaths);
+			auto cmds = provider->ConstructLaunchCommands(selected_app, filepaths);
+			auto app_info = provider->GetCandidateDetails(selected_app);
 			// Repeat until user either launches the application or closes the dialog to go back.
 			while (true) {
-				bool wants_to_launch = ShowDetailsDialog(provider.get(), selected_app, filepaths, cmds,
-														 GetMimeProfiles(provider.get(), unique_mime_profiles_cache));
+				bool wants_to_launch = ShowDetailsDialog(filepaths, GetMimeProfiles(provider.get(), unique_mime_profiles_cache), app_info, cmds);
 				if (!wants_to_launch) {
 					break; // User clicked "Close", break the inner loop to return to the main menu.
 				}
@@ -232,7 +232,7 @@ void OpenWithPlugin::ShowNoAppsError(AppProvider* provider, std::optional<std::v
 	std::vector<std::wstring> error_lines = { GetMsg(MNoAppsFound) };
 	const auto& mime_profiles = GetMimeProfiles(provider, mime_cache);
 	error_lines.push_back(JoinStrings(mime_profiles, L"; "));
-	ShowError(GetMsg(MError), error_lines);
+	ShowError(error_lines);
 }
 
 
@@ -297,7 +297,7 @@ void OpenWithPlugin::LaunchApplication(const CandidateInfo& app, const std::vect
 
 	for (const auto& cmd : cmds) {
 		if (s_fsf.Execute(cmd.c_str(), flags) == -1) {
-			ShowError(GetMsg(MError), { GetMsg(MCannotExecute), cmd.c_str() });
+			ShowError({GetMsg(MCannotExecute), cmd.c_str() });
 			break; // Stop on the first error.
 		}
 	}
@@ -308,11 +308,12 @@ void OpenWithPlugin::LaunchApplication(const CandidateInfo& app, const std::vect
 }
 
 
-// High-level wrapper for the details dialog. Prepares formatted data before calling the implementation.
-bool OpenWithPlugin::ShowDetailsDialog(AppProvider* provider, const CandidateInfo& app,
-									   const std::vector<std::wstring>& filepaths,
-									   const std::vector<std::wstring>& cmds,
-									   const std::vector<std::wstring>& unique_mime_profiles)
+// Prepares formatted data, calculates layout, constructs dialog items, and handles the execution result.
+// Returns true if the user clicked "Launch", false otherwise (e.g. "Close" or Esc).
+bool OpenWithPlugin::ShowDetailsDialog(const std::vector<std::wstring>& filepaths,
+									   const std::vector<std::wstring>& unique_mime_profiles,
+									   std::vector<Field> application_info,
+									   const std::vector<std::wstring>& cmds)
 {
 	std::vector<Field> file_info;
 	if (filepaths.size() == 1) {
@@ -323,23 +324,9 @@ bool OpenWithPlugin::ShowDetailsDialog(AppProvider* provider, const CandidateInf
 		std::wstring count_msg = std::wstring(GetMsg(MFilesSelected)) + std::to_wstring(filepaths.size());
 		file_info.push_back({ GetMsg(MPathname), count_msg });
 	}
-
 	file_info.push_back({ GetMsg(MMimeType), JoinStrings(unique_mime_profiles, L"; ") });
+	Field launch_command { GetMsg(MLaunchCommand), JoinStrings(cmds, L"; ") };
 
-	std::wstring all_cmds = JoinStrings(cmds, L"; ");
-	std::vector<Field> application_info = provider->GetCandidateDetails(app);
-	Field launch_command { GetMsg(MLaunchCommand), all_cmds.c_str() };
-
-	return ShowDetailsDialogImpl(file_info, application_info, launch_command);
-}
-
-
-// Low-level implementation of the details dialog. Calculates layout, constructs dialog items, and handles
-// the execution result. Returns true if the user clicked "Launch", false otherwise (e.g. "Close" or Esc).
-bool OpenWithPlugin::ShowDetailsDialogImpl(const std::vector<Field>& file_info,
-										   const std::vector<Field>& application_info,
-										   const Field& launch_command)
-{
 	constexpr int DETAILS_DIALOG_MIN_WIDTH = 40;
 	constexpr int DETAILS_DIALOG_DESIRED_WIDTH = 90;
 
@@ -559,18 +546,19 @@ void OpenWithPlugin::SaveOptions()
 	s_confirm_launch_threshold = std::clamp(s_confirm_launch_threshold, 1, 9999);
 	kfh.SetInt(INI_SECTION, "ConfirmLaunchThreshold", s_confirm_launch_threshold);
 	if (!kfh.Save()) {
-		ShowError(GetMsg(MError), { GetMsg(MSaveConfigError) });
+		ShowError({ GetMsg(MSaveConfigError) });
 	}
 }
 
 
 // Error reporting wrapper around the far2l message box API.
-void OpenWithPlugin::ShowError(const wchar_t *title, const std::vector<std::wstring>& text)
+void OpenWithPlugin::ShowError(const std::vector<std::wstring>& error_lines)
 {
+	auto error_title = GetMsg(MError);
 	std::vector<const wchar_t*> items;
-	items.reserve(text.size() + 2);
-	items.push_back(title);
-	for (const auto &line : text) {
+	items.reserve(error_lines.size() + 2);
+	items.push_back(error_title);
+	for (const auto &line : error_lines) {
 		items.push_back(line.c_str());
 	}
 	items.push_back(GetMsg(MOk));
