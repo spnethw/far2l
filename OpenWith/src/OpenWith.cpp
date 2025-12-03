@@ -117,7 +117,7 @@ HANDLE OpenWithPlugin::OpenPlugin(int open_from, INT_PTR item)
 		ProcessFiles(selected_filepaths);
 	}
 
-	// Return INVALID_HANDLE_VALUE because this plugin acts as a command, not as a panel plugin (VFS).
+	// Plugin acts as a command, not as a panel plugin (VFS).
 	return INVALID_HANDLE_VALUE;
 }
 
@@ -193,16 +193,15 @@ void OpenWithPlugin::ProcessFiles(const std::vector<std::wstring>& filepaths)
 		const auto& selected_app = (*app_candidates)[selected_menu_idx];
 
 		if (menu_break_code == KEY_F3_DETAILS) {
+			auto mime_profiles = provider->GetMimeTypes();
 			auto app_info = provider->GetCandidateDetails(selected_app);
 			auto cmds = provider->ConstructLaunchCommands(selected_app, filepaths);
-			auto mime_profiles = provider->GetMimeTypes();
 			// Repeat until user either launches the application or closes the dialog to go back.
 			while (true) {
-				bool wants_to_launch = ShowDetailsDialog(filepaths, mime_profiles, app_info, cmds);
-				if (!wants_to_launch) {
+				bool is_launch_requested = ShowDetailsDialog(filepaths, mime_profiles, app_info, cmds);
+				if (!is_launch_requested) {
 					break; // User clicked "Close", break the inner loop to return to the main menu.
 				}
-
 				if (AskForLaunchConfirmation(selected_app, filepaths)) {
 					LaunchApplication(selected_app, cmds); // Launch the application and exit the plugin entirely.
 					return;
@@ -533,10 +532,9 @@ void OpenWithPlugin::SaveOptions()
 // Error reporting wrapper around the far2l message box API.
 void OpenWithPlugin::ShowError(const std::vector<std::wstring>& error_lines)
 {
-	auto error_title = GetMsg(MError);
 	std::vector<const wchar_t*> items;
 	items.reserve(error_lines.size() + 2);
-	items.push_back(error_title);
+	items.push_back(GetMsg(MError));
 	for (const auto &line : error_lines) {
 		items.push_back(line.c_str());
 	}
