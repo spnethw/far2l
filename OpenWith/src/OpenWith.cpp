@@ -163,7 +163,8 @@ void OpenWithPlugin::ProcessFiles(const std::vector<std::wstring>& filepaths)
 	int menu_break_code = -1;
 	int active_menu_idx = 0;
 
-	auto app_candidates = FetchAppCandidates(provider.get(), filepaths);
+	auto app_candidates = provider->GetAppCandidates(filepaths);
+	FilterOutTerminalCandidates(app_candidates, filepaths.size());
 
 	// Main application selection menu loop.
 	while(true) {
@@ -191,8 +192,8 @@ void OpenWithPlugin::ProcessFiles(const std::vector<std::wstring>& filepaths)
 		const auto& selected_app = app_candidates[selected_menu_idx];
 
 		if (menu_break_code == KEY_F3_DETAILS) {
-			auto cmds = provider->ConstructLaunchCommands(selected_app, filepaths);
 			auto app_info = provider->GetCandidateDetails(selected_app);
+			auto cmds = provider->ConstructLaunchCommands(selected_app, filepaths);
 			// Repeat until user either launches the application or closes the dialog to go back.
 			while (true) {
 				bool wants_to_launch = ShowDetailsDialog(filepaths, GetMimeProfiles(provider.get(), unique_mime_profiles_cache), app_info, cmds);
@@ -211,7 +212,8 @@ void OpenWithPlugin::ProcessFiles(const std::vector<std::wstring>& filepaths)
 			// Refresh is needed if any setting that affects the candidate list has been changed.
 			if (configure_result.settings_saved && configure_result.refresh_needed) {
 				provider->LoadPlatformSettings();
-				app_candidates = FetchAppCandidates(provider.get(), filepaths);
+				app_candidates = provider->GetAppCandidates(filepaths);
+				FilterOutTerminalCandidates(app_candidates, filepaths.size());
 				active_menu_idx = 0;
 				unique_mime_profiles_cache.reset();
 			}
@@ -236,13 +238,11 @@ void OpenWithPlugin::ShowNoAppsError(AppProvider* provider, std::optional<std::v
 }
 
 
-// Fetch and filter application candidates.
-std::vector<CandidateInfo> OpenWithPlugin::FetchAppCandidates(AppProvider* provider, const std::vector<std::wstring>& filepaths)
+// When multiple files are selected and the internal Far2l console is used, we must remove terminal-based applications
+// that are not multifile-aware, because the internal console cannot manage multiple concurrent instances.
+void OpenWithPlugin::FilterOutTerminalCandidates(std::vector<CandidateInfo> &candidates, size_t file_count)
 {
-	auto candidates = provider->GetAppCandidates(filepaths);
-	// When multiple files are selected and the internal far2l console is used, we must filter out terminal-based applications
-	// because the internal console cannot manage multiple concurrent instances.
-	if (filepaths.size() > 1 && !s_use_external_terminal) {
+	if (file_count > 1 && !s_use_external_terminal) {
 		candidates.erase(
 			std::remove_if(candidates.begin(), candidates.end(),
 						   [](const CandidateInfo& c) {
@@ -250,7 +250,6 @@ std::vector<CandidateInfo> OpenWithPlugin::FetchAppCandidates(AppProvider* provi
 						   }),
 			candidates.end());
 	}
-	return candidates;
 }
 
 
@@ -312,7 +311,7 @@ void OpenWithPlugin::LaunchApplication(const CandidateInfo& app, const std::vect
 // Returns true if the user clicked "Launch", false otherwise (e.g. "Close" or Esc).
 bool OpenWithPlugin::ShowDetailsDialog(const std::vector<std::wstring>& filepaths,
 									   const std::vector<std::wstring>& unique_mime_profiles,
-									   std::vector<Field> application_info,
+									   const std::vector<Field>& application_info,
 									   const std::vector<std::wstring>& cmds)
 {
 	std::vector<Field> file_info;
@@ -392,7 +391,7 @@ bool OpenWithPlugin::ShowDetailsDialog(const std::vector<std::wstring>& filepath
 }
 
 
-// Implementation of the configuration dialog.  Dynamically builds the UI based on general options and platform-specific settings
+// Configuration dialog implementation. Dynamically builds the UI based on general options and platform-specific settings
 // provided by AppProvider. Returns status indicating if the candidate list should be refreshed.
 OpenWithPlugin::ConfigureResult OpenWithPlugin::ConfigureImpl()
 {
@@ -401,9 +400,8 @@ OpenWithPlugin::ConfigureResult OpenWithPlugin::ConfigureImpl()
 	// Load platform-independent settings.
 	LoadOptions();
 
-	// Create a temporary provider to access platform-specific settings.
+	// Create a temporary provider to access platform-specific settings (they are loaded automatically).
 	auto provider = AppProvider::CreateAppProvider(&OpenWithPlugin::GetMsg);
-	provider->LoadPlatformSettings();
 
 	const bool old_use_external_terminal = s_use_external_terminal;
 	const std::vector<ProviderSetting> old_platform_settings = provider->GetPlatformSettings();
@@ -491,7 +489,7 @@ OpenWithPlugin::ConfigureResult OpenWithPlugin::ConfigureImpl()
 		auto threshold_str = (const wchar_t*)s_info.SendDlgMessage(dlg, DM_GETCONSTTEXTPTR, confirm_launch_edit_idx, 0);
 		s_confirm_launch_threshold = wcstol(threshold_str, nullptr, 10);
 
-		SaveOptions();
+		SaveOptions(); // Save platform-independent settings.
 
 		bool is_platform_settings_changed = false;
 
