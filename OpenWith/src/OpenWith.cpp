@@ -38,15 +38,24 @@ void OpenWithPlugin::ProcessFiles(const std::vector<std::wstring>& filepaths)
 	constexpr int KEY_F9_OPTIONS = 1;
 
 	int menu_break_code = -1;
-	int active_menu_idx = 0;
+	int active_menu_idx {};
 
 	std::optional<std::vector<CandidateInfo>> app_candidates;
+	std::vector<FarMenuItem> menu_items;
 
 	// Main application selection menu loop.
 	while(true) {
 		if (!app_candidates.has_value()) {
 			app_candidates = provider->GetAppCandidates(filepaths);
 			FilterOutTerminalCandidates(*app_candidates, filepaths.size());
+			menu_items.clear();
+			menu_items.reserve((*app_candidates).size());
+			for (const auto& app_candidate : *app_candidates) {
+				FarMenuItem menu_item = {};
+				menu_item.Text = app_candidate.name.c_str();
+				menu_items.push_back(menu_item);
+			}
+			active_menu_idx = 0;
 		}
 
 		if ((*app_candidates).empty()) {
@@ -54,10 +63,6 @@ void OpenWithPlugin::ProcessFiles(const std::vector<std::wstring>& filepaths)
 			return; // No application candidates; exit the plugin entirely.
 		}
 
-		std::vector<FarMenuItem> menu_items((*app_candidates).size());
-		for (size_t i = 0; i < (*app_candidates).size(); ++i) {
-			menu_items[i].Text = (*app_candidates)[i].name.c_str();
-		}
 		menu_items[active_menu_idx].Selected = true;
 
 		// Display the menu and get the user's selection.
@@ -67,6 +72,7 @@ void OpenWithPlugin::ProcessFiles(const std::vector<std::wstring>& filepaths)
 		if (selected_menu_idx == -1) {
 			return; // User cancelled the menu (e.g., with Esc); exit the plugin entirely
 		}
+		menu_items[active_menu_idx].Selected = false;
 		active_menu_idx = selected_menu_idx;
 		const auto& selected_app = (*app_candidates)[selected_menu_idx];
 
@@ -92,8 +98,7 @@ void OpenWithPlugin::ProcessFiles(const std::vector<std::wstring>& filepaths)
 			if (is_refresh_needed) {
 				provider->LoadPlatformSettings();
 				app_candidates.reset();
-				active_menu_idx = 0;
-			}
+		}
 
 		} else { // Enter to launch.
 			if (AskForLaunchConfirmation(selected_app, filepaths.size())) {
