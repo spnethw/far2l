@@ -44,9 +44,7 @@ private:
 	static int s_confirm_launch_threshold;
 
 	static void ProcessFiles(const std::vector<std::wstring>& filepaths);
-	static void ShowNoAppsError(AppProvider* provider, std::optional<std::vector<std::wstring>>& mime_cache);
 	static void FilterOutTerminalCandidates(std::vector<CandidateInfo> &candidates, size_t file_count);
-	static const std::vector<std::wstring>& GetMimeProfiles(AppProvider* provider, std::optional<std::vector<std::wstring>>& cache);
 	static bool AskForLaunchConfirmation(const CandidateInfo& app, const std::vector<std::wstring>& filepaths);
 	static void LaunchApplication(const CandidateInfo& app, const std::vector<std::wstring>& cmds);
 	static bool ShowDetailsDialog(const std::vector<std::wstring>& filepaths, const std::vector<std::wstring>& unique_mime_profiles, const std::vector<Field> &application_info, const std::vector<std::wstring>& cmds);

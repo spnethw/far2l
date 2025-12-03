@@ -154,7 +154,6 @@ void OpenWithPlugin::ProcessFiles(const std::vector<std::wstring>& filepaths)
 	}
 
 	auto provider = AppProvider::CreateAppProvider(&OpenWithPlugin::GetMsg);
-	std::optional<std::vector<std::wstring>> unique_mime_profiles_cache;
 
 	constexpr int BREAK_KEYS[] = {VK_F3, VK_F9, 0};
 	constexpr int KEY_F3_DETAILS = 0;
@@ -163,40 +162,43 @@ void OpenWithPlugin::ProcessFiles(const std::vector<std::wstring>& filepaths)
 	int menu_break_code = -1;
 	int active_menu_idx = 0;
 
-	auto app_candidates = provider->GetAppCandidates(filepaths);
-	FilterOutTerminalCandidates(app_candidates, filepaths.size());
+	std::optional<std::vector<CandidateInfo>> app_candidates;
 
 	// Main application selection menu loop.
 	while(true) {
-		if (app_candidates.empty()) {
-			ShowNoAppsError(provider.get(), unique_mime_profiles_cache);
+		if (!app_candidates.has_value()) {
+			app_candidates = provider->GetAppCandidates(filepaths);
+			FilterOutTerminalCandidates(*app_candidates, filepaths.size());
+		}
+
+		if ((*app_candidates).empty()) {
+			ShowError({ GetMsg(MNoAppsFound), JoinStrings(provider->GetMimeTypes(), L"; ") });
 			return; // No application candidates; exit the plugin entirely.
 		}
 
-		std::vector<FarMenuItem> menu_items(app_candidates.size());
-		for (size_t i = 0; i < app_candidates.size(); ++i) {
-			menu_items[i].Text = app_candidates[i].name.c_str();
+		std::vector<FarMenuItem> menu_items((*app_candidates).size());
+		for (size_t i = 0; i < (*app_candidates).size(); ++i) {
+			menu_items[i].Text = (*app_candidates)[i].name.c_str();
 		}
-
 		menu_items[active_menu_idx].Selected = true;
 
 		// Display the menu and get the user's selection.
-		int selected_menu_idx = s_info.Menu(s_info.ModuleNumber, -1, -1, 0, FMENU_WRAPMODE | FMENU_SHOWAMPERSAND | FMENU_CHANGECONSOLETITLE, GetMsg(MChooseApplication),
-											L"F3 F9 Ctrl+Alt+F", L"Contents", BREAK_KEYS, &menu_break_code, menu_items.data(), static_cast<int>(menu_items.size()));
-
+		int selected_menu_idx = s_info.Menu(s_info.ModuleNumber, -1, -1, 0, FMENU_WRAPMODE | FMENU_SHOWAMPERSAND | FMENU_CHANGECONSOLETITLE,
+											GetMsg(MChooseApplication), L"F3 F9 Ctrl+Alt+F", L"Contents", BREAK_KEYS, &menu_break_code,
+											menu_items.data(), static_cast<int>(menu_items.size()));
 		if (selected_menu_idx == -1) {
 			return; // User cancelled the menu (e.g., with Esc); exit the plugin entirely
 		}
-
 		active_menu_idx = selected_menu_idx;
-		const auto& selected_app = app_candidates[selected_menu_idx];
+		const auto& selected_app = (*app_candidates)[selected_menu_idx];
 
 		if (menu_break_code == KEY_F3_DETAILS) {
 			auto app_info = provider->GetCandidateDetails(selected_app);
 			auto cmds = provider->ConstructLaunchCommands(selected_app, filepaths);
+			auto mime_profiles = provider->GetMimeTypes();
 			// Repeat until user either launches the application or closes the dialog to go back.
 			while (true) {
-				bool wants_to_launch = ShowDetailsDialog(filepaths, GetMimeProfiles(provider.get(), unique_mime_profiles_cache), app_info, cmds);
+				bool wants_to_launch = ShowDetailsDialog(filepaths, mime_profiles, app_info, cmds);
 				if (!wants_to_launch) {
 					break; // User clicked "Close", break the inner loop to return to the main menu.
 				}
@@ -212,29 +214,18 @@ void OpenWithPlugin::ProcessFiles(const std::vector<std::wstring>& filepaths)
 			// Refresh is needed if any setting that affects the candidate list has been changed.
 			if (configure_result.settings_saved && configure_result.refresh_needed) {
 				provider->LoadPlatformSettings();
-				app_candidates = provider->GetAppCandidates(filepaths);
-				FilterOutTerminalCandidates(app_candidates, filepaths.size());
+				app_candidates.reset();
 				active_menu_idx = 0;
-				unique_mime_profiles_cache.reset();
 			}
 
 		} else { // Enter to launch.
 			if (AskForLaunchConfirmation(selected_app, filepaths)) {
-				std::vector<std::wstring> cmds = provider->ConstructLaunchCommands(selected_app, filepaths);
+				auto cmds = provider->ConstructLaunchCommands(selected_app, filepaths);
 				LaunchApplication(selected_app, cmds);
 				return; // Exit the plugin after a successful launch.
 			}
 		}
 	}
-}
-
-
-void OpenWithPlugin::ShowNoAppsError(AppProvider* provider, std::optional<std::vector<std::wstring>>& mime_cache)
-{
-	std::vector<std::wstring> error_lines = { GetMsg(MNoAppsFound) };
-	const auto& mime_profiles = GetMimeProfiles(provider, mime_cache);
-	error_lines.push_back(JoinStrings(mime_profiles, L"; "));
-	ShowError(error_lines);
 }
 
 
@@ -250,16 +241,6 @@ void OpenWithPlugin::FilterOutTerminalCandidates(std::vector<CandidateInfo> &can
 						   }),
 			candidates.end());
 	}
-}
-
-
-// Lazy loader for MIME profiles. Fetches data from the provider only if requested.
-const std::vector<std::wstring>& OpenWithPlugin::GetMimeProfiles(AppProvider* provider,  std::optional<std::vector<std::wstring>>& cache)
-{
-	if (!cache.has_value()) {
-		cache = provider->GetMimeTypes();
-	}
-	return *cache;
 }
 
 
