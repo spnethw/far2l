@@ -30,7 +30,6 @@ void OpenWithPlugin::ProcessFiles(const std::vector<std::wstring>& filepaths)
 		return;
 	}
 
-	LoadOptions(); // Load platform-independent settings.
 	auto provider = AppProvider::CreateAppProvider(&GetMsg);
 
 	constexpr int BREAK_KEYS[] = {VK_F3, VK_F9, 0};
@@ -507,6 +506,7 @@ SHAREDSYMBOL void WINAPI SetStartupInfoW(const struct PluginStartupInfo *Info)
 	g_info = *Info;
 	g_fsf = *Info->FSF;
 	g_info.FSF = &g_fsf;
+	OpenWithPlugin::LoadOptions();
 }
 
 
@@ -594,7 +594,7 @@ SHAREDSYMBOL HANDLE WINAPI OpenPluginW(int OpenFrom, INT_PTR Item)
 
 SHAREDSYMBOL int WINAPI ConfigureW(int ItemNumber)
 {
-	OpenWith::OpenWithPlugin::ShowConfigureDialog();
+	OpenWithPlugin::ShowConfigureDialog();
 	return FALSE;
 }
 
