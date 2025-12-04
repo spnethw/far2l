@@ -301,15 +301,15 @@ void OpenWithPlugin::LaunchApplication(const CandidateInfo& app, const std::vect
 	// If we have multiple commands to run, force asynchronous execution to avoid UI blocking.
 	bool force_no_wait = cmds.size() > 1;
 
-	unsigned int flags {};
+	unsigned int execute_flags {};
 	if (app.terminal) {
-		flags = s_use_external_terminal ? EF_EXTERNALTERM : 0;
+		execute_flags = s_use_external_terminal ? EF_EXTERNALTERM : 0;
 	} else {
-		flags = (s_no_wait_for_command_completion || force_no_wait) ? EF_NOWAIT | EF_HIDEOUT : 0;
+		execute_flags = (s_no_wait_for_command_completion || force_no_wait) ? EF_NOWAIT | EF_HIDEOUT : 0;
 	}
 
 	for (const auto& cmd : cmds) {
-		if (g_fsf.Execute(cmd.c_str(), flags) == -1) {
+		if (g_fsf.Execute(cmd.c_str(), execute_flags) == -1) {
 			ShowError({GetMsg(MCannotExecute), cmd });
 			break; // Stop on the first error.
 		}
