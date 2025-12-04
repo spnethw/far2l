@@ -32,11 +32,6 @@ void OpenWithPlugin::ProcessFiles(const std::vector<std::wstring>& filepaths)
 
 	auto provider = AppProvider::CreateAppProvider(&GetMsg);
 
-	constexpr int BREAK_KEYS[] = {VK_F3, VK_F9, 0};
-	constexpr int KEY_F3_DETAILS = 0;
-	constexpr int KEY_F9_OPTIONS = 1;
-
-	int menu_break_code = -1;
 	int active_menu_idx {};
 
 	std::optional<std::vector<CandidateInfo>> app_candidates;
@@ -62,16 +57,22 @@ void OpenWithPlugin::ProcessFiles(const std::vector<std::wstring>& filepaths)
 			return; // No application candidates; exit the plugin entirely.
 		}
 
-		menu_items[active_menu_idx].Selected = true;
+		constexpr int BREAK_KEYS[] = {VK_F3, VK_F9, 0};
+		constexpr int KEY_F3_DETAILS = 0;
+		constexpr int KEY_F9_OPTIONS = 1;
+		int menu_break_code = -1;
 
 		// Display the menu and get the user's selection.
+		menu_items[active_menu_idx].Selected = true;
 		int selected_menu_idx = g_info.Menu(g_info.ModuleNumber, -1, -1, 0, FMENU_WRAPMODE | FMENU_SHOWAMPERSAND | FMENU_CHANGECONSOLETITLE,
 											GetMsg(MChooseApplication), L"F3 F9 Ctrl+Alt+F", L"Contents", BREAK_KEYS, &menu_break_code,
 											menu_items.data(), static_cast<int>(menu_items.size()));
+		menu_items[active_menu_idx].Selected = false;
+
 		if (selected_menu_idx == -1) {
 			return; // User cancelled the menu (e.g., with Esc); exit the plugin entirely
 		}
-		menu_items[active_menu_idx].Selected = false;
+
 		active_menu_idx = selected_menu_idx;
 		const auto& selected_app = (*app_candidates)[selected_menu_idx];
 
@@ -111,7 +112,7 @@ void OpenWithPlugin::ProcessFiles(const std::vector<std::wstring>& filepaths)
 
 
 
-// Dynamically builds the UI based on general options and platform-specific settings provided by AppProvider.
+// Shows platform-independent and platform-specific settings provided by AppProvider.
 // Returns status indicating if the candidate list should be refreshed.
 bool OpenWithPlugin::ShowConfigureDialog()
 {
@@ -319,7 +320,7 @@ void OpenWithPlugin::LaunchApplication(const CandidateInfo& app, const std::vect
 
 
 
-// Prepares formatted data, calculates layout, constructs dialog items, and handles the execution result.
+// Shows detailed info about file(s), selected application, and the exact command that will be used to launch it.
 // Returns true if the user clicked "Launch", false otherwise (e.g. "Close" or Esc).
 bool OpenWithPlugin::ShowDetailsDialog(const std::vector<std::wstring>& filepaths,
 									   const std::vector<std::wstring>& unique_mime_profiles,
@@ -450,7 +451,7 @@ std::wstring OpenWithPlugin::JoinStrings(const std::vector<std::wstring>& vec, c
 
 
 
-// Gets the console cell width of a field's label string.
+// Gets the console cell width of a Field's label string (used in Details dialog).
 size_t OpenWithPlugin::GetLabelCellWidth(const Field& field)
 {
 	return g_fsf.StrCellsCount(field.label.c_str(), field.label.size());
@@ -458,7 +459,7 @@ size_t OpenWithPlugin::GetLabelCellWidth(const Field& field)
 
 
 
-// Finds the maximum label width (in cells) in a vector of Fields for alignment.
+// Finds the maximum label width (in cells) in a vector of Fields for alignment (used in Details dialog).
 size_t OpenWithPlugin::GetMaxLabelCellWidth(const std::vector<Field>& fields)
 {
 	size_t max_width = 0;
@@ -477,7 +478,7 @@ int OpenWithPlugin::GetScreenWidth()
 	if (g_info.AdvControl(g_info.ModuleNumber, ACTL_GETFARRECT, &rect, 0)) {
 		return rect.Right - rect.Left + 1;
 	}
-	return 0;
+	return 80;
 }
 
 
@@ -512,8 +513,6 @@ SHAREDSYMBOL void WINAPI SetStartupInfoW(const struct PluginStartupInfo *Info)
 
 SHAREDSYMBOL void WINAPI GetPluginInfoW(struct PluginInfo *Info)
 {
-	// Populates the plugin information structure required by far2l.
-	// Sets up the menu strings displayed in the Plugins menu and Configuration menu.
 	Info->StructSize = sizeof(struct PluginInfo);
 	Info->Flags = 0;
 	static const wchar_t *s_menu_strings[1];
