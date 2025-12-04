@@ -920,7 +920,7 @@ std::string XDGBasedAppProvider::DetermineMimeByGlob2(const std::string& filepat
 		return "";
 	}
 
-	for (const auto& rule : _op_glob_rules) {
+	for (const auto& rule : _op_glob_rules_cache) {
 		if (GlobMatch(filename, rule.pattern, rule.case_sensitive)) {
 			return rule.mime_type;
 		}
@@ -930,9 +930,8 @@ std::string XDGBasedAppProvider::DetermineMimeByGlob2(const std::string& filepat
 }
 
 
-// Checks if a filename matches a glob pattern.
-// According to the spec, matching should be case-insensitive by default,
-// unless the 'cs' (case-sensitive) flag was specified in the globs2 file.
+// Checks if a filename matches a glob pattern.  According to the spec, matching should be case-insensitive
+// by default, unless the 'cs' (case-sensitive) flag was specified in the globs2 file.
 bool XDGBasedAppProvider::GlobMatch(const std::string &text, const std::string &pattern, bool case_sensitive)
 {
 	int flags = 0;
@@ -2448,7 +2447,7 @@ XDGBasedAppProvider::OperationContext::OperationContext(XDGBasedAppProvider& p) 
 	}
 
 	if (provider._load_mime_glob_rules) {
-		provider._op_glob_rules = provider.LoadGlobRules();
+		provider._op_glob_rules_cache = provider.LoadGlobRules();
 	}
 
 	provider._op_mimeapps_lists_cache = provider.ParseMimeappsLists();
@@ -2481,10 +2480,10 @@ XDGBasedAppProvider::OperationContext::~OperationContext()
 	provider._op_mimeapps_list_filepaths.clear();
 	provider._op_mime_database_dirpaths.clear();
 	provider._op_desktop_id_to_path_index.clear();
+	provider._op_glob_rules_cache.clear();
 	provider._op_alias_to_canonical_cache.clear();
 	provider._op_canonical_to_aliases_cache.clear();
 	provider._op_subclass_to_parent_cache.clear();
-	provider._op_glob_rules.clear();
 	provider._op_mimeapps_lists_cache = {};
 	provider._op_mime_to_default_desktop_id_cache.clear();
 	provider._op_mime_to_desktop_associations_index.clear();

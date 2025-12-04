@@ -334,9 +334,8 @@ private:
 	std::string DetectMimeTypeWithFileTool(const std::string& filepath_escaped);
 	std::string DetectMimeTypeWithMagikaTool(const std::string& filepath_escaped);
 	std::string DetermineMimeByGlob2(const std::string& filepath);
-	std::string GuessMimeTypeByExtension(const std::string& filepath);
 	static bool GlobMatch(const std::string &text, const std::string &pattern, bool case_sensitive);
-	bool IsLiteralPattern(const std::string& pattern);
+	std::string GuessMimeTypeByExtension(const std::string& filepath);
 
 	// --- XDG database parsing & caching ---
 	std::unordered_map<std::string, std::string> IndexAllDesktopFiles();
@@ -355,6 +354,7 @@ private:
 	std::unordered_map<std::string, std::string> LoadMimeSubclasses();
 	std::vector<GlobRule> LoadGlobRules();
 	void ParseGlobs2File(const std::string& filepath, std::vector<GlobRule>& rules, int source_rank);
+	bool IsLiteralPattern(const std::string& pattern);
 	static std::vector<std::string> GetDesktopFileSearchDirpaths();
 	std::vector<std::string> GetMimeappsListSearchFilepaths();
 	static std::vector<std::string> GetMimeDatabaseSearchDirpaths();
@@ -439,8 +439,8 @@ private:
 	std::vector<std::string> _op_desktop_file_dirpaths;
 	std::vector<std::string> _op_mimeapps_list_filepaths;
 	std::vector<std::string> _op_mime_database_dirpaths;
-	std::vector<GlobRule> _op_glob_rules;
 	std::unordered_map<std::string, std::string> _op_desktop_id_to_path_index;
+	std::vector<GlobRule> _op_glob_rules_cache; // from 'globs2'
 	std::unordered_map<std::string, std::string> _op_alias_to_canonical_cache;  // from 'aliases'
 	std::unordered_map<std::string, std::vector<std::string>> _op_canonical_to_aliases_cache;  // from 'aliases'
 	std::unordered_map<std::string, std::string> _op_subclass_to_parent_cache;  // from 'subclasses'
