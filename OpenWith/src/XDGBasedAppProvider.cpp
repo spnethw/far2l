@@ -1722,9 +1722,16 @@ void XDGBasedAppProvider::ParseGlobs2File(const std::string& filepath, std::vect
 		}
 
 		if (!mime.empty() && !pattern.empty()) {
-			rules.push_back({weight, std::move(mime), std::move(pattern), case_sensitive, source_rank});
+			bool is_literal = IsLiteralPattern(pattern);
+			rules.push_back({weight, std::move(mime), std::move(pattern), case_sensitive, source_rank, is_literal});
 		}
 	}
+}
+
+
+bool XDGBasedAppProvider::IsLiteralPattern(const std::string& pattern)
+{
+	return pattern.find_first_of("*?[") == std::string::npos;
 }
 
 

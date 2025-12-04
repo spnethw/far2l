@@ -132,6 +132,7 @@ private:
 		std::string pattern;
 		bool case_sensitive;
 		int source_rank;
+		bool is_literal;
 
 		bool operator<(const GlobRule& other) const
 		{
@@ -139,10 +140,17 @@ private:
 			{
 				return weight > other.weight;
 			}
+
+			if (is_literal != other.is_literal)
+			{
+				return is_literal;
+			}
+
 			if (pattern.length() != other.pattern.length())
 			{
 				return pattern.length() > other.pattern.length();
 			}
+
 			return source_rank > other.source_rank;
 		}
 	};
@@ -322,6 +330,7 @@ private:
 	std::string DetermineMimeByGlob2(const std::string& filepath);
 	std::string GuessMimeTypeByExtension(const std::string& filepath);
 	static bool GlobMatch(const std::string &text, const std::string &pattern, bool case_sensitive);
+	bool IsLiteralPattern(const std::string& pattern);
 
 	// --- XDG database parsing & caching ---
 	std::unordered_map<std::string, std::string> IndexAllDesktopFiles();
