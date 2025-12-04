@@ -40,7 +40,7 @@ XDGBasedAppProvider::XDGBasedAppProvider(TMsgGetter msg_getter) : AppProvider(st
 		{ "UseXdgMimeTool", MUseXdgMimeTool, &XDGBasedAppProvider::_use_xdg_mime_tool, true },
 		{ "UseFileTool", MUseFileTool, &XDGBasedAppProvider::_use_file_tool, true },
 		{ "UseMagikaTool", MUseMagikaTool, &XDGBasedAppProvider::_use_magika_tool, false },
-		{ "LoadMimeGlobRules", MLoadMimeGlobRules, &XDGBasedAppProvider::_load_mime_glob_rules, false },
+		{ "UseGlobRules", MUseGlobRules, &XDGBasedAppProvider::_use_glob_rules, false },
 		{ "UseExtensionBasedFallback", MUseExtensionBasedFallback, &XDGBasedAppProvider::_use_extension_based_fallback, false },
 		{ "LoadMimeTypeAliases", MLoadMimeTypeAliases, &XDGBasedAppProvider::_load_mimetype_aliases, true },
 		{ "LoadMimeTypeSubclasses", MLoadMimeTypeSubclasses, &XDGBasedAppProvider::_load_mimetype_subclasses, true },
@@ -735,8 +735,8 @@ XDGBasedAppProvider::RawMimeProfile XDGBasedAppProvider::GetRawMimeProfile(const
 		profile.is_regular_file = true;
 
 		// Only call extension-based lookup for regular files
-		if(_load_mime_glob_rules) {
-			profile.globs2_mime = DetermineMimeByGlob2(filepath);
+		if(_use_glob_rules) {
+			profile.globs2_mime = DetectMimeTypeViaGlobRules(filepath);
 		}
 		if (_use_extension_based_fallback) {
 			profile.ext_mime = GuessMimeTypeByExtension(filepath);
@@ -912,8 +912,7 @@ std::string XDGBasedAppProvider::DetectMimeTypeWithMagikaTool(const std::string&
 }
 
 
-// Determines the MIME type of a file by matching its filename against the loaded glob rules.
-std::string XDGBasedAppProvider::DetermineMimeByGlob2(const std::string& filepath)
+std::string XDGBasedAppProvider::DetectMimeTypeViaGlobRules(const std::string& filepath)
 {
 	std::string filename = GetBaseName(filepath);
 	if (filename.empty()) {
@@ -2446,7 +2445,7 @@ XDGBasedAppProvider::OperationContext::OperationContext(XDGBasedAppProvider& p) 
 		provider._op_subclass_to_parent_cache = provider.LoadMimeSubclasses();
 	}
 
-	if (provider._load_mime_glob_rules) {
+	if (provider._use_glob_rules) {
 		provider._op_glob_rules_cache = provider.LoadGlobRules();
 	}
 

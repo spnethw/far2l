@@ -125,6 +125,7 @@ private:
 	};
 
 
+	// Represents a single pattern matching rule from parsed 'globs2' file.
 	struct GlobRule
 	{
 		int weight;
@@ -333,7 +334,7 @@ private:
 	std::string DetectMimeTypeWithXdgMimeTool(const std::string& filepath_escaped);
 	std::string DetectMimeTypeWithFileTool(const std::string& filepath_escaped);
 	std::string DetectMimeTypeWithMagikaTool(const std::string& filepath_escaped);
-	std::string DetermineMimeByGlob2(const std::string& filepath);
+	std::string DetectMimeTypeViaGlobRules(const std::string& filepath);
 	static bool GlobMatch(const std::string &text, const std::string &pattern, bool case_sensitive);
 	std::string GuessMimeTypeByExtension(const std::string& filepath);
 
@@ -400,7 +401,7 @@ private:
 	bool _use_xdg_mime_tool;
 	bool _use_file_tool;
 	bool _use_magika_tool;
-	bool _load_mime_glob_rules;
+	bool _use_glob_rules;
 	bool _use_extension_based_fallback;
 	bool _load_mimetype_aliases;
 	bool _load_mimetype_subclasses;
