@@ -12,6 +12,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <fnmatch.h>
 #include <cctype>
 #include <algorithm>
 #include <cstring>
@@ -23,6 +24,7 @@
 #include <vector>
 #include <map>
 #include <set>
+
 
 #define INI_LOCATION_XDG InMyConfig("plugins/openwith/config.ini")
 #define INI_SECTION_XDG  "Settings.XDG"
@@ -917,8 +919,6 @@ std::string XDGBasedAppProvider::DetermineMimeByGlob2(const std::string& filepat
 		return "";
 	}
 
-	// The rules in _op_glob_rules are already sorted by weight (desc) and pattern length (desc).
-	// We iterate linearly and return the first match, satisfying the specification.
 	for (const auto& rule : _op_glob_rules) {
 		if (GlobMatch(filename, rule.pattern, rule.case_sensitive)) {
 			return rule.mime_type;
@@ -929,59 +929,14 @@ std::string XDGBasedAppProvider::DetermineMimeByGlob2(const std::string& filepat
 }
 
 
-// Iterative wildcard matching implementation (replacing potentially dangerous recursion).
-// Supports '*' (matches zero or more characters) and '?' (matches exactly one character).
-bool XDGBasedAppProvider::GlobMatch(std::string_view text, std::string_view pattern, bool case_sensitive)
+bool XDGBasedAppProvider::GlobMatch(const std::string &text, const std::string &pattern, bool case_sensitive)
 {
-	size_t t_idx = 0;
-	size_t p_idx = 0;
-	size_t t_len = text.length();
-	size_t p_len = pattern.length();
-
-	size_t last_star_idx = std::string::npos;
-	size_t last_text_match_idx = 0;
-
-	auto chars_equal = [case_sensitive](char a, char b) {
-		if (case_sensitive) return a == b;
-		// Simple ASCII lowercasing is sufficient for standard globs per spec context
-		return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
-	};
-
-	while (t_idx < t_len) {
-		// Case 1: Simple character match or '?'
-		if (p_idx < p_len && (pattern[p_idx] == '?' || chars_equal(text[t_idx], pattern[p_idx]))) {
-			t_idx++;
-			p_idx++;
-			continue;
-		}
-
-		// Case 2: Found a wildcard '*'
-		if (p_idx < p_len && pattern[p_idx] == '*') {
-			last_star_idx = p_idx;
-			p_idx++;
-			last_text_match_idx = t_idx;
-			// We do NOT advance t_idx here; '*' can match empty string
-			continue;
-		}
-
-		// Case 3: Mismatch, but we have a previous '*' to backtrack to
-		if (last_star_idx != std::string::npos) {
-			p_idx = last_star_idx + 1;
-			last_text_match_idx++;
-			t_idx = last_text_match_idx;
-			continue;
-		}
-
-		// Case 4: Mismatch and no fallback
-		return false;
+	int flags = 0;
+	if (!case_sensitive) {
+		flags |= FNM_CASEFOLD;
 	}
 
-	// Handle trailing '*' in pattern (e.g. pattern "foo*" matching text "foo")
-	while (p_idx < p_len && pattern[p_idx] == '*') {
-		p_idx++;
-	}
-
-	return p_idx == p_len;
+	return fnmatch(pattern.c_str(), text.c_str(), flags) == 0;
 }
 
 
@@ -1678,8 +1633,6 @@ std::unordered_map<std::string, std::string> XDGBasedAppProvider::LoadMimeSubcla
 }
 
 
-// Loads rules from 'globs2' files across all XDG data directories.
-// Handles precedence, __NOGLOBS__ logic, and final sorting.
 std::vector<XDGBasedAppProvider::GlobRule> XDGBasedAppProvider::LoadGlobRules()
 {
 	if (_op_mime_database_dirpaths.empty()) {
@@ -1687,73 +1640,70 @@ std::vector<XDGBasedAppProvider::GlobRule> XDGBasedAppProvider::LoadGlobRules()
 	}
 
 	std::vector<GlobRule> rules;
+	int current_source_rank = 0;
 
-	// Iterate in reverse order: from lowest priority (system defaults) to highest (user overrides).
-	// This allows the __NOGLOBS__ directive in a higher-priority file to correctly remove
-	// specific rules defined in lower-priority files.
 	for (auto it = _op_mime_database_dirpaths.rbegin(); it != _op_mime_database_dirpaths.rend(); ++it) {
 		std::string globs_path = *it + "/globs2";
 		if (IsReadableFile(globs_path)) {
-			ParseGlobs2File(globs_path, rules);
+			ParseGlobs2File(globs_path, rules, current_source_rank);
 		}
+		current_source_rank++;
 	}
 
-	// Sort the final combined list of rules.
-	// Primary key: Weight (descending).
-	// Secondary key: Pattern length (descending).
 	std::sort(rules.begin(), rules.end());
-
 	return rules;
 }
 
 
 // Parses a single 'globs2' file and updates the accumulated rules vector.
-void XDGBasedAppProvider::ParseGlobs2File(const std::string& filepath, std::vector<GlobRule>& rules)
+void XDGBasedAppProvider::ParseGlobs2File(const std::string& filepath, std::vector<GlobRule>& rules, int source_rank)
 {
 	std::ifstream file(filepath);
 	if (!file.is_open()) return;
 
 	std::string line;
 	while (std::getline(file, line)) {
-		if (line.empty() || line[0] == '#') continue;
-
-		// Format: weight:mime-type:pattern[:flags]
-		// Find delimiters manually to handle potential colons in pattern/flags correctly.
+		if (line.empty() || line[0] == '#') {
+			continue;
+		}
 
 		size_t first_colon = line.find(':');
-		if (first_colon == std::string::npos) continue;
+		if (first_colon == std::string::npos) {
+			continue;
+		}
 
 		size_t second_colon = line.find(':', first_colon + 1);
-		if (second_colon == std::string::npos) continue;
+		if (second_colon == std::string::npos) {
+			continue;
+		}
 
-		// Extract Weight
 		int weight = 50;
 		try {
 			weight = std::stoi(line.substr(0, first_colon));
 		} catch (...) {
-			continue; // Skip invalid lines
+			continue;
 		}
 
-		// Extract MIME Type
 		std::string mime = Trim(line.substr(first_colon + 1, second_colon - first_colon - 1));
-
-		// Check for flags (optional 4th field).
-		// The spec says: "The fourth field... contains a list of comma-separated flags."
-		// We look for a third colon.
-		size_t third_colon = line.find(':', second_colon + 1);
 
 		std::string pattern;
 		std::string flags_str;
 
-		if (third_colon != std::string::npos) {
-			pattern = line.substr(second_colon + 1, third_colon - second_colon - 1);
-			flags_str = line.substr(third_colon + 1);
-		} else {
+		size_t third_colon = line.find(':', second_colon + 1);
+
+		if (third_colon == std::string::npos) {
 			pattern = line.substr(second_colon + 1);
+		} else {
+			pattern = line.substr(second_colon + 1, third_colon - second_colon - 1);
+
+			size_t fourth_colon = line.find(':', third_colon + 1);
+			if (fourth_colon == std::string::npos) {
+				flags_str = line.substr(third_colon + 1);
+			} else {
+				flags_str = line.substr(third_colon + 1, fourth_colon - third_colon - 1);
+			}
 		}
 
-		// Handle __NOGLOBS__ directive
-		// "implementations SHOULD discard information from previous directories"
 		if (pattern == "__NOGLOBS__") {
 			rules.erase(std::remove_if(rules.begin(), rules.end(),
 									   [&mime](const GlobRule& r) { return r.mime_type == mime; }),
@@ -1761,7 +1711,6 @@ void XDGBasedAppProvider::ParseGlobs2File(const std::string& filepath, std::vect
 			continue;
 		}
 
-		// Parse flags
 		bool case_sensitive = false;
 		if (!flags_str.empty()) {
 			std::vector<std::string> flags = SplitString(flags_str, ',');
@@ -1772,9 +1721,8 @@ void XDGBasedAppProvider::ParseGlobs2File(const std::string& filepath, std::vect
 			}
 		}
 
-		// We do not trim the pattern, as spaces might be significant in filenames.
 		if (!mime.empty() && !pattern.empty()) {
-			rules.push_back({weight, std::move(mime), std::move(pattern), case_sensitive});
+			rules.push_back({weight, std::move(mime), std::move(pattern), case_sensitive, source_rank});
 		}
 	}
 }

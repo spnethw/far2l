@@ -131,21 +131,19 @@ private:
 		std::string mime_type;
 		std::string pattern;
 		bool case_sensitive;
+		int source_rank;
 
-		// Sort order: Higher weight first. If weights equal, longer pattern first.
-		// Used by std::sort which sorts ascending, so operator< must return true if 'this' should come BEFORE 'other'.
-		// Wait, std::sort sorts ascending (0..N). We want the BEST match at index 0?
-		// Usually we iterate 0..N.
-		// If we want [0] to be the best match:
-		// We need a Descending sort.
-		// So if (this is better than other) return true.
 		bool operator<(const GlobRule& other) const
 		{
 			if (weight != other.weight)
 			{
-				return weight > other.weight; // Higher weight -> comes first
+				return weight > other.weight;
 			}
-			return pattern.length() > other.pattern.length(); // Longer pattern -> comes first
+			if (pattern.length() != other.pattern.length())
+			{
+				return pattern.length() > other.pattern.length();
+			}
+			return source_rank > other.source_rank;
 		}
 	};
 
@@ -323,7 +321,7 @@ private:
 	std::string DetectMimeTypeWithMagikaTool(const std::string& filepath_escaped);
 	std::string DetermineMimeByGlob2(const std::string& filepath);
 	std::string GuessMimeTypeByExtension(const std::string& filepath);
-	static bool GlobMatch(std::string_view text, std::string_view pattern, bool case_sensitive);
+	static bool GlobMatch(const std::string &text, const std::string &pattern, bool case_sensitive);
 
 	// --- XDG database parsing & caching ---
 	std::unordered_map<std::string, std::string> IndexAllDesktopFiles();
@@ -341,7 +339,7 @@ private:
 	static std::string_view GetMajorMimeType(const std::string& mime);
 	std::unordered_map<std::string, std::string> LoadMimeSubclasses();
 	std::vector<GlobRule> LoadGlobRules();
-	void ParseGlobs2File(const std::string& filepath, std::vector<GlobRule>& rules);
+	void ParseGlobs2File(const std::string& filepath, std::vector<GlobRule>& rules, int source_rank);
 	static std::vector<std::string> GetDesktopFileSearchDirpaths();
 	std::vector<std::string> GetMimeappsListSearchFilepaths();
 	static std::vector<std::string> GetMimeDatabaseSearchDirpaths();
