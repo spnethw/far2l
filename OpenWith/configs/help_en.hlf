@@ -53,8 +53,14 @@ $^#Configuration Dialog (F9)#
    Determine the MIME type of the selected file by invoking the 'file --mime-type' command. This utility performs deep analysis of the file’s binary content using its own "magic numbers" database. It is extremely reliable and is not deceived by incorrect file extensions. However, it can be slightly slower as it requires reading the file's contents, and the MIME type names it produces may occasionally differ from the official IANA names or those in the shared-mime-info database, potentially leading to fewer application matches.
 
  #-# Use `magika` tool
-   Determine the MIME type of the selected file by invoking the 'magika --format %m' command. This is a modern, AI-powered tool from Google that uses a machine learning model to achieve very high accuracy and performance. It excels at identifying a wide range of formats, including modern programming languages, ML/AI files, and DevOps components. Like the 'file' tool, it performs content analysis rather than relying on extensions, making it robust against incorrect filenames, but it also requires reading the file's content.
+   Determine the MIME type of the selected file by invoking the 'magika --format %m' command. This is a modern, AI-powered tool from Google that uses a machine learning model to achieve very high accuracy and performance. It excels at identifying a wide range of formats, including modern programming languages, ML/AI files, and DevOps components. Like the "file" tool, it performs content analysis rather than relying on extensions, making it robust against incorrect filenames, but it also requires reading the file's content.
    Learn more about Magika on its official website: ~https://github.com/google/magika~@https://github.com/google/magika@.
+
+ #-# Use glob rules detection
+   Determine the MIME type by matching the filename against the patterns defined in the system's "globs2" database.
+   Unlike the "Use `xdg-mime` tool" option, this method relies strictly on the filename and does not perform "magic sniffing" (content analysis). Consequently, it may fail to resolve ambiguities that arise if multiple glob rules match the file, resulting in conflicting MIME types, or if the file has an incorrect extension. However, this method is significantly faster, as the plugin directly reads and evaluates the rules, avoiding the launch of external processes.
+   Furthermore, this method is far more sophisticated than the "Use extension-based fallback" option. It respects the complex logic described in the specification: accounting for pattern weights, case-sensitivity flags, and literal filenames, which ensures accurate compliance with your desktop environment's behavior.
+   Enabling this option simultaneously with the "Use `xdg-mime` tool" option is redundant, as both methods utilize the exact same glob rules for type detection.
 
  #-# Use extension-based fallback
    As a last resort, if the above tools fail, are absent or disabled, it attempts to guess the MIME type from a built-in static map of common file extensions. The matching is case-insensitive. This is the least reliable method and should only be used as a fallback on systems with a misconfigured or incomplete MIME database.
@@ -115,7 +121,7 @@ $^#Information Dialog (F3)#
  #-# MIME type
    Displays one or more MIME profiles for the selected file(s).
    In the #Linux/BSD# implementation, this field shows technical data from the XDG provider.
-   A MIME profile represents the set of "raw" MIME types found for a single file, gathered from all enabled detection tools (like 'xdg-mime' or 'file') before any expansion (like aliases or subclasses) is applied. The plugin also automatically detects directories ("inode/directory") and special system files (block devices, FIFOs, sockets), assigning them appropriate standard MIME types.
+   A MIME profile represents the set of "raw" MIME types found for a single file, gathered from all enabled detection tools (like "xdg-mime" or "file") before any expansion (like aliases or subclasses) is applied. The plugin also automatically detects directories ("inode/directory") and special system files (block and character devices, FIFOs, sockets), assigning them appropriate standard MIME types.
    A profile may contain multiple types (e.g., "(text/plain;application/x-shellscript)") if different detection tools returned different valid results for that file.
    If multiple files with different profiles are selected, all unique profiles are listed (e.g., "(image/jpeg); (text/plain)").
    The special profile "(none)" will be displayed if, for at least one of the selected files, all enabled detection tools failed to determine a MIME type. This can be due to a lack of read permissions, or the file residing in a directory without execute (search) permissions.
@@ -251,8 +257,8 @@ $^#Troubleshooting#
 
  #Why is a checkbox in the configuration dialog grayed out? (Linux/BSD)#
 
- Some checkboxes in the F9 configuration dialog, such as "Use `xdg-mime` tool", may be disabled (grayed out) and cannot be toggled. Depending on your last saved settings, this grayed-out checkbox might appear either checked or unchecked, but you cannot change its state. This happens when the plugin cannot find the required command-line tool in your system's $PATH. When the configuration dialog is opened, the plugin checks if the corresponding executables (e.g., 'xdg-mime', 'file', 'magika') exist and are runnable. If a tool is not found, its option is disabled in the UI to prevent errors.
- The plugin will behave as if the option is always 'off' (unchecked), and the associated file type detection method will not be used. This is true regardless of whether the grayed-out checkbox appears checked or not. The displayed checkmark is just a visual artifact of the last saved setting and has no effect.
+ Some checkboxes in the F9 configuration dialog, such as "Use `xdg-mime` tool", may be disabled (grayed out) and cannot be toggled. Depending on your last saved settings, this grayed-out checkbox might appear either checked or unchecked, but you cannot change its state. This happens when the plugin cannot find the required command-line tool in your system's $PATH. When the configuration dialog is opened, the plugin checks if the corresponding executables (e.g., "xdg-mime", "file", "magika") exist and are runnable. If a tool is not found, its option is disabled in the UI to prevent errors.
+ The plugin will behave as if the option is always "off" (unchecked), and the associated file type detection method will not be used. This is true regardless of whether the grayed-out checkbox appears checked or not. The displayed checkmark is just a visual artifact of the last saved setting and has no effect.
  To enable the option, you must install the missing tool using your distribution's package manager. After installation, ensure the tool's executable is located in a directory listed in your $PATH environment variable.
 
 
