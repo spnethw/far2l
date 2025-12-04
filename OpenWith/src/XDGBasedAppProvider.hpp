@@ -92,6 +92,7 @@ private:
 		std::string xdg_mime;		// result from 'xdg-mime query filetype'
 		std::string file_mime;		// result from 'file --mime-type'
 		std::string magika_mime;	// result from 'magika --format '%m''
+		std::string globs2_mime;	// result from XDG glob rules matching (globs2)
 		std::string ext_mime;		// result from internal extension fallback map
 		std::string stat_mime;		// result from internal stat() analysis (e.g., inode/directory)
 
@@ -99,8 +100,8 @@ private:
 
 		bool operator==(const RawMimeProfile& other) const
 		{
-			return std::tie(is_regular_file, xdg_mime, file_mime, magika_mime, ext_mime, stat_mime) ==
-				   std::tie(other.is_regular_file, other.xdg_mime, other.file_mime, other.magika_mime, other.ext_mime, other.stat_mime);
+			return std::tie(is_regular_file, xdg_mime, file_mime, magika_mime, globs2_mime, ext_mime, stat_mime) ==
+				   std::tie(other.is_regular_file, other.xdg_mime, other.file_mime, other.magika_mime, other.globs2_mime, other.ext_mime, other.stat_mime);
 		}
 
 		// Custom hash function to allow RawMimeProfile to be used as a key in std::unordered_map.
@@ -114,12 +115,38 @@ private:
 				std::size_t seed = std::hash<std::string>{}(s.xdg_mime);
 				hash_combine(seed, std::hash<std::string>{}(s.file_mime));
 				hash_combine(seed, std::hash<std::string>{}(s.magika_mime));
+				hash_combine(seed, std::hash<std::string>{}(s.globs2_mime));
 				hash_combine(seed, std::hash<std::string>{}(s.ext_mime));
 				hash_combine(seed, std::hash<std::string>{}(s.stat_mime));
 				hash_combine(seed, std::hash<bool>{}(s.is_regular_file));
 				return seed;
 			}
 		};
+	};
+
+
+	struct GlobRule
+	{
+		int weight;
+		std::string mime_type;
+		std::string pattern;
+		bool case_sensitive;
+
+		// Sort order: Higher weight first. If weights equal, longer pattern first.
+		// Used by std::sort which sorts ascending, so operator< must return true if 'this' should come BEFORE 'other'.
+		// Wait, std::sort sorts ascending (0..N). We want the BEST match at index 0?
+		// Usually we iterate 0..N.
+		// If we want [0] to be the best match:
+		// We need a Descending sort.
+		// So if (this is better than other) return true.
+		bool operator<(const GlobRule& other) const
+		{
+			if (weight != other.weight)
+			{
+				return weight > other.weight; // Higher weight -> comes first
+			}
+			return pattern.length() > other.pattern.length(); // Longer pattern -> comes first
+		}
 	};
 
 
@@ -294,7 +321,9 @@ private:
 	std::string DetectMimeTypeWithXdgMimeTool(const std::string& filepath_escaped);
 	std::string DetectMimeTypeWithFileTool(const std::string& filepath_escaped);
 	std::string DetectMimeTypeWithMagikaTool(const std::string& filepath_escaped);
+	std::string DetermineMimeByGlob2(const std::string& filepath);
 	std::string GuessMimeTypeByExtension(const std::string& filepath);
+	static bool GlobMatch(std::string_view text, std::string_view pattern, bool case_sensitive);
 
 	// --- XDG database parsing & caching ---
 	std::unordered_map<std::string, std::string> IndexAllDesktopFiles();
@@ -311,6 +340,8 @@ private:
 	std::unordered_map<std::string, std::string> LoadMimeAliases();
 	static std::string_view GetMajorMimeType(const std::string& mime);
 	std::unordered_map<std::string, std::string> LoadMimeSubclasses();
+	std::vector<GlobRule> LoadGlobRules();
+	void ParseGlobs2File(const std::string& filepath, std::vector<GlobRule>& rules);
 	static std::vector<std::string> GetDesktopFileSearchDirpaths();
 	std::vector<std::string> GetMimeappsListSearchFilepaths();
 	static std::vector<std::string> GetMimeDatabaseSearchDirpaths();
@@ -356,6 +387,7 @@ private:
 	bool _use_xdg_mime_tool;
 	bool _use_file_tool;
 	bool _use_magika_tool;
+	bool _load_mime_glob_rules;
 	bool _use_extension_based_fallback;
 	bool _load_mimetype_aliases;
 	bool _load_mimetype_subclasses;
@@ -394,6 +426,7 @@ private:
 	std::vector<std::string> _op_desktop_file_dirpaths;
 	std::vector<std::string> _op_mimeapps_list_filepaths;
 	std::vector<std::string> _op_mime_database_dirpaths;
+	std::vector<GlobRule> _op_glob_rules;
 	std::unordered_map<std::string, std::string> _op_desktop_id_to_path_index;
 	std::unordered_map<std::string, std::string> _op_alias_to_canonical_cache;  // from 'aliases'
 	std::unordered_map<std::string, std::vector<std::string>> _op_canonical_to_aliases_cache;  // from 'aliases'

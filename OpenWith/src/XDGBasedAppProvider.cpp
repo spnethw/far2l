@@ -38,6 +38,7 @@ XDGBasedAppProvider::XDGBasedAppProvider(TMsgGetter msg_getter) : AppProvider(st
 		{ "UseXdgMimeTool", MUseXdgMimeTool, &XDGBasedAppProvider::_use_xdg_mime_tool, true },
 		{ "UseFileTool", MUseFileTool, &XDGBasedAppProvider::_use_file_tool, true },
 		{ "UseMagikaTool", MUseMagikaTool, &XDGBasedAppProvider::_use_magika_tool, false },
+		{ "LoadMimeGlobRules", MLoadMimeGlobRules, &XDGBasedAppProvider::_load_mime_glob_rules, false },
 		{ "UseExtensionBasedFallback", MUseExtensionBasedFallback, &XDGBasedAppProvider::_use_extension_based_fallback, false },
 		{ "LoadMimeTypeAliases", MLoadMimeTypeAliases, &XDGBasedAppProvider::_load_mimetype_aliases, true },
 		{ "LoadMimeTypeSubclasses", MLoadMimeTypeSubclasses, &XDGBasedAppProvider::_load_mimetype_subclasses, true },
@@ -337,6 +338,7 @@ std::vector<std::wstring> XDGBasedAppProvider::GetMimeTypes()
 		add_if_present(profile.xdg_mime);
 		add_if_present(profile.file_mime);
 		add_if_present(profile.magika_mime);
+		add_if_present(profile.globs2_mime);
 		add_if_present(profile.stat_mime);
 		add_if_present(profile.ext_mime);
 
@@ -731,6 +733,9 @@ XDGBasedAppProvider::RawMimeProfile XDGBasedAppProvider::GetRawMimeProfile(const
 		profile.is_regular_file = true;
 
 		// Only call extension-based lookup for regular files
+		if(_load_mime_glob_rules) {
+			profile.globs2_mime = DetermineMimeByGlob2(filepath);
+		}
 		if (_use_extension_based_fallback) {
 			profile.ext_mime = GuessMimeTypeByExtension(filepath);
 		}
@@ -795,6 +800,7 @@ std::vector<std::string> XDGBasedAppProvider::ExpandAndPrioritizeMimeTypes(const
 	add_unique(profile.xdg_mime);
 	add_unique(profile.file_mime);
 	add_unique(profile.magika_mime);
+	add_unique(profile.globs2_mime);
 	add_unique(profile.stat_mime);
 	add_unique(profile.ext_mime);
 
@@ -901,6 +907,81 @@ std::string XDGBasedAppProvider::DetectMimeTypeWithFileTool(const std::string& f
 std::string XDGBasedAppProvider::DetectMimeTypeWithMagikaTool(const std::string& filepath_escaped)
 {
 	return RunCommandAndCaptureOutput("magika --no-colors --format '%m' " + filepath_escaped + " 2>/dev/null");
+}
+
+
+std::string XDGBasedAppProvider::DetermineMimeByGlob2(const std::string& filepath)
+{
+	std::string filename = GetBaseName(filepath);
+	if (filename.empty()) {
+		return "";
+	}
+
+	// The rules in _op_glob_rules are already sorted by weight (desc) and pattern length (desc).
+	// We iterate linearly and return the first match, satisfying the specification.
+	for (const auto& rule : _op_glob_rules) {
+		if (GlobMatch(filename, rule.pattern, rule.case_sensitive)) {
+			return rule.mime_type;
+		}
+	}
+
+	return "";
+}
+
+
+// Iterative wildcard matching implementation (replacing potentially dangerous recursion).
+// Supports '*' (matches zero or more characters) and '?' (matches exactly one character).
+bool XDGBasedAppProvider::GlobMatch(std::string_view text, std::string_view pattern, bool case_sensitive)
+{
+	size_t t_idx = 0;
+	size_t p_idx = 0;
+	size_t t_len = text.length();
+	size_t p_len = pattern.length();
+
+	size_t last_star_idx = std::string::npos;
+	size_t last_text_match_idx = 0;
+
+	auto chars_equal = [case_sensitive](char a, char b) {
+		if (case_sensitive) return a == b;
+		// Simple ASCII lowercasing is sufficient for standard globs per spec context
+		return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
+	};
+
+	while (t_idx < t_len) {
+		// Case 1: Simple character match or '?'
+		if (p_idx < p_len && (pattern[p_idx] == '?' || chars_equal(text[t_idx], pattern[p_idx]))) {
+			t_idx++;
+			p_idx++;
+			continue;
+		}
+
+		// Case 2: Found a wildcard '*'
+		if (p_idx < p_len && pattern[p_idx] == '*') {
+			last_star_idx = p_idx;
+			p_idx++;
+			last_text_match_idx = t_idx;
+			// We do NOT advance t_idx here; '*' can match empty string
+			continue;
+		}
+
+		// Case 3: Mismatch, but we have a previous '*' to backtrack to
+		if (last_star_idx != std::string::npos) {
+			p_idx = last_star_idx + 1;
+			last_text_match_idx++;
+			t_idx = last_text_match_idx;
+			continue;
+		}
+
+		// Case 4: Mismatch and no fallback
+		return false;
+	}
+
+	// Handle trailing '*' in pattern (e.g. pattern "foo*" matching text "foo")
+	while (p_idx < p_len && pattern[p_idx] == '*') {
+		p_idx++;
+	}
+
+	return p_idx == p_len;
 }
 
 
@@ -1594,6 +1675,108 @@ std::unordered_map<std::string, std::string> XDGBasedAppProvider::LoadMimeSubcla
 		}
 	}
 	return subclass_to_parent_map;
+}
+
+
+// Loads rules from 'globs2' files across all XDG data directories.
+// Handles precedence, __NOGLOBS__ logic, and final sorting.
+std::vector<XDGBasedAppProvider::GlobRule> XDGBasedAppProvider::LoadGlobRules()
+{
+	if (_op_mime_database_dirpaths.empty()) {
+		return {};
+	}
+
+	std::vector<GlobRule> rules;
+
+	// Iterate in reverse order: from lowest priority (system defaults) to highest (user overrides).
+	// This allows the __NOGLOBS__ directive in a higher-priority file to correctly remove
+	// specific rules defined in lower-priority files.
+	for (auto it = _op_mime_database_dirpaths.rbegin(); it != _op_mime_database_dirpaths.rend(); ++it) {
+		std::string globs_path = *it + "/globs2";
+		if (IsReadableFile(globs_path)) {
+			ParseGlobs2File(globs_path, rules);
+		}
+	}
+
+	// Sort the final combined list of rules.
+	// Primary key: Weight (descending).
+	// Secondary key: Pattern length (descending).
+	std::sort(rules.begin(), rules.end());
+
+	return rules;
+}
+
+
+// Parses a single 'globs2' file and updates the accumulated rules vector.
+void XDGBasedAppProvider::ParseGlobs2File(const std::string& filepath, std::vector<GlobRule>& rules)
+{
+	std::ifstream file(filepath);
+	if (!file.is_open()) return;
+
+	std::string line;
+	while (std::getline(file, line)) {
+		if (line.empty() || line[0] == '#') continue;
+
+		// Format: weight:mime-type:pattern[:flags]
+		// Find delimiters manually to handle potential colons in pattern/flags correctly.
+
+		size_t first_colon = line.find(':');
+		if (first_colon == std::string::npos) continue;
+
+		size_t second_colon = line.find(':', first_colon + 1);
+		if (second_colon == std::string::npos) continue;
+
+		// Extract Weight
+		int weight = 50;
+		try {
+			weight = std::stoi(line.substr(0, first_colon));
+		} catch (...) {
+			continue; // Skip invalid lines
+		}
+
+		// Extract MIME Type
+		std::string mime = Trim(line.substr(first_colon + 1, second_colon - first_colon - 1));
+
+		// Check for flags (optional 4th field).
+		// The spec says: "The fourth field... contains a list of comma-separated flags."
+		// We look for a third colon.
+		size_t third_colon = line.find(':', second_colon + 1);
+
+		std::string pattern;
+		std::string flags_str;
+
+		if (third_colon != std::string::npos) {
+			pattern = line.substr(second_colon + 1, third_colon - second_colon - 1);
+			flags_str = line.substr(third_colon + 1);
+		} else {
+			pattern = line.substr(second_colon + 1);
+		}
+
+		// Handle __NOGLOBS__ directive
+		// "implementations SHOULD discard information from previous directories"
+		if (pattern == "__NOGLOBS__") {
+			rules.erase(std::remove_if(rules.begin(), rules.end(),
+									   [&mime](const GlobRule& r) { return r.mime_type == mime; }),
+						rules.end());
+			continue;
+		}
+
+		// Parse flags
+		bool case_sensitive = false;
+		if (!flags_str.empty()) {
+			std::vector<std::string> flags = SplitString(flags_str, ',');
+			for (const auto& f : flags) {
+				if (f == "cs") {
+					case_sensitive = true;
+				}
+			}
+		}
+
+		// We do not trim the pattern, as spaces might be significant in filenames.
+		if (!mime.empty() && !pattern.empty()) {
+			rules.push_back({weight, std::move(mime), std::move(pattern), case_sensitive});
+		}
+	}
 }
 
 
@@ -2292,6 +2475,10 @@ XDGBasedAppProvider::OperationContext::OperationContext(XDGBasedAppProvider& p) 
 		provider._op_subclass_to_parent_cache = provider.LoadMimeSubclasses();
 	}
 
+	if (provider._load_mime_glob_rules) {
+		provider._op_glob_rules = provider.LoadGlobRules();
+	}
+
 	provider._op_mimeapps_lists_cache = provider.ParseMimeappsLists();
 
 
@@ -2325,6 +2512,7 @@ XDGBasedAppProvider::OperationContext::~OperationContext()
 	provider._op_alias_to_canonical_cache.clear();
 	provider._op_canonical_to_aliases_cache.clear();
 	provider._op_subclass_to_parent_cache.clear();
+	provider._op_glob_rules.clear();
 	provider._op_mimeapps_lists_cache = {};
 	provider._op_mime_to_default_desktop_id_cache.clear();
 	provider._op_mime_to_desktop_associations_index.clear();
