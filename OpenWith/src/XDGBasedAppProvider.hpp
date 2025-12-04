@@ -134,23 +134,29 @@ private:
 		int source_rank;
 		bool is_literal;
 
+		// Defines the sorting order for glob matching.
+		// Returns true if 'this' rule should be checked BEFORE 'other'.
 		bool operator<(const GlobRule& other) const
 		{
+			// Higher weights are checked first.
 			if (weight != other.weight)
 			{
 				return weight > other.weight;
 			}
 
+			// Exact filenames (e.g., 'Makefile') take precedence over globs (*.txt).
 			if (is_literal != other.is_literal)
 			{
 				return is_literal;
 			}
 
+			// Longer patterns are more specific (e.g., '*.tar.gz' > '*.gz').
 			if (pattern.length() != other.pattern.length())
 			{
 				return pattern.length() > other.pattern.length();
 			}
 
+			// User-defined rules (higher rank) override system rules.
 			return source_rank > other.source_rank;
 		}
 	};

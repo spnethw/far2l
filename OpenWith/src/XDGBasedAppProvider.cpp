@@ -912,6 +912,7 @@ std::string XDGBasedAppProvider::DetectMimeTypeWithMagikaTool(const std::string&
 }
 
 
+// Determines the MIME type of a file by matching its filename against the loaded glob rules.
 std::string XDGBasedAppProvider::DetermineMimeByGlob2(const std::string& filepath)
 {
 	std::string filename = GetBaseName(filepath);
@@ -929,6 +930,9 @@ std::string XDGBasedAppProvider::DetermineMimeByGlob2(const std::string& filepat
 }
 
 
+// Checks if a filename matches a glob pattern.
+// According to the spec, matching should be case-insensitive by default,
+// unless the 'cs' (case-sensitive) flag was specified in the globs2 file.
 bool XDGBasedAppProvider::GlobMatch(const std::string &text, const std::string &pattern, bool case_sensitive)
 {
 	int flags = 0;
@@ -1633,6 +1637,7 @@ std::unordered_map<std::string, std::string> XDGBasedAppProvider::LoadMimeSubcla
 }
 
 
+// Loads, parses, and sorts all glob rules from the 'globs2' files found in the XDG search paths.
 std::vector<XDGBasedAppProvider::GlobRule> XDGBasedAppProvider::LoadGlobRules()
 {
 	if (_op_mime_database_dirpaths.empty()) {
@@ -1642,6 +1647,9 @@ std::vector<XDGBasedAppProvider::GlobRule> XDGBasedAppProvider::LoadGlobRules()
 	std::vector<GlobRule> rules;
 	int current_source_rank = 0;
 
+	// Iterate through paths in reverse order (System -> User).
+	// This assigns a higher 'source_rank' to user-specific directories, ensuring that
+	// rules defined by the user take precedence over system rules when weights are equal.
 	for (auto it = _op_mime_database_dirpaths.rbegin(); it != _op_mime_database_dirpaths.rend(); ++it) {
 		std::string globs_path = *it + "/globs2";
 		if (IsReadableFile(globs_path)) {
@@ -1650,12 +1658,15 @@ std::vector<XDGBasedAppProvider::GlobRule> XDGBasedAppProvider::LoadGlobRules()
 		current_source_rank++;
 	}
 
+	// Sort the collected rules. This is a critical step that establishes the precedence
+	// defined in the GlobRule::operator< (Weight -> Literal -> Length -> Source).
 	std::sort(rules.begin(), rules.end());
 	return rules;
 }
 
 
 // Parses a single 'globs2' file and updates the accumulated rules vector.
+// Handles the 'weight:mime:pattern:flags' format and the special '__NOGLOBS__' directive.
 void XDGBasedAppProvider::ParseGlobs2File(const std::string& filepath, std::vector<GlobRule>& rules, int source_rank)
 {
 	std::ifstream file(filepath);
@@ -1704,6 +1715,9 @@ void XDGBasedAppProvider::ParseGlobs2File(const std::string& filepath, std::vect
 			}
 		}
 
+		// Handle the 'glob-deleteall' mechanism.
+		// If the pattern is "__NOGLOBS__", we must discard all previously accumulated rules
+		// for this specific MIME type (simulating a reset/override from a higher-priority directory).
 		if (pattern == "__NOGLOBS__") {
 			rules.erase(std::remove_if(rules.begin(), rules.end(),
 									   [&mime](const GlobRule& r) { return r.mime_type == mime; }),
@@ -1722,6 +1736,7 @@ void XDGBasedAppProvider::ParseGlobs2File(const std::string& filepath, std::vect
 		}
 
 		if (!mime.empty() && !pattern.empty()) {
+			// Pre-calculate is_literal to optimize sorting performance later.
 			bool is_literal = IsLiteralPattern(pattern);
 			rules.push_back({weight, std::move(mime), std::move(pattern), case_sensitive, source_rank, is_literal});
 		}
@@ -1729,6 +1744,8 @@ void XDGBasedAppProvider::ParseGlobs2File(const std::string& filepath, std::vect
 }
 
 
+// Checks if a pattern is a literal filename (e.g., "Makefile") rather than a glob.
+// We define a literal as a string containing no standard shell glob meta-characters (*, ?, [).
 bool XDGBasedAppProvider::IsLiteralPattern(const std::string& pattern)
 {
 	return pattern.find_first_of("*?[") == std::string::npos;
