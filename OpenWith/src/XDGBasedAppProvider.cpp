@@ -934,11 +934,25 @@ std::string XDGBasedAppProvider::DetectMimeTypeViaGlobRules(const std::string& f
 bool XDGBasedAppProvider::GlobMatch(const std::string &text, const std::string &pattern, bool case_sensitive)
 {
 	int flags = 0;
+
+#ifdef FNM_CASEFOLD
 	if (!case_sensitive) {
 		flags |= FNM_CASEFOLD;
 	}
+#elif defined(FNM_IGNORECASE)
+	if (!case_sensitive) {
+		flags |= FNM_IGNORECASE;
+	}
+#endif
 
-	return fnmatch(pattern.c_str(), text.c_str(), flags) == 0;
+	if (case_sensitive || (flags != 0)) {
+		return fnmatch(pattern.c_str(), text.c_str(), flags) == 0;
+	}
+
+	auto text_lower = ToLowerASCII(text);
+	auto pattern_lower = ToLowerASCII(pattern);
+
+	return fnmatch(pattern_lower.c_str(), text_lower.c_str(), 0) == 0;
 }
 
 
