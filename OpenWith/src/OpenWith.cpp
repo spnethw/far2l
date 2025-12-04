@@ -21,9 +21,9 @@ namespace OpenWith {
 
 // ****************************** Public API ******************************
 
-
-// Main workflow orchestrator: resolves application candidates, displays the selection menu,
-// and handles user actions: F3 (Details), F9 (Settings), Enter (Launch).
+// Main workflow orchestrator: resolves application candidates via AppProvider,
+// displays the selection menu, and handles user actions: F3 (details), F9 (settings), Enter (launch).
+// The function maintains a loop to allow returning to the menu after closing sub-dialogs.
 void OpenWithPlugin::ProcessFiles(const std::vector<std::wstring>& filepaths)
 {
 	if (filepaths.empty()) {
@@ -112,13 +112,14 @@ void OpenWithPlugin::ProcessFiles(const std::vector<std::wstring>& filepaths)
 
 
 
-// Shows platform-independent and platform-specific settings provided by AppProvider.
-// Returns status indicating if the candidate list should be refreshed.
+// Displays the configuration dialog containing both platform-independent (plugin-wide)
+// and platform-specific settings fetched dynamically from the current AppProvider.
+// Returns true if any setting affecting the candidate list generation was changed.
 bool OpenWithPlugin::ShowConfigureDialog()
 {
 	constexpr int CONFIG_DIALOG_WIDTH = 70;
 
-	// Load platform-independent settings.
+	// Load general (platform-independent) settings.
 	LoadOptions();
 
 	// Create a temporary provider to access platform-specific settings (they are loaded automatically).
@@ -209,10 +210,11 @@ bool OpenWithPlugin::ShowConfigureDialog()
 		auto threshold_str = (const wchar_t*)g_info.SendDlgMessage(dlg, DM_GETCONSTTEXTPTR, confirm_launch_edit_idx, 0);
 		s_confirm_launch_threshold = wcstol(threshold_str, nullptr, 10);
 
-		SaveOptions(); // Save platform-independent settings.
+		SaveOptions(); // Save general (platform-independent) settings.
 
 		bool is_platform_settings_changed = false;
 
+		// Propagate changes to dynamic platform-specific settings back to the provider.
 		if (!dynamic_settings.empty()) {
 			std::vector<ProviderSetting> new_platform_settings;
 			new_platform_settings.reserve(dynamic_settings.size());
@@ -296,7 +298,7 @@ void OpenWithPlugin::LaunchApplication(const CandidateInfo& app, const std::vect
 		return;
 	}
 
-	// If we have multiple commands to run, force asynchronous execution to avoid blocking.
+	// If we have multiple commands to run, force asynchronous execution to avoid UI blocking.
 	bool force_no_wait = cmds.size() > 1;
 
 	unsigned int flags {};
@@ -320,8 +322,9 @@ void OpenWithPlugin::LaunchApplication(const CandidateInfo& app, const std::vect
 
 
 
-// Shows detailed info about file(s), selected application, and the exact command that will be used to launch it.
-// Returns true if the user clicked "Launch", false otherwise (e.g. "Close" or Esc).
+// Displays detailed information about selected file(s), the candidate application,
+// and the resolved launch command that will be used to launch it.
+// Returns true if the user chooses to "Launch" directly from this dialog.
 bool OpenWithPlugin::ShowDetailsDialog(const std::vector<std::wstring>& filepaths,
 									   const std::vector<std::wstring>& unique_mime_profiles,
 									   const std::vector<Field>& application_info,
@@ -404,7 +407,7 @@ bool OpenWithPlugin::ShowDetailsDialog(const std::vector<std::wstring>& filepath
 
 
 
-// Loads platform-independent configuration from the INI file.
+// Loads general (platform-independent) configuration from the INI file.
 void OpenWithPlugin::LoadOptions()
 {
 	KeyFileReadSection kfh(INI_LOCATION, INI_SECTION);
@@ -418,7 +421,7 @@ void OpenWithPlugin::LoadOptions()
 
 
 
-// Saves current platform-independent configuration to the INI file.
+// Saves current general (platform-independent) configuration to the INI file.
 void OpenWithPlugin::SaveOptions()
 {
 	KeyFileHelper kfh(INI_LOCATION);
@@ -451,7 +454,8 @@ std::wstring OpenWithPlugin::JoinStrings(const std::vector<std::wstring>& vec, c
 
 
 
-// Gets the console cell width of a Field's label string (used in Details dialog).
+// Helper used in Details dialog to align "Edit" controls.
+// Calculates the width of a Field label in console cells.
 size_t OpenWithPlugin::GetLabelCellWidth(const Field& field)
 {
 	return g_fsf.StrCellsCount(field.label.c_str(), field.label.size());
@@ -459,7 +463,8 @@ size_t OpenWithPlugin::GetLabelCellWidth(const Field& field)
 
 
 
-// Finds the maximum label width (in cells) in a vector of Fields for alignment (used in Details dialog).
+// Helper used in Details dialog to align "Edit" controls.
+// Determines the maximum label width (in cells) in a vector of Fields.
 size_t OpenWithPlugin::GetMaxLabelCellWidth(const std::vector<Field>& fields)
 {
 	size_t max_width = 0;
@@ -471,7 +476,7 @@ size_t OpenWithPlugin::GetMaxLabelCellWidth(const std::vector<Field>& fields)
 
 
 
-// Retrieves the current console width using AdvControl API.
+// Retrieves the current console width.
 int OpenWithPlugin::GetScreenWidth()
 {
 	SMALL_RECT rect;
@@ -527,7 +532,9 @@ SHAREDSYMBOL void WINAPI GetPluginInfoW(struct PluginInfo *Info)
 }
 
 
-// Validates the panel state, retrieves selected files (or the file under cursor),
+// Main entry point when the plugin is invoked from the plugins menu (F11).
+// Validates the active panel state (must be a file panel with real paths).
+// Collects selected items, or the item under the cursor if no selection exists,
 // and initiates the processing workflow.
 SHAREDSYMBOL HANDLE WINAPI OpenPluginW(int OpenFrom, INT_PTR Item)
 {
@@ -586,7 +593,8 @@ SHAREDSYMBOL HANDLE WINAPI OpenPluginW(int OpenFrom, INT_PTR Item)
 		OpenWithPlugin::ProcessFiles(selected_filepaths);
 	}
 
-	// Plugin acts as a command, not as a panel plugin (VFS).
+	// Return INVALID_HANDLE_VALUE because this plugin performs an action and exits,
+	// rather than creating a new panel instance (like a VFS plugin).
 	return INVALID_HANDLE_VALUE;
 }
 
