@@ -83,23 +83,21 @@ void OpenWithPlugin::ProcessFiles(const std::vector<std::wstring>& filepaths)
 			auto cmds = provider->ConstructLaunchCommands(selected_app, filepaths);
 			// Repeat until user either launches the application or closes the dialog to go back.
 			while (true) {
-				bool is_launch_requested = ShowDetailsDialog(filepaths, mime_profiles, app_info, cmds);
-				if (!is_launch_requested) {
+				if (ShowDetailsDialog(filepaths, mime_profiles, app_info, cmds) == DetailsDialogResult::Launch) {
+					if (AskForLaunchConfirmation(selected_app, filepaths.size())) {
+						LaunchApplication(selected_app, cmds);
+						return; // Exit the plugin after a successful launch.
+					}
+				} else {
 					break; // User clicked "Close", break the inner loop to return to the main menu.
-				}
-				if (AskForLaunchConfirmation(selected_app, filepaths.size())) {
-					LaunchApplication(selected_app, cmds); // Launch the application and exit the plugin entirely.
-					return;
 				}
 			}
 
 		} else if (menu_break_code == KEY_F9_SETTINGS) {
-			const auto is_refresh_needed = ShowConfigureDialog();
-			// Refresh is needed if any setting that affects the candidate list has been changed.
-			if (is_refresh_needed) {
+			if (ShowConfigureDialog() == ConfigureDialogResult::RefreshCandidates) {
 				provider->LoadPlatformSettings();
 				app_candidates.reset();
-		}
+			}
 
 		} else { // Enter to launch.
 			if (AskForLaunchConfirmation(selected_app, filepaths.size())) {
@@ -116,7 +114,7 @@ void OpenWithPlugin::ProcessFiles(const std::vector<std::wstring>& filepaths)
 // Displays the configuration dialog containing both platform-independent (plugin-wide)
 // and platform-specific settings fetched dynamically from the current AppProvider.
 // Returns true if any setting affecting the candidate list generation was changed.
-bool OpenWithPlugin::ShowConfigureDialog()
+OpenWithPlugin::ConfigureDialogResult OpenWithPlugin::ShowConfigureDialog()
 {
 	constexpr int CONFIG_DIALOG_WIDTH = 70;
 
@@ -187,59 +185,61 @@ bool OpenWithPlugin::ShowConfigureDialog()
 	int config_dialog_height = current_y + 3;
 	config_dialog_items[0].Y2 = config_dialog_height - 2;
 
-	HANDLE dlg = g_info.DialogInit(g_info.ModuleNumber, -1, -1, CONFIG_DIALOG_WIDTH, config_dialog_height, L"ConfigurationDialog",
-								   config_dialog_items.data(), static_cast<unsigned int>(config_dialog_items.size()), 0, 0, nullptr, 0);
-	if (dlg == INVALID_HANDLE_VALUE) {
-		return {};
-	}
-
-	int exit_code = g_info.DialogRun(dlg);
 	bool is_refresh_needed = false;
 
-	// ----- Process results if "OK" was pressed. -----
-	if (exit_code == static_cast<int>(ok_btn_idx)) {
+	HANDLE dlg = g_info.DialogInit(g_info.ModuleNumber, -1, -1, CONFIG_DIALOG_WIDTH, config_dialog_height, L"ConfigurationDialog",
+								   config_dialog_items.data(), static_cast<unsigned int>(config_dialog_items.size()), 0, 0, nullptr, 0);
+	if (dlg != INVALID_HANDLE_VALUE) {
 
-		auto is_checked = [&dlg](size_t i) -> bool {
-			return g_info.SendDlgMessage(dlg, DM_GETCHECK, i, 0) == BSTATE_CHECKED;
-		};
+		int exit_code = g_info.DialogRun(dlg);
 
-		s_use_external_terminal          = is_checked(use_external_terminal_idx);
-		s_no_wait_for_command_completion = is_checked(no_wait_for_command_completion_idx);
-		s_clear_selection                = is_checked(clear_selection_idx);
-		s_confirm_launch                 = is_checked(confirm_launch_chkbx_idx);
+		// ----- Process results if "OK" was pressed. -----
+		if (exit_code == static_cast<int>(ok_btn_idx)) {
 
-		auto threshold_str = (const wchar_t*)g_info.SendDlgMessage(dlg, DM_GETCONSTTEXTPTR, confirm_launch_edit_idx, 0);
-		s_confirm_launch_threshold = wcstol(threshold_str, nullptr, 10);
+			auto is_checked = [&dlg](size_t i) -> bool {
+				return g_info.SendDlgMessage(dlg, DM_GETCHECK, i, 0) == BSTATE_CHECKED;
+			};
 
-		SaveGeneralSettings(); // Save platform-independent configuration.
+			s_use_external_terminal          = is_checked(use_external_terminal_idx);
+			s_no_wait_for_command_completion = is_checked(no_wait_for_command_completion_idx);
+			s_clear_selection                = is_checked(clear_selection_idx);
+			s_confirm_launch                 = is_checked(confirm_launch_chkbx_idx);
 
-		bool is_platform_settings_changed = false;
+			auto threshold_str = (const wchar_t*)g_info.SendDlgMessage(dlg, DM_GETCONSTTEXTPTR, confirm_launch_edit_idx, 0);
+			s_confirm_launch_threshold = wcstol(threshold_str, nullptr, 10);
 
-		// Propagate changes to dynamic platform-specific settings back to the provider.
-		if (!dynamic_settings.empty()) {
-			std::vector<ProviderSetting> new_platform_settings;
-			new_platform_settings.reserve(dynamic_settings.size());
+			SaveGeneralSettings(); // Save platform-independent configuration.
 
-			for (const auto& [idx, setting] : dynamic_settings) {
-				bool new_value = is_checked(idx);
-				if (setting.value != new_value) {
-					is_platform_settings_changed = true;
+			bool is_platform_settings_changed = false;
+
+			// Propagate changes to dynamic platform-specific settings back to the provider.
+			if (!dynamic_settings.empty()) {
+				std::vector<ProviderSetting> new_platform_settings;
+				new_platform_settings.reserve(dynamic_settings.size());
+
+				for (const auto& [idx, setting] : dynamic_settings) {
+					bool new_value = is_checked(idx);
+					if (setting.value != new_value) {
+						is_platform_settings_changed = true;
+					}
+					new_platform_settings.push_back({ setting.internal_key, setting.display_name, new_value });
 				}
-				new_platform_settings.push_back({ setting.internal_key, setting.display_name, new_value });
+
+				if (is_platform_settings_changed) {
+					provider->SetPlatformSettings(new_platform_settings);
+					provider->SavePlatformSettings();
+				}
 			}
 
-			if (is_platform_settings_changed) {
-				provider->SetPlatformSettings(new_platform_settings);
-				provider->SavePlatformSettings();
+			if (is_platform_settings_changed || (old_use_external_terminal != s_use_external_terminal)) {
+				is_refresh_needed = true;
 			}
 		}
-
-		if (is_platform_settings_changed || (old_use_external_terminal != s_use_external_terminal)) {
-			is_refresh_needed = true;
-		}
+		g_info.DialogFree(dlg);
 	}
-	g_info.DialogFree(dlg);
-	return is_refresh_needed;
+
+	// Refresh is needed if any setting that affects the candidate list has been changed.
+	return is_refresh_needed ? ConfigureDialogResult::RefreshCandidates : ConfigureDialogResult::KeepCandidates;
 }
 
 
@@ -325,8 +325,8 @@ void OpenWithPlugin::LaunchApplication(const CandidateInfo& app, const std::vect
 
 // Displays detailed information about selected file(s), the candidate application,
 // and the resolved launch command that will be used to launch it.
-// Returns true if the user chooses to "Launch" directly from this dialog.
-bool OpenWithPlugin::ShowDetailsDialog(const std::vector<std::wstring>& filepaths,
+// Returns DetailsDialogResult::Launch if the user chooses to "Launch" directly from this dialog.
+OpenWithPlugin::DetailsDialogResult OpenWithPlugin::ShowDetailsDialog(const std::vector<std::wstring>& filepaths,
 									   const std::vector<std::wstring>& unique_mime_profiles,
 									   const std::vector<Field>& application_info,
 									   const std::vector<std::wstring>& cmds)
@@ -401,9 +401,11 @@ bool OpenWithPlugin::ShowDetailsDialog(const std::vector<std::wstring>& filepath
 	if (dlg != INVALID_HANDLE_VALUE) {
 		int exit_code = g_info.DialogRun(dlg);
 		g_info.DialogFree(dlg);
-		return (exit_code == launch_btn_idx);
+		if (exit_code == launch_btn_idx) {
+			return DetailsDialogResult::Launch;
+		}
 	}
-	return false;
+	return DetailsDialogResult::Close;
 }
 
 
