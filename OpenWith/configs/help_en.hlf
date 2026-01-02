@@ -220,7 +220,6 @@ $^#OpenWith plugin#
 $^#Version 1.0#
 $^#Copyright (C) 2025 spnethw#
 $^#Troubleshooting#
-
  #Why is the list empty when I select multiple files?#
 
  The plugin uses an "intersection" logic: it seeks applications capable of opening all selected files simultaneously.
@@ -234,6 +233,25 @@ $^#Troubleshooting#
  Solution: Enable "Use external terminal for console apps" in the ~configuration dialog~@ConfigurationDialog@.
 
 
+ #Why doesn't my favorite app appear in the list? (Linux/BSD)#
+
+ If an application doesn't appear even for a single file, check the following:
+  #-# Missing .desktop file: Ensure that a .desktop file for the application exists in one of the standard directories defined by "$XDG_DATA_HOME" and "$XDG_DATA_DIRS" environment variables (typically "~~/.local/share/applications" and "/usr/share/applications"). The plugin also automatically scans standard Flatpak and Snap application directories.
+  #-# Incorrect Association: Check that the correct MIME type is listed in the "MimeType" key of the .desktop file, or that an association is defined in "~~/.config/mimeapps.list".
+  #-# Filtering Options: Try disabling the "Filter by OnlyShowIn/NotShowIn" and "Validate TryExec" options in the plugin's settings, as they might be hiding the application.
+  #-# Outdated Cache: Run 'update-desktop-database' and 'update-mime-database' in your terminal to refresh the system caches.
+
+
+ #Why do I get the error "Selected item must be a file accessible locally via real path."?#
+
+ External applications on Linux/BSD/macOS require a real file system path to open a file. This error means that the selected item is either not a physical file or is located in a virtual environment that the OS cannot access directly. It may occur when trying to open via the plugin:
+  #-# non-file items (e.g., connection names in NetRocks);
+  #-# files inside archives, as they are virtual until extracted (e.g., in arclite);
+  #-# internal file structure elements (e.g., ELF headers, sections, or symbols viewed via Inside);
+  #-# file objects on remote resources (e.g., via NetRocks).
+ Solution: Copy or extract the file to a real directory on your disk before opening it with this plugin.
+
+
  #How does ranking work? Why is app X listed above app Y? (Linux/BSD)#
 
  The order in the list is determined by a rank calculated for each application. A higher rank means a more relevant application. The rank depends on two factors:
@@ -241,15 +259,6 @@ $^#Troubleshooting#
  2. Association Source (Secondary Factor): Sources are prioritized from highest to lowest: the global default ('xdg-mime query default'), the "[Default Applications]" section in "mimeapps.list", the "[Added Associations]" section, and finally, the "mimeinfo.cache" or the data from .desktop files themselves.
  Therefore, an application set as the system default for a very specific file type will always be at the top of the list.
  If you prefer a simple, predictable list over this complex logic, you can disable it with the "Disable ranking (sort alphabetically)" option in the ~configuration dialog~@ConfigurationDialog@.
-
-
- #Why doesn't my favorite app appear in the list? (Linux/BSD)#
-
- If an application doesn't appear even for a single file, check the following:
- #-# Missing .desktop file: Ensure that a .desktop file for the application exists in one of the standard directories defined by "$XDG_DATA_HOME" and "$XDG_DATA_DIRS" environment variables (typically "~~/.local/share/applications" and "/usr/share/applications"). The plugin also automatically scans standard Flatpak and Snap application directories.
- #-# Incorrect Association: Check that the correct MIME type is listed in the "MimeType" key of the .desktop file, or that an association is defined in "~~/.config/mimeapps.list".
- #-# Filtering Options: Try disabling the "Filter by OnlyShowIn/NotShowIn" and "Validate TryExec" options in the plugin's settings, as they might be hiding the application.
- #-# Outdated Cache: Run 'update-desktop-database' and 'update-mime-database' in your terminal to refresh the system caches.
 
 
  #Why is a checkbox in the configuration dialog grayed out? (Linux/BSD)#
@@ -266,9 +275,9 @@ $^#Troubleshooting#
  3. Try launching the application again.
  You will now see any error messages (stdout/stderr) printed by the application directly in the far2l console.
  Also check the command for common syntax errors:
- #-# Incorrect Field Codes: The plugin supports standard codes ("%f", "%F", "%u", "%U"). Some applications might use deprecated or non-standard codes that will not work.
- #-# Missing Quotes: Paths with spaces must be correctly quoted or escaped. Warning: Do NOT enclose field codes in quotes (e.g., use #%f#, not #"%f"#). According to the spec, field codes inside quotes are treated as literal text and are not expanded.
- #-# Program not in "$PATH": If "Exec" contains just a program name, it must be located in one of the directories listed in the "$PATH" environment variable.
- #-# Incorrect Path Format: The application might not correctly handle the file:// URIs that the plugin passes by default, even if its .desktop file uses the "%u" or "%U" field codes. Try enabling the "Pass plain paths instead of file:// URIs" option in the ~configuration dialog~@ConfigurationDialog@.
+  #-# Incorrect Field Codes: The plugin supports standard codes ("%f", "%F", "%u", "%U"). Some applications might use deprecated or non-standard codes that will not work.
+  #-# Missing Quotes: Paths with spaces must be correctly quoted or escaped. Warning: Do NOT enclose field codes in quotes (e.g., use #%f#, not #"%f"#). According to the spec, field codes inside quotes are treated as literal text and are not expanded.
+  #-# Program not in "$PATH": If "Exec" contains just a program name, it must be located in one of the directories listed in the "$PATH" environment variable.
+  #-# Incorrect Path Format: The application might not correctly handle the file:// URIs that the plugin passes by default, even if its .desktop file uses the "%u" or "%U" field codes. Try enabling the "Pass plain paths instead of file:// URIs" option in the ~configuration dialog~@ConfigurationDialog@.
 
    ~Contents~@Contents@
