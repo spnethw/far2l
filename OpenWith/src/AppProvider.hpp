@@ -1,6 +1,8 @@
 #pragma once
 
 #include "common.hpp"
+#include <atomic>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -32,7 +34,25 @@ namespace openwith
 
 		static AppProvider* GetInstance();
 
-		virtual std::vector<CandidateInfo> GetAppCandidates(const std::vector<std::wstring>& filepaths) = 0;
+		struct GetCandidatesResult
+		{
+			std::vector<CandidateInfo> candidates;
+			bool was_cancelled = false;
+		};
+
+
+		// Carries an optional title and/or status text update from the provider to the
+		// progress dialog. nullptr means "leave this field unchanged".
+		struct ProgressUpdate
+		{
+			const wchar_t* title = nullptr;
+			const wchar_t* status = nullptr;
+		};
+
+		using ProgressCallback = std::function<void(const ProgressUpdate&)>;
+
+		virtual GetCandidatesResult GetAppCandidates(const std::vector<std::wstring>& filepaths, ProgressCallback progress = nullptr,
+													 const std::atomic<bool>* cancel_flag = nullptr) = 0;
 		virtual std::vector<std::wstring> GetMimeTypes() = 0;
 		virtual std::vector<std::wstring> ConstructLaunchCommands(const CandidateInfo& candidate, const std::vector<std::wstring>& filepaths) = 0;
 		virtual std::vector<Field> GetCandidateDetails(const CandidateInfo& candidate) = 0;
@@ -45,6 +65,33 @@ namespace openwith
 
 	protected:
 		AppProvider() = default;
+
+		// Thrown by CheckCancellation() when the user has pressed Cancel.
+		// Caught in GetAppCandidates() and converted to GetCandidatesResult::was_cancelled.
+		struct OperationCancelledException {};
+
+		// RAII guard that installs the progress callback and cancellation flag on the provider at the start
+		// of GetAppCandidates() and clears them on exit (whether normal or via exception).
+		struct OperationGuard
+		{
+			AppProvider& provider;
+			OperationGuard(AppProvider& p, ProgressCallback cb, const std::atomic<bool>* cf)
+				: provider(p)
+			{
+				p._progress_cb = std::move(cb);
+				p._cancel_flag = cf;
+			}
+			~OperationGuard()
+			{
+				provider._cancel_flag = nullptr;
+				provider._progress_cb = nullptr;
+			}
+		};
+
+		void CheckCancellation() const;
+		void ReportProgress(const ProgressUpdate& update) const;
+		const std::atomic<bool>* _cancel_flag = nullptr;
+		ProgressCallback _progress_cb = nullptr;
 
 	private:
 		static std::unique_ptr<AppProvider> CreateAppProvider();

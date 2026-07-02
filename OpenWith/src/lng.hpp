@@ -62,6 +62,10 @@ namespace openwith
 		GotoDesktop,
 		GotoTryExec,
 		GotoSource,
+		IdentifyingMimes,
+		ProcessingFiles,
+		DiscoveringApplications,
+		MatchingFilteringRanking,
 
 		AppName,
 		FullPath,
@@ -70,7 +74,10 @@ namespace openwith
 		BundleVersion,
 
 		ConfirmLaunchTitle,
-		ConfirmLaunchMessage
+		ConfirmLaunchMessage,
+
+		Working,
+		PleaseWait
 	};
 
 	const wchar_t* GetMsg(MsgID msg_id);
