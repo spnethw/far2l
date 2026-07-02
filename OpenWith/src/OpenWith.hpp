@@ -1,11 +1,16 @@
 #pragma once
 
 #include "common.hpp"
+#include "AppProvider.hpp"
 #include "farplug-wide.h"
 #include "KeyFileHelper.h"
+#include <atomic>
+#include <condition_variable>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
+
 
 namespace openwith
 {
@@ -53,6 +58,35 @@ namespace openwith
 			std::wstring goto_target;
 		};
 
+		struct ProgressState
+		{
+			// Progress text updated by the worker thread; read by the dialog proc.
+			std::wstring title;
+			std::wstring status;
+			std::mutex   mtx_text;
+
+			// Set to true by the dialog proc when the user clicks Cancel.
+			// Read by the provider via AppProvider::CheckCancellation().
+			std::atomic<bool> cancelled{false};
+
+			// Set to true by the worker thread when the operation completes or is cancelled.
+			std::atomic<bool> finished{false};
+
+			// Guards against sending DM_CLOSE more than once if DN_ENTERIDLE fires
+			// multiple times after finished becomes true.
+			std::atomic<bool> close_sent{false};
+
+			// Used by FetchCandidatesWithProgress to wait up to 300 ms before showing
+			// the dialog. The worker calls notify_one() after setting finished = true.
+			std::mutex              mtx_finish;
+			std::condition_variable cv_finish;
+
+			int progress_title_idx  = -1;
+			int progress_status_idx = -1;
+			int cancel_idx          = -1;
+		};
+
+
 		inline static bool s_use_external_terminal;
 		inline static bool s_no_wait_for_command_completion;
 		inline static bool s_clear_selection;
@@ -68,6 +102,10 @@ namespace openwith
 			Standard, // Enter
 			Forced    // Shift+Enter
 		};
+
+		static AppProvider::GetCandidatesResult FetchCandidatesWithProgress(AppProvider& provider, const std::vector<std::wstring>& filepaths);
+		static LONG_PTR WINAPI ProgressDlgProc(HANDLE progress_dlg, int msg, int param1, LONG_PTR param2);
+		static void ShowProgressDlg(ProgressState& state);
 
 		static void LaunchApplication(const CandidateInfo& app, const std::vector<std::wstring>& cmds, LaunchMode launch_mode = LaunchMode::Standard);
 		static DetailsDlgResult ShowDetailsDlg(const std::vector<std::wstring>& filepaths, const std::vector<std::wstring>& unique_mime_profiles, const std::vector<Field> &application_info, const std::vector<std::wstring>& cmds, const std::vector<CandidateContextLocation>& locations);

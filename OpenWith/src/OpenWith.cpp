@@ -8,11 +8,14 @@
 #include "WideMB.h"
 #include "WinCompat.h"
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
+#include <exception>
 #include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 
@@ -47,13 +50,20 @@ namespace openwith
 		// Main application selection menu loop.
 		while (true) {
 			if (!app_candidates.has_value()) {
-				app_candidates = provider->GetAppCandidates(filepaths);
+
+				auto result = FetchCandidatesWithProgress(*provider, filepaths);
+				if (result.was_cancelled) {
+					return;
+				}
+				app_candidates = std::move(result.candidates);
+
 				FilterOutTerminalCandidates(*app_candidates, filepaths.size());
 
 				if ((*app_candidates).empty()) {
 					ShowErrorDlg({ GetMsg(MsgID::NoAppsFound), JoinStrings(provider->GetMimeTypes(), L"; ") });
-					return; // No application candidates; exit the plugin.
+					return;  // No application candidates; exit the plugin.
 				}
+
 
 				// NOTE: FarMenuItem stores a raw const wchar_t* — no copy is made.
 				// The pointers here point directly into the name strings inside "app_candidates".
@@ -137,6 +147,165 @@ namespace openwith
 	}
 
 
+	// Runs GetAppCandidates() on a background thread and shows a progress dialog if the operation takes longer than 300 ms.
+	// Returns the result and a cancellation flag; rethrows any exception thrown by the provider.
+	AppProvider::GetCandidatesResult Plugin::FetchCandidatesWithProgress(AppProvider& provider, const std::vector<std::wstring>& filepaths)
+	{
+		ProgressState state;
+		AppProvider::GetCandidatesResult fetch_result;
+		std::exception_ptr exception;
+
+		// Marshals provider progress updates into ProgressState under a lock so
+		// the dialog proc can safely read them from the main thread.
+		auto progress_cb = [&state](const AppProvider::ProgressUpdate& update) {
+			std::lock_guard<std::mutex> lock(state.mtx_text);
+			if (update.title) {
+				state.title  = update.title;
+			}
+			if (update.status) {
+				state.status = update.status;
+			}
+		};
+
+		struct ThreadExceptionGuard
+		{
+			std::thread& t;
+			std::atomic<bool>& cancelled;
+			~ThreadExceptionGuard()
+			{
+				if (t.joinable()) {
+					cancelled.store(true);
+					t.join();
+				}
+			}
+		};
+
+		std::thread worker([&]() {
+			try {
+				fetch_result = provider.GetAppCandidates(filepaths, progress_cb, &state.cancelled);
+			} catch (...) {
+				exception = std::current_exception();
+			}
+
+			// Signal completion; wakes the 300 ms wait below.
+			{
+				std::lock_guard<std::mutex> lock(state.mtx_finish);
+				state.finished.store(true);
+			}
+			state.cv_finish.notify_one();
+
+			// NOOP_EVENT -> KEY_IDLE -> DN_ENTERIDLE
+			INPUT_RECORD ir = {};
+			ir.EventType = NOOP_EVENT;
+			DWORD dw = 0;
+			WINPORT(WriteConsoleInput)(0, &ir, 1, &dw);
+		});
+
+		ThreadExceptionGuard guard{worker,state.cancelled};
+
+		{
+			// Wait up to 300 ms for the worker to finish.
+			std::unique_lock<std::mutex> lock(state.mtx_finish);
+			state.cv_finish.wait_for(lock, std::chrono::milliseconds(300), [&]{ return state.finished.load(); });
+		}
+
+		// Avoid flashing a modal window for fast operations.
+		if (!state.finished.load()) {
+			ShowProgressDlg(state);
+		}
+
+		worker.join();
+
+		if (exception) {
+			std::rethrow_exception(exception);
+		}
+		return fetch_result;
+	}
+
+
+	LONG_PTR WINAPI Plugin::ProgressDlgProc(HANDLE progress_dlg, int msg, int param1, LONG_PTR param2)
+	{
+		auto* state = reinterpret_cast<ProgressState*>(g_info.SendDlgMessage(progress_dlg, DM_GETDLGDATA, 0, 0));
+
+		switch (msg) {
+
+			case DN_ENTERIDLE: {
+				if (state->finished.load()) {
+					if (!state->close_sent.exchange(true)) {
+						g_info.SendDlgMessage(progress_dlg, DM_CLOSE, 0, 0);
+					}
+				} else {
+					std::wstring title, status;
+					{
+						std::lock_guard<std::mutex> lock(state->mtx_text);
+						title  = state->title;
+						status = state->status;
+					}
+					if (!title.empty()) {
+						g_info.SendDlgMessage(progress_dlg, DM_SETTEXTPTR, state->progress_title_idx, (LONG_PTR)title.c_str());
+					}
+					if (!status.empty()) {
+						g_info.SendDlgMessage(progress_dlg, DM_SETTEXTPTR, state->progress_status_idx, (LONG_PTR)status.c_str());
+					}
+				}
+				return 0;
+			}
+
+			case DN_BTNCLICK: {
+				if (param1 == state->cancel_idx) {
+					state->cancelled.store(true);
+					g_info.SendDlgMessage(progress_dlg, DM_CLOSE, 0, 0);
+					return TRUE;
+				}
+				break;
+			}
+
+			case DN_CLOSE: {
+				if (!state->finished.load()) {
+					state->cancelled.store(true);
+				}
+				break;
+			}
+		}
+
+		return g_info.DefDlgProc(progress_dlg, msg, param1, param2);
+	}
+
+
+	// Builds and displays a modal progress dialog. Blocks until the dialog is closed. The dialog is created with FDLG_REGULARIDLE
+	// so that far2l sends DN_ENTERIDLE to ProgressDlgProc() at least once per second, enabling periodic UI updates.
+	void Plugin::ShowProgressDlg(ProgressState& state)
+	{
+		constexpr int DLG_WIDTH = 60;
+		constexpr int DLG_HEIGHT = 9;
+
+		enum ProgressDlgItem
+		{
+			PD_TITLE_FRAME,
+			PD_STATUS,
+			PD_SEPARATOR,
+			PD_CANCEL
+		};
+
+		FarDialogItem items[] = {
+			{ DI_DOUBLEBOX, 3, 1, DLG_WIDTH - 4, DLG_HEIGHT - 2, FALSE, {}, DIF_NONE,        FALSE, GetMsg(MsgID::Working),    0 },
+			{ DI_TEXT,      5, 3, DLG_WIDTH - 6, 3,              FALSE, {}, DIF_NONE,        FALSE, GetMsg(MsgID::PleaseWait), 0 },
+			{ DI_TEXT,      0, 5, 0,             5,              FALSE, {}, DIF_SEPARATOR,   FALSE, L"",                       0 },
+			{ DI_BUTTON,    0, 6, 0,             6,              FALSE, {}, DIF_CENTERGROUP, FALSE, GetMsg(MsgID::Cancel),     0 }
+		};
+
+		state.progress_title_idx = PD_TITLE_FRAME;
+		state.progress_status_idx = PD_STATUS;
+		state.cancel_idx = PD_CANCEL;
+
+		HANDLE progress_dlg = g_info.DialogInit(g_info.ModuleNumber, -1, -1, DLG_WIDTH, DLG_HEIGHT, nullptr, items,
+												std::size(items), 0, FDLG_REGULARIDLE, ProgressDlgProc, (LONG_PTR)&state);
+		if (progress_dlg != INVALID_HANDLE_VALUE) {
+			g_info.DialogRun(progress_dlg);
+			g_info.DialogFree(progress_dlg);
+		}
+	}
+
 
 	Plugin::ConfigDlgResult Plugin::ShowConfigDlg()
 	{
@@ -205,7 +374,7 @@ namespace openwith
 		if (!platform_settings.empty()) {
 			add_separator();
 			for (size_t setting_idx = 0; setting_idx < platform_settings.size(); ++setting_idx) {
-				auto& setting = platform_settings[setting_idx];
+				const auto& setting = platform_settings[setting_idx];
 				int dlg_item_idx = add_checkbox(setting.display_name.c_str(), setting.value, setting.disabled);
 				setting_control_bindings.emplace_back(dlg_item_idx, setting_idx);
 			}
@@ -316,7 +485,7 @@ namespace openwith
 			return true;
 		}
 		wchar_t message[512] = {};
-		g_fsf.snprintf(message, std::size(message), GetMsg(MsgID::ConfirmLaunchMessage), file_count, app.name.c_str());
+		swprintf(message, std::size(message), GetMsg(MsgID::ConfirmLaunchMessage), file_count, app.name.c_str());
 		const wchar_t* items[] = { GetMsg(MsgID::ConfirmLaunchTitle), message };
 		int res = g_info.Message(g_info.ModuleNumber, FMSG_MB_YESNO, nullptr, items, std::size(items), 0);
 		return (res == 0);
