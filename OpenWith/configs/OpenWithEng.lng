@@ -1,7 +1,7 @@
 .Language=English,English
 
 "OpenWith"
-"OpenWith: Choose application"
+"OpenWith: choose application"
 "OpenWith for "
 " file(s)"
 
@@ -58,6 +58,10 @@
 "GoTo .d&esktop"
 "GoTo &TryExec"
 "GoTo s&ource"
+"OpenWith: identifying MIME types"
+"Processing file %zu of %zu..."
+"OpenWith: Discovering applications"
+"Matching, filtering and ranking..."
 
 "Name: "
 "Location: "
@@ -67,3 +71,6 @@
 
 "OpenWith: confirm launch"
 "Are you sure you want to open %zu files with application '%ls'?"
+
+"OpenWith: working"
+"Please, wait..."
