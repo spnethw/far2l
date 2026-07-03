@@ -4,10 +4,11 @@
 
 #include "AppProvider.hpp"
 #include "common.hpp"
-#include <string>
-#include <vector>
-#include <unordered_set>
+#include <atomic>
 #include <functional>
+#include <string>
+#include <unordered_set>
+#include <vector>
 
 class KeyFileReadHelper;
 class KeyFileHelper;
@@ -33,7 +34,7 @@ namespace openwith
 		struct MacFileProfile
 		{
 			std::string uti; // Contains the resolved UTI string, or an empty string if the file is inaccessible.
-			bool accessible; // true if file existed and UTI was gettable.
+			bool accessible; // true if the file was accessible and its UTI was successfully resolved.
 
 			bool operator==(const MacFileProfile& other) const
 			{
@@ -53,7 +54,7 @@ namespace openwith
 			};
 		};
 
-		// Caches all unique MacFileProfile objects collected during the last GetAppCandidates call.
+		// Accumulates unique file profiles processed during the last GetAppCandidates() call, used later by GetMimeTypes().
 		std::unordered_set<MacFileProfile, MacFileProfile::Hash> _last_uti_profiles;
 	};
 } // namespace openwith
