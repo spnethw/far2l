@@ -1,4 +1,3 @@
-// New version of "MacOSAppProvider.mm": after refactor search/ranking/sort algos
 #if defined(__APPLE__)
 
 #include <AvailabilityMacros.h>
@@ -146,24 +145,25 @@ namespace openwith
 				constexpr int DEFAULT_APP_SCORE = 10;
 				constexpr int OTHER_APP_SCORE   = 1;
 
-				struct UtiAppList
+				struct AppListForUti
 				{
 					std::optional<AppBundleMetadata> default_app_metadata;
 					std::vector<AppBundleMetadata> compatible_apps_metadata;
 				};
-				std::unordered_map<std::string, UtiAppList> uti_to_apps_cache;
+				std::unordered_map<std::string, AppListForUti> uti_to_apps_cache;
 
-				std::unordered_set<std::wstring> processed_app_ids;
+				std::unordered_set<std::wstring> app_ids_seen_for_file;
 
 				ReportProgress({GetMsg(MsgID::DiscoveringApplications), nullptr});
-
-				const size_t total = filepaths.size();
-				size_t processed = 0;
+				const size_t files_total = filepaths.size();
+				size_t files_processed = 0;
 
 				// Iterate through each selected file to find and score compatible applications.
 				for (const auto& filepath : filepaths) {
+					app_ids_seen_for_file.clear();
+
 					wchar_t status_buf[256];
-					swprintf(status_buf, std::size(status_buf), GetMsg(MsgID::ProcessingFiles), ++processed, total);
+					swprintf(status_buf, std::size(status_buf), GetMsg(MsgID::ProcessingFiles), ++files_processed, files_total);
 					ReportProgress({nullptr, status_buf});
 					CheckCancellation();
 
@@ -173,8 +173,8 @@ namespace openwith
 					{
 						AutoreleasePoolGuard inner_pool_guard;
 #endif
-						NSString *path = [NSString stringWithUTF8String:StrWide2MB(filepath).c_str()];
-						NSURL *file_url = [NSURL fileURLWithPath:path];
+						NSString *ns_filepath = [NSString stringWithUTF8String:StrWide2MB(filepath).c_str()];
+						NSURL *file_url = [NSURL fileURLWithPath:ns_filepath];
 
 						if (!file_url) {
 							_last_uti_profiles.insert({ std::string(""), false });
@@ -199,7 +199,7 @@ namespace openwith
 						// Fetch application lists from local UTI cache, falling back to system query on miss.
 						auto cache_it = uti_to_apps_cache.find(uti_std_str);
 						if (cache_it == uti_to_apps_cache.end()) {
-							UtiAppList new_cache_entry;
+							AppListForUti new_cache_entry;
 
 							NSURL* default_app_url = [[NSWorkspace sharedWorkspace] URLForApplicationToOpenURL:file_url];
 							if (default_app_url) {
@@ -236,26 +236,27 @@ namespace openwith
 							cache_it = uti_to_apps_cache.insert({uti_std_str, std::move(new_cache_entry)}).first;
 						}
 
-						const UtiAppList& uti_app_list = cache_it->second;
-						processed_app_ids.clear();
+						const AppListForUti& app_list_for_uti = cache_it->second;
 
-						auto process_app = [&](const AppBundleMetadata& metadata, int score_to_add) {
-							if (!processed_app_ids.insert(metadata.id).second) return;
-
-							auto [it, inserted] = candidates_pool.try_emplace(metadata.id);
-							if (inserted) {
-								it->second.metadata = &metadata;
+						auto register_app = [&](const AppBundleMetadata& metadata, int score_weight) {
+							if (!app_ids_seen_for_file.insert(metadata.id).second) {
+								return;
 							}
-							it->second.score += score_to_add;
-							it->second.match_count++;
+							auto [it, inserted] = candidates_pool.try_emplace(metadata.id);
+							RankedCandidate& ranked_candidate = it->second;
+							if (inserted) {
+								ranked_candidate.metadata = &metadata;
+							}
+							ranked_candidate.score += score_weight;
+							ranked_candidate.match_count++;
 						};
 
-						if (uti_app_list.default_app_metadata) {
-							process_app(*uti_app_list.default_app_metadata, DEFAULT_APP_SCORE);
+						if (app_list_for_uti.default_app_metadata) {
+							register_app(*app_list_for_uti.default_app_metadata, DEFAULT_APP_SCORE);
 						}
 
-						for (const auto& metadata : uti_app_list.compatible_apps_metadata) {
-							process_app(metadata, OTHER_APP_SCORE);
+						for (const auto& metadata : app_list_for_uti.compatible_apps_metadata) {
+							register_app(metadata, OTHER_APP_SCORE);
 						}
 
 #ifdef __clang__
@@ -270,11 +271,10 @@ namespace openwith
 				// --- Part 2: Filtering and sorting ---
 
 				std::vector<RankedCandidate> ranked_finalists;
-				const size_t num_files = filepaths.size();
 
 				// Filter the list, keeping only applications that can open every selected file.
 				for (auto& [app_id, ranked_candidate] : candidates_pool) {
-					if (ranked_candidate.match_count == num_files) {
+					if (ranked_candidate.match_count == files_total) {
 						ranked_finalists.push_back(std::move(ranked_candidate));
 					}
 				}
@@ -288,9 +288,9 @@ namespace openwith
 					out_candidates.reserve(ranked_finalists.size());
 
 					// Count name occurrences to identify duplicates that need disambiguation.
-					std::unordered_map<std::wstring_view, int> name_counts;
+					std::unordered_map<std::wstring_view, int> app_name_frequencies;
 					for (const auto& ranked_finalist : ranked_finalists) {
-						name_counts[ranked_finalist.metadata->name]++;
+						app_name_frequencies[ranked_finalist.metadata->name]++;
 					}
 
 					// Build the final list in the output format.
@@ -302,7 +302,7 @@ namespace openwith
 						out_candidate.multi_file_aware = true;
 
 						// If an app name is duplicated, append its version string to make it unique in the UI.
-						if (name_counts[ranked_finalist.metadata->name] > 1 && !ranked_finalist.metadata->version_string.empty()) {
+						if (app_name_frequencies[ranked_finalist.metadata->name] > 1 && !ranked_finalist.metadata->version_string.empty()) {
 							out_candidate.name += L" (" + ranked_finalist.metadata->version_string + L")";
 						}
 						out_candidates.push_back(out_candidate);
