@@ -56,27 +56,27 @@ namespace
 		return std::string([[url path] UTF8String]);
 	}
 
-	AppBundleMetadata ParseAppBundleMetadata(NSURL *appURL)
+	AppBundleMetadata ParseAppBundleMetadata(NSURL *app_url)
 	{
 		AppBundleMetadata metadata;
-		NSBundle *bundle = [NSBundle bundleWithURL:appURL];
-		NSDictionary *infoDict = [bundle infoDictionary];
+		NSBundle *bundle = [NSBundle bundleWithURL:app_url];
+		NSDictionary *info_dict = [bundle infoDictionary];
 
 		// Prefer the display name, but fall back to the filename if it's not available.
-		NSString *bundleName = [infoDict objectForKey:@"CFBundleDisplayName"] ?: [infoDict objectForKey:@"CFBundleName"];
+		NSString *bundle_name = [info_dict objectForKey:@"CFBundleDisplayName"] ?: [info_dict objectForKey:@"CFBundleName"];
 
 		// Get version strings. Prefer the short, user-facing version.
-		NSString *bundleShortVersion = [infoDict objectForKey:@"CFBundleShortVersionString"];
-		NSString *bundleVersion = [infoDict objectForKey:@"CFBundleVersion"];
+		NSString *bundle_short_version = [info_dict objectForKey:@"CFBundleShortVersionString"];
+		NSString *bundle_version = [info_dict objectForKey:@"CFBundleVersion"];
 
-		metadata.name = StrMB2Wide(bundleName ? [bundleName UTF8String] : NSURLToPath(appURL));
-		metadata.id = StrMB2Wide(NSURLToPath(appURL));
+		metadata.name = StrMB2Wide(bundle_name ? [bundle_name UTF8String] : NSURLToPath(app_url));
+		metadata.id = StrMB2Wide(NSURLToPath(app_url));
 
 		// Store the most descriptive version string available for disambiguation.
-		if (bundleShortVersion) {
-			metadata.version_string = StrMB2Wide([bundleShortVersion UTF8String]);
-		} else if (bundleVersion) {
-			metadata.version_string = StrMB2Wide([bundleVersion UTF8String]);
+		if (bundle_short_version) {
+			metadata.version_string = StrMB2Wide([bundle_short_version UTF8String]);
+		} else if (bundle_version) {
+			metadata.version_string = StrMB2Wide([bundle_version UTF8String]);
 		}
 
 		return metadata;
@@ -170,9 +170,9 @@ namespace openwith
 						AutoreleasePoolGuard inner_pool_guard;
 #endif
 						NSString *path = [NSString stringWithUTF8String:StrWide2MB(filepath).c_str()];
-						NSURL *fileURL = [NSURL fileURLWithPath:path];
+						NSURL *file_url = [NSURL fileURLWithPath:path];
 
-						if (!fileURL) {
+						if (!file_url) {
 							_last_uti_profiles.insert({ std::string(""), false });
 							continue;
 						}
@@ -180,55 +180,53 @@ namespace openwith
 						// Determine the file's UTI to use it as a cache key.
 						NSString *uti = nil;
 						NSError *error = nil;
-						[fileURL getResourceValue:&uti forKey:NSURLTypeIdentifierKey error:&error];
-
-						const char* uti_cstr = (uti != nil) ? [uti UTF8String] : "";
-						std::string uti_std_str = uti_cstr ? uti_cstr : "";
-
-						if (error || !uti) {
-							// Failed to resolve UTI (e.g., file not found, lack of permissions); record as inaccessible.
-							_last_uti_profiles.insert({ uti_std_str, false });
+						BOOL success = [file_url getResourceValue:&uti forKey:NSURLTypeIdentifierKey error:&error];
+						if (!success) {
+						    _last_uti_profiles.insert({ "", false });
+						    continue;
+						}
+						if (!uti) {
+							_last_uti_profiles.insert({ "", true });
 							continue;
 						}
-
-						// Record the profile to resolve its MIME type later if requested.
-						_last_uti_profiles.insert({ uti_std_str, true });
+						auto uti_std_str = std::string([uti UTF8String]);
+						_last_uti_profiles.insert({uti_std_str, true});
 
 						// Fetch application lists from local UTI cache, falling back to system query on miss.
 						auto cache_it = uti_to_apps_cache.find(uti_std_str);
 						if (cache_it == uti_to_apps_cache.end()) {
 							UtiAppList new_cache_entry;
 
-							NSURL* defaultAppURL = [[NSWorkspace sharedWorkspace] URLForApplicationToOpenURL:fileURL];
-							if (defaultAppURL) {
-								new_cache_entry.default_app_metadata = ParseAppBundleMetadata(defaultAppURL);
+							NSURL* default_app_url = [[NSWorkspace sharedWorkspace] URLForApplicationToOpenURL:file_url];
+							if (default_app_url) {
+								new_cache_entry.default_app_metadata = ParseAppBundleMetadata(default_app_url);
 							}
 
 #if __has_feature(objc_generics)
-							NSArray<NSURL *>* allAppURLs;
+							NSArray<NSURL *>* all_app_urls;
 #else
-							NSArray *allAppURLs;
+							NSArray *all_app_urls;
 #endif
 
 #if MAC_OS_X_VERSION_MAX_ALLOWED >= 110000
-							allAppURLs = [[NSWorkspace sharedWorkspace] URLsForApplicationsToOpenURL:fileURL];
+							all_app_urls = [[NSWorkspace sharedWorkspace] URLsForApplicationsToOpenURL:file_url];
 #elif __has_feature(objc_array_literals)
-							allAppURLs = defaultAppURL ? @[defaultAppURL] : @[];
+							all_app_urls = default_app_url ? @[default_app_url] : @[];
 #else
-							if (defaultAppURL) {
-								allAppURLs = [NSArray arrayWithObject:defaultAppURL];
+							if (default_app_url) {
+								all_app_urls = [NSArray arrayWithObject:default_app_url];
 							} else {
-								allAppURLs = [NSArray array];
+								all_app_urls = [NSArray array];
 							}
 #endif
 
 #ifdef __clang__
-							for (NSURL *appURL in allAppURLs) {
+							for (NSURL *app_url in all_app_urls) {
 #else
-							for (NSUInteger i = 0; i < [allAppURLs count]; i++) {
-								NSURL *appURL = [allAppURLs objectAtIndex:i];
+							for (NSUInteger i = 0; i < [all_app_urls count]; i++) {
+								NSURL *app_url = [all_app_urls objectAtIndex:i];
 #endif
-								new_cache_entry.compatible_apps_metadata.push_back(ParseAppBundleMetadata(appURL));
+								new_cache_entry.compatible_apps_metadata.push_back(ParseAppBundleMetadata(app_url));
 							}
 
 							cache_it = uti_to_apps_cache.insert({uti_std_str, std::move(new_cache_entry)}).first;
@@ -348,41 +346,56 @@ namespace openwith
 		return {cmd};
 	}
 
+
 	// Fetches detailed information about a candidate application from its bundle.
 	std::vector<Field> MacOSAppProvider::GetCandidateDetails(const CandidateInfo& candidate)
 	{
 		std::vector<Field> details;
-		NSString *nsPath = [NSString stringWithUTF8String:StrWide2MB(candidate.id).c_str()];
-		NSURL *appURL = [NSURL fileURLWithPath:nsPath];
-		if (!appURL) return details;
+#ifdef __clang__
+		@autoreleasepool {
+#else
+		{
+			AutoreleasePoolGuard pool_guard;
+#endif
+			NSString *ns_path = [NSString stringWithUTF8String:StrWide2MB(candidate.id).c_str()];
+			NSURL *app_url = [NSURL fileURLWithPath:ns_path];
+			if (!app_url) {
+				return details;
+			}
 
-		NSBundle *bundle = [NSBundle bundleWithURL:appURL];
-		if (!bundle) return details;
+			NSBundle *bundle = [NSBundle bundleWithURL:app_url];
+			if (!bundle) {
+				return details;
+			}
 
-		NSDictionary *infoDict = [bundle infoDictionary];
+			NSDictionary *info_dict = [bundle infoDictionary];
 
-		NSString *appName = [infoDict objectForKey:@"CFBundleDisplayName"] ?: [infoDict objectForKey:@"CFBundleName"];
-		if (appName) {
-			details.push_back({GetMsg(MsgID::AppName), StrMB2Wide([appName UTF8String])});
-		}
+			NSString *app_name = [info_dict objectForKey:@"CFBundleDisplayName"] ?: [info_dict objectForKey:@"CFBundleName"];
+			if (app_name) {
+				details.push_back({GetMsg(MsgID::AppName), StrMB2Wide([app_name UTF8String])});
+			}
 
-		details.push_back({GetMsg(MsgID::FullPath), candidate.id});
+			details.push_back({GetMsg(MsgID::FullPath), candidate.id});
 
-		NSString *execName = [infoDict objectForKey:@"CFBundleExecutable"];
-		if (execName) {
-			details.push_back({GetMsg(MsgID::ExecutableFile), StrMB2Wide([execName UTF8String])});
-		}
+			NSString *exec_name = [info_dict objectForKey:@"CFBundleExecutable"];
+			if (exec_name) {
+				details.push_back({GetMsg(MsgID::ExecutableFile), StrMB2Wide([exec_name UTF8String])});
+			}
 
-		NSString *bundleShortVersion = [infoDict objectForKey:@"CFBundleShortVersionString"];
-		if (bundleShortVersion) {
-			details.push_back({GetMsg(MsgID::Version), StrMB2Wide([bundleShortVersion UTF8String])});
-		}
+			NSString *bundle_short_version = [info_dict objectForKey:@"CFBundleShortVersionString"];
+			if (bundle_short_version) {
+				details.push_back({GetMsg(MsgID::Version), StrMB2Wide([bundle_short_version UTF8String])});
+			}
 
-		NSString *bundleVersion = [infoDict objectForKey:@"CFBundleVersion"];
-		if (bundleVersion) {
-			details.push_back({GetMsg(MsgID::BundleVersion), StrMB2Wide([bundleVersion UTF8String])});
-		}
-
+			NSString *bundle_version = [info_dict objectForKey:@"CFBundleVersion"];
+			if (bundle_version) {
+				details.push_back({GetMsg(MsgID::BundleVersion), StrMB2Wide([bundle_version UTF8String])});
+			}
+#ifdef __clang__
+		} // end of @autoreleasepool
+#else
+		} // end of AutoreleasePoolGuard
+#endif
 		return details;
 	}
 
@@ -394,51 +407,61 @@ namespace openwith
 		std::unordered_set<std::wstring> unique_profile_strings;
 		unique_profile_strings.reserve(_last_uti_profiles.size());
 
-		for (const auto& profile : _last_uti_profiles) {
-			if (!profile.accessible) {
-				unique_profile_strings.insert(L"(inaccessible)");
-				continue;
-			}
-
-			// File was accessible;
-			// convert its recorded UTI to a MIME type.
-			std::wstring out_mime_wstr;
-			NSString *uti = [NSString stringWithUTF8String:profile.uti.c_str()];
-
-			// Use the appropriate API based on the target macOS version.
-#if MAC_OS_X_VERSION_MAX_ALLOWED >= 110000 // UTType is available on macOS 11.0+
-			// Modern approach for macOS 11.0 and later, converting a UTI to a MIME type.
-			UTType *type = [UTType typeWithIdentifier:uti];
-			if (type) {
-				NSString *ns_mime_str = type.preferredMIMEType;
-				if (ns_mime_str) out_mime_wstr = StrMB2Wide([ns_mime_str UTF8String]);
-			}
+#ifdef __clang__
+		@autoreleasepool {
 #else
-			// Legacy approach for older macOS versions.
+		{
+			AutoreleasePoolGuard pool_guard;
+#endif
+			for (const auto& profile : _last_uti_profiles) {
+				if (!profile.accessible) {
+					unique_profile_strings.insert(L"(inaccessible)");
+					continue;
+				}
+
+				// File was accessible; convert its recorded UTI to a MIME type.
+				std::wstring out_mime_wstr;
+				NSString *uti = [NSString stringWithUTF8String:profile.uti.c_str()];
+
+				// Use the appropriate API based on the target macOS version.
+#if MAC_OS_X_VERSION_MAX_ALLOWED >= 110000 // UTType is available on macOS 11.0+
+				// Modern approach for macOS 11.0 and later, converting a UTI to a MIME type.
+				UTType *type = [UTType typeWithIdentifier:uti];
+				if (type) {
+					NSString *ns_mime_str = type.preferredMIMEType;
+					if (ns_mime_str) out_mime_wstr = StrMB2Wide([ns_mime_str UTF8String]);
+				}
+#else
+				// Legacy approach for older macOS versions.
 #if __has_feature(objc_arc)
-			CFStringRef cf_mime_tag = UTTypeCopyPreferredTagWithClass((__bridge CFStringRef)uti,
-																   kUTTagClassMIMEType);
-			if (cf_mime_tag) {
-				// Transfer ownership of the CFStringRef to ARC.
-				NSString *ns_mime_str = (__bridge_transfer NSString *)cf_mime_tag;
-				out_mime_wstr = StrMB2Wide([ns_mime_str UTF8String]);
-			}
+				CFStringRef cf_mime_tag = UTTypeCopyPreferredTagWithClass((__bridge CFStringRef)uti,
+																	   kUTTagClassMIMEType);
+				if (cf_mime_tag) {
+					// Transfer ownership of the CFStringRef to ARC.
+					NSString *ns_mime_str = (__bridge_transfer NSString *)cf_mime_tag;
+					out_mime_wstr = StrMB2Wide([ns_mime_str UTF8String]);
+				}
 #else // Manual Retain-Release (MRC) mode or GCC.
-			CFStringRef cf_mime_tag = UTTypeCopyPreferredTagWithClass((CFStringRef)uti,
-																   kUTTagClassMIMEType);
-			if (cf_mime_tag) {
-				NSString *ns_mime_str = [(NSString *)cf_mime_tag autorelease];
-				out_mime_wstr = StrMB2Wide([ns_mime_str UTF8String]);
-			}
+				CFStringRef cf_mime_tag = UTTypeCopyPreferredTagWithClass((CFStringRef)uti,
+																	   kUTTagClassMIMEType);
+				if (cf_mime_tag) {
+					NSString *ns_mime_str = [(NSString *)cf_mime_tag autorelease];
+					out_mime_wstr = StrMB2Wide([ns_mime_str UTF8String]);
+				}
 #endif
 #endif
 
-			if (out_mime_wstr.empty()) {
-				unique_profile_strings.insert(L"(none)");
-			} else {
-				unique_profile_strings.insert(L"(" + out_mime_wstr + L")");
+				if (out_mime_wstr.empty()) {
+					unique_profile_strings.insert(L"(none)");
+				} else {
+					unique_profile_strings.insert(L"(" + out_mime_wstr + L")");
+				}
 			}
-		}
+#ifdef __clang__
+		} // end of @autoreleasepool
+#else
+		} // end of AutoreleasePoolGuard
+#endif
 
 		std::vector<std::wstring> result_vec(unique_profile_strings.begin(), unique_profile_strings.end());
 		return result_vec;
