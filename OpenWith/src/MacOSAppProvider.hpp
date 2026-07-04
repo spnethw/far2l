@@ -54,6 +54,8 @@ namespace openwith
 			};
 		};
 
+		static std::wstring EscapeForShell(const std::wstring& arg);
+
 		// Accumulates unique file profiles processed during the last GetAppCandidates() call, used later by GetMimeTypes().
 		std::unordered_set<MacFileProfile, MacFileProfile::Hash> _last_uti_profiles;
 	};
