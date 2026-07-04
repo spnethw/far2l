@@ -54,37 +54,6 @@ namespace openwith
 			};
 		};
 
-
-		struct AppBundleMetadata
-		{
-			std::wstring name;
-			std::wstring id;             // The full path to the .app bundle, used as a unique identifier.
-			std::wstring version_string; // Used for disambiguation if names conflict.
-		};
-
-
-		struct RankedCandidate
-		{
-			const AppBundleMetadata* metadata = nullptr;
-			int score = 0;
-			int match_count = 0;
-			bool operator<(const RankedCandidate& other) const
-			{
-				if (score != other.score) return score > other.score;
-				return metadata->name < other.metadata->name;
-			}
-		};
-
-
-		struct AppListForUti
-		{
-			std::optional<AppBundleMetadata> default_app_metadata;
-			std::vector<AppBundleMetadata> compatible_apps_metadata;
-		};
-
-
-		static std::wstring EscapeForShell(const std::wstring& arg);
-
 		// Accumulates unique file profiles processed during the last GetAppCandidates() call, used later by GetMimeTypes().
 		std::unordered_set<MacFileProfile, MacFileProfile::Hash> _last_uti_profiles;
 	};
