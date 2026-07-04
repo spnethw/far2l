@@ -144,14 +144,12 @@ namespace openwith
 				constexpr int DEFAULT_APP_SCORE = 10;
 				constexpr int OTHER_APP_SCORE   = 1;
 
-				// A cache to store the list of applications for a given Uniform Type Identifier (UTI).
-				// This dramatically speeds up processing when many files of the same type are selected.
-				struct CachedAppList
+				struct UtiAppList
 				{
 					std::optional<AppBundleMetadata> default_app_metadata;
 					std::vector<AppBundleMetadata> compatible_apps_metadata;
 				};
-				std::unordered_map<std::string, CachedAppList> uti_to_apps_cache;
+				std::unordered_map<std::string, UtiAppList> uti_to_apps_cache;
 
 				ReportProgress({GetMsg(MsgID::DiscoveringApplications), nullptr});
 
@@ -199,11 +197,11 @@ namespace openwith
 						// Fetch application lists from local UTI cache, falling back to system query on miss.
 						auto cache_it = uti_to_apps_cache.find(uti_std_str);
 						if (cache_it == uti_to_apps_cache.end()) {
-							CachedAppList entry;
+							UtiAppList new_cache_entry;
 
 							NSURL* defaultAppURL = [[NSWorkspace sharedWorkspace] URLForApplicationToOpenURL:fileURL];
 							if (defaultAppURL) {
-								entry.default_app_metadata = ParseAppBundleMetadata(defaultAppURL);
+								new_cache_entry.default_app_metadata = ParseAppBundleMetadata(defaultAppURL);
 							}
 
 #if __has_feature(objc_generics)
@@ -230,37 +228,39 @@ namespace openwith
 							for (NSUInteger i = 0; i < [allAppURLs count]; i++) {
 								NSURL *appURL = [allAppURLs objectAtIndex:i];
 #endif
-								entry.compatible_apps_metadata.push_back(ParseAppBundleMetadata(appURL));
+								new_cache_entry.compatible_apps_metadata.push_back(ParseAppBundleMetadata(appURL));
 							}
 
-							cache_it = uti_to_apps_cache.insert({uti_std_str, std::move(entry)}).first;
+							cache_it = uti_to_apps_cache.insert({uti_std_str, std::move(new_cache_entry)}).first;
 						}
 
 						std::unordered_set<std::wstring> processed_app_ids;
 
-						// Process the default application.
-						if (cache_it->second.default_app_metadata) {
-							const auto& metadata = *cache_it->second.default_app_metadata;
+						const UtiAppList& uti_app_list = cache_it->second;
+
+						if (uti_app_list.default_app_metadata) {
+							const auto& metadata = *uti_app_list.default_app_metadata;
 							auto [it, inserted] = candidates_pool.try_emplace(metadata.id);
+							RankedCandidate& ranked_candidate = it->second;
 							if (inserted) {
-								it->second.metadata = metadata;
+								ranked_candidate.metadata = metadata;
 							}
-							it->second.score += DEFAULT_APP_SCORE;
-							it->second.match_count++;
+							ranked_candidate.score += DEFAULT_APP_SCORE;
+							ranked_candidate.match_count++;
 							processed_app_ids.insert(metadata.id);
 						}
 
-						// Process all other compatible applications.
-						for (const auto& metadata : cache_it->second.compatible_apps_metadata) {
+						for (const auto& metadata : uti_app_list.compatible_apps_metadata) {
 							if (processed_app_ids.count(metadata.id)) {
 								continue;
 							}
 							auto [it, inserted] = candidates_pool.try_emplace(metadata.id);
+							RankedCandidate& ranked_candidate = it->second;
 							if (inserted) {
-								it->second.metadata = metadata;
+								ranked_candidate.metadata = metadata;
 							}
-							it->second.score += OTHER_APP_SCORE;
-							it->second.match_count++;
+							ranked_candidate.score += OTHER_APP_SCORE;
+							ranked_candidate.match_count++;
 							processed_app_ids.insert(metadata.id);
 						}
 
@@ -279,9 +279,9 @@ namespace openwith
 				const size_t num_files = filepaths.size();
 
 				// Filter the list, keeping only applications that can open every selected file.
-				for (auto& [app_id, acc] : candidates_pool) {
-					if (acc.match_count == num_files) {
-						ranked_finalists.push_back(std::move(acc));
+				for (auto& [app_id, ranked_candidate] : candidates_pool) {
+					if (ranked_candidate.match_count == num_files) {
+						ranked_finalists.push_back(std::move(ranked_candidate));
 					}
 				}
 
