@@ -129,10 +129,18 @@ namespace openwith
 			try {
 				// --- Part 1: Candidate discovery and scoring with caching ---
 
-				std::unordered_map<std::wstring, AppBundleMetadata> all_apps_metadata;
-				std::unordered_map<std::wstring, int> app_scores;
-				std::unordered_map<std::wstring, int> app_supported_file_count; // How many of the selected files each application can open.
-
+				struct RankedCandidate
+				{
+					AppBundleMetadata metadata;
+					int score = 0;
+					int match_count = 0;
+					bool operator<(const RankedCandidate& other) const
+					{
+						if (score != other.score) return score > other.score;
+						return metadata.name < other.metadata.name;
+					}
+				};
+				std::unordered_map<std::wstring, RankedCandidate> candidates_pool;
 				constexpr int DEFAULT_APP_SCORE = 10;
 				constexpr int OTHER_APP_SCORE   = 1;
 
@@ -141,9 +149,9 @@ namespace openwith
 				struct CachedAppList
 				{
 					std::optional<AppBundleMetadata> default_app_metadata;
-					std::vector<AppBundleMetadata> all_apps_metadata;
+					std::vector<AppBundleMetadata> compatible_apps_metadata;
 				};
-				std::unordered_map<std::string, CachedAppList> uti_cache;
+				std::unordered_map<std::string, CachedAppList> uti_to_apps_cache;
 
 				ReportProgress({GetMsg(MsgID::DiscoveringApplications), nullptr});
 
@@ -189,8 +197,8 @@ namespace openwith
 						_last_uti_profiles.insert({ uti_std_str, true });
 
 						// Fetch application lists from local UTI cache, falling back to system query on miss.
-						auto cache_it = uti_cache.find(uti_std_str);
-						if (cache_it == uti_cache.end()) {
+						auto cache_it = uti_to_apps_cache.find(uti_std_str);
+						if (cache_it == uti_to_apps_cache.end()) {
 							CachedAppList entry;
 
 							NSURL* defaultAppURL = [[NSWorkspace sharedWorkspace] URLForApplicationToOpenURL:fileURL];
@@ -222,10 +230,10 @@ namespace openwith
 							for (NSUInteger i = 0; i < [allAppURLs count]; i++) {
 								NSURL *appURL = [allAppURLs objectAtIndex:i];
 #endif
-								entry.all_apps_metadata.push_back(ParseAppBundleMetadata(appURL));
+								entry.compatible_apps_metadata.push_back(ParseAppBundleMetadata(appURL));
 							}
 
-							cache_it = uti_cache.insert({uti_std_str, std::move(entry)}).first;
+							cache_it = uti_to_apps_cache.insert({uti_std_str, std::move(entry)}).first;
 						}
 
 						std::unordered_set<std::wstring> processed_app_ids;
@@ -233,21 +241,27 @@ namespace openwith
 						// Process the default application.
 						if (cache_it->second.default_app_metadata) {
 							const auto& metadata = *cache_it->second.default_app_metadata;
-							all_apps_metadata.try_emplace(metadata.id, metadata);
-							app_scores[metadata.id] += DEFAULT_APP_SCORE;
+							auto [it, inserted] = candidates_pool.try_emplace(metadata.id);
+							if (inserted) {
+								it->second.metadata = metadata;
+							}
+							it->second.score += DEFAULT_APP_SCORE;
+							it->second.match_count++;
 							processed_app_ids.insert(metadata.id);
-							app_supported_file_count[metadata.id]++;
 						}
 
 						// Process all other compatible applications.
-						for (const auto& metadata : cache_it->second.all_apps_metadata) {
+						for (const auto& metadata : cache_it->second.compatible_apps_metadata) {
 							if (processed_app_ids.count(metadata.id)) {
 								continue;
 							}
-							all_apps_metadata.try_emplace(metadata.id, metadata);
-							app_scores[metadata.id] += OTHER_APP_SCORE;
+							auto [it, inserted] = candidates_pool.try_emplace(metadata.id);
+							if (inserted) {
+								it->second.metadata = metadata;
+							}
+							it->second.score += OTHER_APP_SCORE;
+							it->second.match_count++;
 							processed_app_ids.insert(metadata.id);
-							app_supported_file_count[metadata.id]++;
 						}
 
 #ifdef __clang__
@@ -261,24 +275,13 @@ namespace openwith
 
 				// --- Part 2: Filtering and sorting ---
 
-				struct RankedCandidate
-				{
-					AppBundleMetadata bundle_metadata;
-					int score;
-					bool operator<(const RankedCandidate& other) const
-					{
-						if (score != other.score) return score > other.score;
-						return bundle_metadata.name < other.bundle_metadata.name;
-					}
-				};
-
 				std::vector<RankedCandidate> ranked_finalists;
 				const size_t num_files = filepaths.size();
 
 				// Filter the list, keeping only applications that can open every selected file.
-				for (const auto& [app_id, count] : app_supported_file_count) {
-					if (count == num_files) {
-						ranked_finalists.push_back({ all_apps_metadata.at(app_id), app_scores.at(app_id) });
+				for (auto& [app_id, acc] : candidates_pool) {
+					if (acc.match_count == num_files) {
+						ranked_finalists.push_back(std::move(acc));
 					}
 				}
 
@@ -293,20 +296,20 @@ namespace openwith
 					// Count name occurrences to identify duplicates that need disambiguation.
 					std::unordered_map<std::wstring, int> name_counts;
 					for (const auto& ranked_finalist : ranked_finalists) {
-						name_counts[ranked_finalist.bundle_metadata.name]++;
+						name_counts[ranked_finalist.metadata.name]++;
 					}
 
 					// Build the final list in the output format.
 					for (const auto& ranked_finalist : ranked_finalists) {
 						CandidateInfo out_candidate;
-						out_candidate.id = ranked_finalist.bundle_metadata.id;
+						out_candidate.id = ranked_finalist.metadata.id;
 						out_candidate.terminal = false;
-						out_candidate.name = ranked_finalist.bundle_metadata.name;
+						out_candidate.name = ranked_finalist.metadata.name;
 						out_candidate.multi_file_aware = true;
 
 						// If an app name is duplicated, append its version string to make it unique in the UI.
-						if (name_counts[ranked_finalist.bundle_metadata.name] > 1 && !ranked_finalist.bundle_metadata.version_string.empty()) {
-							out_candidate.name += L" (" + ranked_finalist.bundle_metadata.version_string + L")";
+						if (name_counts[ranked_finalist.metadata.name] > 1 && !ranked_finalist.metadata.version_string.empty()) {
+							out_candidate.name += L" (" + ranked_finalist.metadata.version_string + L")";
 						}
 						out_candidates.push_back(out_candidate);
 					}
@@ -397,8 +400,9 @@ namespace openwith
 				continue;
 			}
 
-			// File was accessible; convert its recorded UTI to a MIME type.
-			std::wstring result_mime;
+			// File was accessible;
+			// convert its recorded UTI to a MIME type.
+			std::wstring out_mime_wstr;
 			NSString *uti = [NSString stringWithUTF8String:profile.uti.c_str()];
 
 			// Use the appropriate API based on the target macOS version.
@@ -406,33 +410,33 @@ namespace openwith
 			// Modern approach for macOS 11.0 and later, converting a UTI to a MIME type.
 			UTType *type = [UTType typeWithIdentifier:uti];
 			if (type) {
-				NSString *mimeStr = type.preferredMIMEType;
-				if (mimeStr) result_mime = StrMB2Wide([mimeStr UTF8String]);
+				NSString *ns_mime_str = type.preferredMIMEType;
+				if (ns_mime_str) out_mime_wstr = StrMB2Wide([ns_mime_str UTF8String]);
 			}
 #else
 			// Legacy approach for older macOS versions.
 #if __has_feature(objc_arc)
-			CFStringRef mimeType = UTTypeCopyPreferredTagWithClass((__bridge CFStringRef)uti,
+			CFStringRef cf_mime_tag = UTTypeCopyPreferredTagWithClass((__bridge CFStringRef)uti,
 																   kUTTagClassMIMEType);
-			if (mimeType) {
+			if (cf_mime_tag) {
 				// Transfer ownership of the CFStringRef to ARC.
-				NSString *mimeStr = (__bridge_transfer NSString *)mimeType;
-				result_mime = StrMB2Wide([mimeStr UTF8String]);
+				NSString *ns_mime_str = (__bridge_transfer NSString *)cf_mime_tag;
+				out_mime_wstr = StrMB2Wide([ns_mime_str UTF8String]);
 			}
 #else // Manual Retain-Release (MRC) mode or GCC.
-			CFStringRef mimeType = UTTypeCopyPreferredTagWithClass((CFStringRef)uti,
+			CFStringRef cf_mime_tag = UTTypeCopyPreferredTagWithClass((CFStringRef)uti,
 																   kUTTagClassMIMEType);
-			if (mimeType) {
-				NSString *mimeStr = [(NSString *)mimeType autorelease];
-				result_mime = StrMB2Wide([mimeStr UTF8String]);
+			if (cf_mime_tag) {
+				NSString *ns_mime_str = [(NSString *)cf_mime_tag autorelease];
+				out_mime_wstr = StrMB2Wide([ns_mime_str UTF8String]);
 			}
 #endif
 #endif
 
-			if (result_mime.empty()) {
+			if (out_mime_wstr.empty()) {
 				unique_profile_strings.insert(L"(none)");
 			} else {
-				unique_profile_strings.insert(L"(" + result_mime + L")");
+				unique_profile_strings.insert(L"(" + out_mime_wstr + L")");
 			}
 		}
 
