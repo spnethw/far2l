@@ -44,20 +44,13 @@ namespace
 	};
 #endif
 
-	struct AppBundleMetadata
-	{
-		std::wstring name;
-		std::wstring id;             // The full path to the .app bundle, used as a unique identifier.
-		std::wstring version_string; // Used for disambiguation if names conflict.
-	};
-
 	std::string NSURLToPath(NSURL *url)
 	{
 		if (!url) return {};
 		return std::string([[url path] UTF8String]);
 	}
 
-	AppBundleMetadata ParseAppBundleMetadata(NSURL *app_url)
+	openwith::MacOSAppProvider::AppBundleMetadata ParseAppBundleMetadata(NSURL *app_url)
 	{
 		AppBundleMetadata metadata;
 		NSBundle *bundle = [NSBundle bundleWithURL:app_url];
@@ -81,21 +74,6 @@ namespace
 		}
 
 		return metadata;
-	}
-
-	std::wstring EscapeForShell(const std::wstring& arg)
-	{
-		std::wstring out;
-		out.push_back(L'\'');
-		for (wchar_t c : arg) {
-			if (c == L'\'') {
-				out.append(L"'\\''");
-			} else {
-				out.push_back(c);
-			}
-		}
-		out.push_back(L'\'');
-		return out;
 	}
 }
 
@@ -130,26 +108,10 @@ namespace openwith
 			try {
 				// --- Part 1: Candidate discovery and scoring with caching ---
 
-				struct RankedCandidate
-				{
-					const AppBundleMetadata* metadata = nullptr;
-					int score = 0;
-					int match_count = 0;
-					bool operator<(const RankedCandidate& other) const
-					{
-						if (score != other.score) return score > other.score;
-						return metadata->name < other.metadata->name;
-					}
-				};
 				std::unordered_map<std::wstring, RankedCandidate> candidates_pool;
 				constexpr int DEFAULT_APP_SCORE = 10;
 				constexpr int OTHER_APP_SCORE   = 1;
 
-				struct AppListForUti
-				{
-					std::optional<AppBundleMetadata> default_app_metadata;
-					std::vector<AppBundleMetadata> compatible_apps_metadata;
-				};
 				std::unordered_map<std::string, AppListForUti> uti_to_apps_cache;
 
 				std::unordered_set<std::wstring> app_ids_seen_for_file;
@@ -462,5 +424,22 @@ namespace openwith
 		std::vector<std::wstring> result_vec(unique_profile_strings.begin(), unique_profile_strings.end());
 		return result_vec;
 	}
+
+
+	std::wstring MacOSAppProvider::EscapeForShell(const std::wstring& arg)
+	{
+		std::wstring out;
+		out.push_back(L'\'');
+		for (wchar_t c : arg) {
+			if (c == L'\'') {
+				out.append(L"'\\''");
+			} else {
+				out.push_back(c);
+			}
+		}
+		out.push_back(L'\'');
+		return out;
+	}
+
 } // namespace openwith
 #endif // __APPLE__
