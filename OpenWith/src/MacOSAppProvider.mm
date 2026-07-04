@@ -1,3 +1,4 @@
+// New version of "MacOSAppProvider.mm": after refactor search/ranking/sort algos
 #if defined(__APPLE__)
 
 #include <AvailabilityMacros.h>
@@ -23,6 +24,7 @@
 #include "WideMB.h"
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -131,13 +133,13 @@ namespace openwith
 
 				struct RankedCandidate
 				{
-					AppBundleMetadata metadata;
+					const AppBundleMetadata* metadata = nullptr;
 					int score = 0;
 					int match_count = 0;
 					bool operator<(const RankedCandidate& other) const
 					{
 						if (score != other.score) return score > other.score;
-						return metadata.name < other.metadata.name;
+						return metadata->name < other.metadata->name;
 					}
 				};
 				std::unordered_map<std::wstring, RankedCandidate> candidates_pool;
@@ -150,6 +152,8 @@ namespace openwith
 					std::vector<AppBundleMetadata> compatible_apps_metadata;
 				};
 				std::unordered_map<std::string, UtiAppList> uti_to_apps_cache;
+
+				std::unordered_set<std::wstring> processed_app_ids;
 
 				ReportProgress({GetMsg(MsgID::DiscoveringApplications), nullptr});
 
@@ -232,34 +236,26 @@ namespace openwith
 							cache_it = uti_to_apps_cache.insert({uti_std_str, std::move(new_cache_entry)}).first;
 						}
 
-						std::unordered_set<std::wstring> processed_app_ids;
-
 						const UtiAppList& uti_app_list = cache_it->second;
+						processed_app_ids.clear();
+
+						auto process_app = [&](const AppBundleMetadata& metadata, int score_to_add) {
+							if (!processed_app_ids.insert(metadata.id).second) return;
+
+							auto [it, inserted] = candidates_pool.try_emplace(metadata.id);
+							if (inserted) {
+								it->second.metadata = &metadata;
+							}
+							it->second.score += score_to_add;
+							it->second.match_count++;
+						};
 
 						if (uti_app_list.default_app_metadata) {
-							const auto& metadata = *uti_app_list.default_app_metadata;
-							auto [it, inserted] = candidates_pool.try_emplace(metadata.id);
-							RankedCandidate& ranked_candidate = it->second;
-							if (inserted) {
-								ranked_candidate.metadata = metadata;
-							}
-							ranked_candidate.score += DEFAULT_APP_SCORE;
-							ranked_candidate.match_count++;
-							processed_app_ids.insert(metadata.id);
+							process_app(*uti_app_list.default_app_metadata, DEFAULT_APP_SCORE);
 						}
 
 						for (const auto& metadata : uti_app_list.compatible_apps_metadata) {
-							if (processed_app_ids.count(metadata.id)) {
-								continue;
-							}
-							auto [it, inserted] = candidates_pool.try_emplace(metadata.id);
-							RankedCandidate& ranked_candidate = it->second;
-							if (inserted) {
-								ranked_candidate.metadata = metadata;
-							}
-							ranked_candidate.score += OTHER_APP_SCORE;
-							ranked_candidate.match_count++;
-							processed_app_ids.insert(metadata.id);
+							process_app(metadata, OTHER_APP_SCORE);
 						}
 
 #ifdef __clang__
@@ -292,22 +288,22 @@ namespace openwith
 					out_candidates.reserve(ranked_finalists.size());
 
 					// Count name occurrences to identify duplicates that need disambiguation.
-					std::unordered_map<std::wstring, int> name_counts;
+					std::unordered_map<std::wstring_view, int> name_counts;
 					for (const auto& ranked_finalist : ranked_finalists) {
-						name_counts[ranked_finalist.metadata.name]++;
+						name_counts[ranked_finalist.metadata->name]++;
 					}
 
 					// Build the final list in the output format.
 					for (const auto& ranked_finalist : ranked_finalists) {
 						CandidateInfo out_candidate;
-						out_candidate.id = ranked_finalist.metadata.id;
+						out_candidate.id = ranked_finalist.metadata->id;
 						out_candidate.terminal = false;
-						out_candidate.name = ranked_finalist.metadata.name;
+						out_candidate.name = ranked_finalist.metadata->name;
 						out_candidate.multi_file_aware = true;
 
 						// If an app name is duplicated, append its version string to make it unique in the UI.
-						if (name_counts[ranked_finalist.metadata.name] > 1 && !ranked_finalist.metadata.version_string.empty()) {
-							out_candidate.name += L" (" + ranked_finalist.metadata.version_string + L")";
+						if (name_counts[ranked_finalist.metadata->name] > 1 && !ranked_finalist.metadata->version_string.empty()) {
+							out_candidate.name += L" (" + ranked_finalist.metadata->version_string + L")";
 						}
 						out_candidates.push_back(out_candidate);
 					}
