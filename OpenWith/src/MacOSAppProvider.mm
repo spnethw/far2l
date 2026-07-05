@@ -12,8 +12,9 @@
 #endif
 
 #import <Cocoa/Cocoa.h>
+
 #if MAC_OS_X_VERSION_MAX_ALLOWED >= 110000
-#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+	#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #endif
 
 #include "MacOSAppProvider.hpp"
@@ -59,7 +60,9 @@ namespace
 		int match_count = 0;
 		bool operator<(const RankedCandidate& other) const
 		{
-			if (score != other.score) return score > other.score;
+			if (score != other.score) {
+				return score > other.score;
+			}
 			return metadata->name < other.metadata->name;
 		}
 	};
@@ -74,7 +77,9 @@ namespace
 
 	std::string NSURLToPath(NSURL *url)
 	{
-		if (!url) return {};
+		if (!url) {
+			return {};
+		}
 		return std::string([[url path] UTF8String]);
 	}
 
@@ -137,13 +142,11 @@ namespace openwith
 			try {
 				// --- Part 1: Candidate discovery and scoring with caching ---
 
+				std::unordered_map<std::string, AppListForUti> uti_to_apps_cache;
 				std::unordered_map<std::wstring, RankedCandidate> candidates_pool;
+				std::unordered_set<std::wstring> app_ids_seen_for_file;
 				constexpr int DEFAULT_APP_SCORE = 10;
 				constexpr int OTHER_APP_SCORE   = 1;
-
-				std::unordered_map<std::string, AppListForUti> uti_to_apps_cache;
-
-				std::unordered_set<std::wstring> app_ids_seen_for_file;
 
 				ReportProgress({GetMsg(MsgID::DiscoveringApplications), nullptr});
 				const size_t files_total = filepaths.size();

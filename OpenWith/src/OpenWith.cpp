@@ -53,7 +53,7 @@ namespace openwith
 		while (true) {
 			if (!app_candidates.has_value()) {
 
-				auto result = FetchCandidatesWithProgress(*provider, filepaths);
+				auto result = RunCandidateDiscoveryTask(*provider, filepaths);
 				if (result.was_cancelled) {
 					return;
 				}
@@ -151,7 +151,7 @@ namespace openwith
 
 	// Runs GetAppCandidates() on a background thread and shows a progress dialog if the operation takes longer than 300 ms.
 	// Returns the result and a cancellation flag; rethrows any exception thrown by the provider.
-	AppProvider::GetCandidatesResult Plugin::FetchCandidatesWithProgress(AppProvider& provider, const std::vector<std::wstring>& filepaths)
+	AppProvider::GetCandidatesResult Plugin::RunCandidateDiscoveryTask(AppProvider& provider, const std::vector<std::wstring>& filepaths)
 	{
 		ProgressState state;
 

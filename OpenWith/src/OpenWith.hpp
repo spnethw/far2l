@@ -98,7 +98,7 @@ namespace openwith
 			Forced    // Shift+Enter
 		};
 
-		static AppProvider::GetCandidatesResult FetchCandidatesWithProgress(AppProvider& provider, const std::vector<std::wstring>& filepaths);
+		static AppProvider::GetCandidatesResult RunCandidateDiscoveryTask(AppProvider& provider, const std::vector<std::wstring>& filepaths);
 		static LONG_PTR WINAPI ProgressDlgProc(HANDLE progress_dlg, int msg, int param1, LONG_PTR param2);
 		static void ShowProgressDlg(ProgressState& state);
 
