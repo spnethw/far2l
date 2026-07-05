@@ -47,9 +47,9 @@ namespace
 
 	struct AppBundleMetadata
 	{
-		std::wstring name;
-		std::wstring id;             // The full path to the .app bundle, used as a unique identifier.
-		std::wstring version_string; // Used for disambiguation if names conflict.
+		std::string name;
+		std::string id; // The full path to the .app bundle, used as a unique identifier.
+		std::string version_string; // Used for disambiguation if names conflict.
 	};
 
 
@@ -89,22 +89,21 @@ namespace
 		AppBundleMetadata metadata;
 		NSBundle *bundle = [NSBundle bundleWithURL:app_url];
 		NSDictionary *info_dict = [bundle infoDictionary];
-
-		// Prefer the display name, but fall back to the filename if it's not available.
+// Prefer the display name, but fall back to the filename if it's not available.
 		NSString *bundle_name = [info_dict objectForKey:@"CFBundleDisplayName"] ?: [info_dict objectForKey:@"CFBundleName"];
 
 		// Get version strings. Prefer the short, user-facing version.
 		NSString *bundle_short_version = [info_dict objectForKey:@"CFBundleShortVersionString"];
 		NSString *bundle_version = [info_dict objectForKey:@"CFBundleVersion"];
 
-		metadata.name = StrMB2Wide(bundle_name ? [bundle_name UTF8String] : NSURLToPath(app_url));
-		metadata.id = StrMB2Wide(NSURLToPath(app_url));
+		metadata.name = bundle_name ? [bundle_name UTF8String] : NSURLToPath(app_url);
+		metadata.id = NSURLToPath(app_url);
 
 		// Store the most descriptive version string available for disambiguation.
 		if (bundle_short_version) {
-			metadata.version_string = StrMB2Wide([bundle_short_version UTF8String]);
+			metadata.version_string = [bundle_short_version UTF8String];
 		} else if (bundle_version) {
-			metadata.version_string = StrMB2Wide([bundle_version UTF8String]);
+			metadata.version_string = [bundle_version UTF8String];
 		}
 
 		return metadata;
@@ -115,13 +114,11 @@ namespace
 namespace openwith
 {
 	MacOSAppProvider::MacOSAppProvider() = default;
-
 	// Find application candidates that can open all specified files.
 	// The logic uses a scoring system to rank candidates.
 	// The default application for a file type receives a higher score, ensuring it appears first in the list.
 	// To optimize performance for large file selections, parsed application metadata is cached locally
 	// per-invocation based on the file's Uniform Type Identifier (UTI).
-
 	AppProvider::GetCandidatesResult MacOSAppProvider::GetAppCandidates(const std::vector<std::wstring>& filepaths, ProgressCallback progress, const std::atomic<bool>* cancel_flag)
 	{
 		_last_uti_profiles.clear();
@@ -132,7 +129,6 @@ namespace openwith
 		}
 
 		OperationGuard guard(*this, std::move(progress), cancel_flag);
-
 #ifdef __clang__
 		@autoreleasepool {
 #else
@@ -143,8 +139,8 @@ namespace openwith
 				// --- Part 1: Candidate discovery and scoring with caching ---
 
 				std::unordered_map<std::string, AppListForUti> uti_to_apps_cache;
-				std::unordered_map<std::wstring, RankedCandidate> candidates_pool;
-				std::unordered_set<std::wstring> app_ids_seen_for_file;
+				std::unordered_map<std::string, RankedCandidate> candidates_pool;
+				std::unordered_set<std::string> app_ids_seen_for_file;
 				constexpr int DEFAULT_APP_SCORE = 10;
 				constexpr int OTHER_APP_SCORE   = 1;
 
@@ -160,7 +156,6 @@ namespace openwith
 					swprintf(status_buf, std::size(status_buf), GetMsg(MsgID::ProcessingFiles), ++files_processed, files_total);
 					ReportProgress({nullptr, status_buf});
 					CheckCancellation();
-
 #ifdef __clang__
 					@autoreleasepool {
 #else
@@ -231,7 +226,6 @@ namespace openwith
 						}
 
 						const AppListForUti& app_list_for_uti = cache_it->second;
-
 						auto register_app = [&](const AppBundleMetadata& metadata, int score_weight) {
 							if (!app_ids_seen_for_file.insert(metadata.id).second) {
 								return;
@@ -261,7 +255,6 @@ namespace openwith
 				}
 
 				ReportProgress({nullptr, GetMsg(MsgID::MatchingFilteringRanking)});
-
 				// --- Part 2: Filtering and sorting ---
 
 				std::vector<RankedCandidate> ranked_finalists;
@@ -274,33 +267,32 @@ namespace openwith
 				}
 
 				std::sort(ranked_finalists.begin(), ranked_finalists.end());
-
 				// --- Part 3: Final list generation ---
 
 				std::vector<CandidateInfo> out_candidates;
 				if (!ranked_finalists.empty()) {
 					out_candidates.reserve(ranked_finalists.size());
-
-					// Count name occurrences to identify duplicates that need disambiguation.
-					std::unordered_map<std::wstring_view, int> app_name_frequencies;
+// Count name occurrences to identify duplicates that need disambiguation.
+					std::unordered_map<std::string_view, int> app_name_frequencies;
 					for (const auto& ranked_finalist : ranked_finalists) {
 						app_name_frequencies[ranked_finalist.metadata->name]++;
-					}
+}
 
 					// Build the final list in the output format.
 					for (const auto& ranked_finalist : ranked_finalists) {
 						CandidateInfo out_candidate;
-						out_candidate.id = ranked_finalist.metadata->id;
-						out_candidate.terminal = false;
-						out_candidate.name = ranked_finalist.metadata->name;
+						out_candidate.id = StrMB2Wide(ranked_finalist.metadata->id);
+out_candidate.terminal = false;
 						out_candidate.multi_file_aware = true;
 
+						std::string display_name = ranked_finalist.metadata->name;
 						// If an app name is duplicated, append its version string to make it unique in the UI.
-						if (app_name_frequencies[ranked_finalist.metadata->name] > 1 && !ranked_finalist.metadata->version_string.empty()) {
-							out_candidate.name += L" (" + ranked_finalist.metadata->version_string + L")";
+if (app_name_frequencies[ranked_finalist.metadata->name] > 1 && !ranked_finalist.metadata->version_string.empty()) {
+							display_name += " (" + ranked_finalist.metadata->version_string + ")";
 						}
+						out_candidate.name = StrMB2Wide(display_name);
 						out_candidates.push_back(out_candidate);
-					}
+}
 				}
 
 				// Populate candidates on normal successful exit
@@ -359,7 +351,6 @@ namespace openwith
 			}
 
 			NSDictionary *info_dict = [bundle infoDictionary];
-
 			NSString *app_name = [info_dict objectForKey:@"CFBundleDisplayName"] ?: [info_dict objectForKey:@"CFBundleName"];
 			if (app_name) {
 				details.push_back({GetMsg(MsgID::AppName), StrMB2Wide([app_name UTF8String])});
@@ -409,10 +400,10 @@ namespace openwith
 					continue;
 				}
 
-				// File was accessible; convert its recorded UTI to a MIME type.
+				// File was accessible;
+				// convert its recorded UTI to a MIME type.
 				std::wstring out_mime_wstr;
 				NSString *uti = [NSString stringWithUTF8String:profile.uti.c_str()];
-
 				// Use the appropriate API based on the target macOS version.
 #if MAC_OS_X_VERSION_MAX_ALLOWED >= 110000 // UTType is available on macOS 11.0+
 				// Modern approach for macOS 11.0 and later, converting a UTI to a MIME type.
