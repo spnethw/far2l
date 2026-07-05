@@ -32,9 +32,10 @@
 namespace
 {
 #ifndef __clang__
-	// GCC/MRC: @autoreleasepool does not drain on C++ exceptions.
-	// This RAII wrapper ensures the pool is always drained, even when
-	// OperationCancelledException propagates through the loop body.
+
+	// GCC/MRC: @autoreleasepool does not drain on C++ exceptions. This RAII wrapper ensures the pool
+	// is always drained, even when OperationCancelledException propagates through the loop body.
+
 	struct AutoreleasePoolGuard
 	{
 		NSAutoreleasePool *pool;
@@ -48,7 +49,7 @@ namespace
 	struct AppBundleMetadata
 	{
 		std::string name;
-		std::string id; // The full path to the .app bundle, used as a unique identifier.
+		std::string id;             // The full path to the .app bundle, used as a unique identifier.
 		std::string version_string; // Used for disambiguation if names conflict.
 	};
 
@@ -86,20 +87,16 @@ namespace
 
 	AppBundleMetadata ParseAppBundleMetadata(NSURL *app_url)
 	{
-		AppBundleMetadata metadata;
 		NSBundle *bundle = [NSBundle bundleWithURL:app_url];
 		NSDictionary *info_dict = [bundle infoDictionary];
-// Prefer the display name, but fall back to the filename if it's not available.
 		NSString *bundle_name = [info_dict objectForKey:@"CFBundleDisplayName"] ?: [info_dict objectForKey:@"CFBundleName"];
-
-		// Get version strings. Prefer the short, user-facing version.
 		NSString *bundle_short_version = [info_dict objectForKey:@"CFBundleShortVersionString"];
 		NSString *bundle_version = [info_dict objectForKey:@"CFBundleVersion"];
 
+		AppBundleMetadata metadata;
+
 		metadata.name = bundle_name ? [bundle_name UTF8String] : NSURLToPath(app_url);
 		metadata.id = NSURLToPath(app_url);
-
-		// Store the most descriptive version string available for disambiguation.
 		if (bundle_short_version) {
 			metadata.version_string = [bundle_short_version UTF8String];
 		} else if (bundle_version) {
@@ -114,11 +111,8 @@ namespace
 namespace openwith
 {
 	MacOSAppProvider::MacOSAppProvider() = default;
-	// Find application candidates that can open all specified files.
-	// The logic uses a scoring system to rank candidates.
-	// The default application for a file type receives a higher score, ensuring it appears first in the list.
-	// To optimize performance for large file selections, parsed application metadata is cached locally
-	// per-invocation based on the file's Uniform Type Identifier (UTI).
+
+
 	AppProvider::GetCandidatesResult MacOSAppProvider::GetAppCandidates(const std::vector<std::wstring>& filepaths, ProgressCallback progress, const std::atomic<bool>* cancel_flag)
 	{
 		_last_uti_profiles.clear();
@@ -148,7 +142,6 @@ namespace openwith
 				const size_t files_total = filepaths.size();
 				size_t files_processed = 0;
 
-				// Iterate through each selected file to find and score compatible applications.
 				for (const auto& filepath : filepaths) {
 					app_ids_seen_for_file.clear();
 
@@ -175,8 +168,8 @@ namespace openwith
 						NSError *error = nil;
 						BOOL success = [file_url getResourceValue:&uti forKey:NSURLTypeIdentifierKey error:&error];
 						if (!success) {
-						    _last_uti_profiles.insert({ "", false });
-						    continue;
+							 _last_uti_profiles.insert({ "", false });
+							continue;
 						}
 						if (!uti) {
 							_last_uti_profiles.insert({ "", true });
@@ -254,8 +247,9 @@ namespace openwith
 #endif
 				}
 
-				ReportProgress({nullptr, GetMsg(MsgID::MatchingFilteringRanking)});
 				// --- Part 2: Filtering and sorting ---
+
+				ReportProgress({nullptr, GetMsg(MsgID::MatchingFilteringRanking)});
 
 				std::vector<RankedCandidate> ranked_finalists;
 
@@ -267,32 +261,33 @@ namespace openwith
 				}
 
 				std::sort(ranked_finalists.begin(), ranked_finalists.end());
+
 				// --- Part 3: Final list generation ---
 
 				std::vector<CandidateInfo> out_candidates;
 				if (!ranked_finalists.empty()) {
 					out_candidates.reserve(ranked_finalists.size());
-// Count name occurrences to identify duplicates that need disambiguation.
+					// Count name occurrences to identify duplicates that need disambiguation.
 					std::unordered_map<std::string_view, int> app_name_frequencies;
 					for (const auto& ranked_finalist : ranked_finalists) {
 						app_name_frequencies[ranked_finalist.metadata->name]++;
-}
+					}
 
 					// Build the final list in the output format.
 					for (const auto& ranked_finalist : ranked_finalists) {
 						CandidateInfo out_candidate;
 						out_candidate.id = StrMB2Wide(ranked_finalist.metadata->id);
-out_candidate.terminal = false;
+						out_candidate.terminal = false;
 						out_candidate.multi_file_aware = true;
 
 						std::string display_name = ranked_finalist.metadata->name;
 						// If an app name is duplicated, append its version string to make it unique in the UI.
-if (app_name_frequencies[ranked_finalist.metadata->name] > 1 && !ranked_finalist.metadata->version_string.empty()) {
+						if (app_name_frequencies[ranked_finalist.metadata->name] > 1 && !ranked_finalist.metadata->version_string.empty()) {
 							display_name += " (" + ranked_finalist.metadata->version_string + ")";
 						}
 						out_candidate.name = StrMB2Wide(display_name);
 						out_candidates.push_back(out_candidate);
-}
+					}
 				}
 
 				// Populate candidates on normal successful exit
@@ -385,7 +380,7 @@ if (app_name_frequencies[ranked_finalist.metadata->name] > 1 && !ranked_finalist
 	// This function performs the UTI-to-MIME-type conversion on demand.
 	std::vector<std::wstring> MacOSAppProvider::GetMimeTypes()
 	{
-		std::unordered_set<std::wstring> unique_profile_strings;
+		std::unordered_set<std::string> unique_profile_strings;
 		unique_profile_strings.reserve(_last_uti_profiles.size());
 
 #ifdef __clang__
@@ -396,46 +391,53 @@ if (app_name_frequencies[ranked_finalist.metadata->name] > 1 && !ranked_finalist
 #endif
 			for (const auto& profile : _last_uti_profiles) {
 				if (!profile.accessible) {
-					unique_profile_strings.insert(L"(inaccessible)");
+					unique_profile_strings.insert("(inaccessible)");
 					continue;
 				}
 
-				// File was accessible;
-				// convert its recorded UTI to a MIME type.
-				std::wstring out_mime_wstr;
+				// File was accessible; convert its recorded UTI to a MIME type.
+				std::string out_mime_str;
 				NSString *uti = [NSString stringWithUTF8String:profile.uti.c_str()];
-				// Use the appropriate API based on the target macOS version.
+				if (uti && [uti length] > 0) {
 #if MAC_OS_X_VERSION_MAX_ALLOWED >= 110000 // UTType is available on macOS 11.0+
-				// Modern approach for macOS 11.0 and later, converting a UTI to a MIME type.
-				UTType *type = [UTType typeWithIdentifier:uti];
-				if (type) {
-					NSString *ns_mime_str = type.preferredMIMEType;
-					if (ns_mime_str) out_mime_wstr = StrMB2Wide([ns_mime_str UTF8String]);
-				}
+					// Modern approach for macOS 11.0 and later, converting a UTI to a MIME type.
+					UTType *type = [UTType typeWithIdentifier:uti];
+					if (type) {
+						if (NSString *ns_mime_str = type.preferredMIMEType) {
+							if (const char *utf8_ptr = [ns_mime_str UTF8String]) {
+								out_mime_str = utf8_ptr;
+							}
+						}
+					}
 #else
-				// Legacy approach for older macOS versions.
+					// Legacy approach for older macOS versions.
 #if __has_feature(objc_arc)
-				CFStringRef cf_mime_tag = UTTypeCopyPreferredTagWithClass((__bridge CFStringRef)uti,
-																	   kUTTagClassMIMEType);
-				if (cf_mime_tag) {
-					// Transfer ownership of the CFStringRef to ARC.
-					NSString *ns_mime_str = (__bridge_transfer NSString *)cf_mime_tag;
-					out_mime_wstr = StrMB2Wide([ns_mime_str UTF8String]);
-				}
+					CFStringRef cf_mime_tag = UTTypeCopyPreferredTagWithClass((__bridge CFStringRef)uti,
+																		   kUTTagClassMIMEType);
+					if (cf_mime_tag) {
+						// Transfer ownership of the CFStringRef to ARC.
+						NSString *ns_mime_str = (__bridge_transfer NSString *)cf_mime_tag;
+						if (const char *utf8_ptr = [ns_mime_str UTF8String]) {
+							out_mime_str = utf8_ptr;
+						}
+					}
 #else // Manual Retain-Release (MRC) mode or GCC.
-				CFStringRef cf_mime_tag = UTTypeCopyPreferredTagWithClass((CFStringRef)uti,
-																	   kUTTagClassMIMEType);
-				if (cf_mime_tag) {
-					NSString *ns_mime_str = [(NSString *)cf_mime_tag autorelease];
-					out_mime_wstr = StrMB2Wide([ns_mime_str UTF8String]);
+					CFStringRef cf_mime_tag = UTTypeCopyPreferredTagWithClass((CFStringRef)uti,
+																		   kUTTagClassMIMEType);
+					if (cf_mime_tag) {
+						NSString *ns_mime_str = [(NSString *)cf_mime_tag autorelease];
+						if (const char *utf8_ptr = [ns_mime_str UTF8String]) {
+							out_mime_str = utf8_ptr;
+						}
+					}
+#endif
+#endif
 				}
-#endif
-#endif
 
-				if (out_mime_wstr.empty()) {
-					unique_profile_strings.insert(L"(none)");
+				if (out_mime_str.empty()) {
+					unique_profile_strings.insert("(none)");
 				} else {
-					unique_profile_strings.insert(L"(" + out_mime_wstr + L")");
+					unique_profile_strings.insert("(" + out_mime_str + ")");
 				}
 			}
 #ifdef __clang__
@@ -444,7 +446,12 @@ if (app_name_frequencies[ranked_finalist.metadata->name] > 1 && !ranked_finalist
 		} // end of AutoreleasePoolGuard
 #endif
 
-		std::vector<std::wstring> result_vec(unique_profile_strings.begin(), unique_profile_strings.end());
+		// Perform UTF-8 to Wide conversion strictly once per unique MIME profile string.
+		std::vector<std::wstring> result_vec;
+		result_vec.reserve(unique_profile_strings.size());
+		for (const auto& mime_str : unique_profile_strings) {
+			result_vec.push_back(StrMB2Wide(mime_str));
+		}
 		return result_vec;
 	}
 
