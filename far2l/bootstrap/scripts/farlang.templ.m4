@@ -3468,6 +3468,17 @@ upd:"Use shell"
 "Використовувати &шелл"
 "Ужываць &shell"
 
+ConfigShowStartupBanner
+"Показывать стартовый баннер во встроенном терминале"
+"Show startup banner in built-in terminal"
+upd:"Show startup banner in built-in terminal"
+upd:"Show startup banner in built-in terminal"
+upd:"Show startup banner in built-in terminal"
+upd:"Show startup banner in built-in terminal"
+upd:"Show startup banner in built-in terminal"
+upd:"Show startup banner in built-in terminal"
+upd:"Show startup banner in built-in terminal"
+
 ConfigCmdlineUsePromptFormat
 "Установить &формат командной строки"
 "Set &command line prompt format"
