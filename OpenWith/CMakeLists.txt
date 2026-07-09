@@ -1,14 +1,20 @@
 project(OpenWith)
 
 set(SOURCES
-src/OpenWith.cpp
-src/AppProvider.cpp
-src/XDGBasedAppProvider.cpp
-src/ExtensionMimeMap.cpp
+    src/OpenWith.cpp
+    src/AppProvider.cpp
 )
 
 if(APPLE)
-    list(APPEND SOURCES src/MacOSAppProvider.mm)
+    list(APPEND SOURCES
+        src/LaunchServicesBridge.mm
+        src/MacOSAppProvider.cpp
+    )
+else()
+    list(APPEND SOURCES
+        src/XDGBasedAppProvider.cpp
+        src/ExtensionMimeMap.cpp
+    )
 endif()
 
 add_library (${PROJECT_NAME} MODULE ${SOURCES})
