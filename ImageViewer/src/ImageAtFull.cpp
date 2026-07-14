@@ -231,6 +231,12 @@ static LONG_PTR WINAPI ImageDlgProc(HANDLE hDlg, int Msg, int Param1, LONG_PTR P
 				case KEY_F4:
 					iv->RunProcessingCommand();
 					break;
+				case 'i': case 'I':
+					iv->ShowExifInfo();
+					break;
+				case 'g': case 'G':
+					iv->ShowGpsInfo();
+					break;
 			}
 		}
 		return TRUE;
