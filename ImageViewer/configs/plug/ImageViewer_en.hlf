@@ -20,6 +20,7 @@ $^#Using the Plugin#
   Required external packages:
    - #ImageMagick# (#convert# command) - for image processing and conversion;
    - #ffmpeg# (#ffmpeg# and #ffprobe# commands) - for creating video frame previews;
+   - #exiftool# - for metadata and GPS queries;
    - any other utilities used in your ~custom commands~@ExtraCommands@.
 
 
@@ -87,6 +88,9 @@ the following shortcuts are available.
    Toggle Windowed / Fullscreen               #F5# or #F#
     (switching also performs #=#)
    ~Plugin Configuration~@settings@                       #F9#
+   Choose a map service and open              #G#
+    location from EXIF in browser
+   Show media metadata (exiftool)             #I#
 
 
  #HEADER INFORMATION#
