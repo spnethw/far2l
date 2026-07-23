@@ -1,5 +1,5 @@
-#include "Common.h"
 #include "ImageView.h"
+#include "Common.h"
 #include "lng.h"
 #include "Settings.h"
 #include "ToolExec.h"
@@ -897,8 +897,7 @@ bool ImageView::ShowExifInfo()
 
 	const std::wstring exiftool_output = StrMB2Wide(exiftool.FetchStdout());
 	if (exiftool_output.empty()) {
-		const wchar_t *MsgItems[] = {g_settings.Msg(M_TITLE), g_settings.Msg(M_NO_EXIF_OR_UNSUPPORTED_FORMAT)};
-		g_far.Message(g_far.ModuleNumber, FMSG_WARNING | FMSG_MB_OK, nullptr, MsgItems, ARRAYSIZE(MsgItems), 0);
+		ShowError({g_settings.Msg(M_NO_EXIF_OR_UNSUPPORTED_FORMAT)});
 		return false;
 	}
 
@@ -950,8 +949,7 @@ void ImageView::ShowGpsInfo()
 	stream.imbue(std::locale::classic());
 
 	if (!(stream >> latitude >> longitude)) {
-		const wchar_t *MsgItems[] = {g_settings.Msg(M_TITLE), g_settings.Msg(M_NO_GPS_METADATA_FOUND)};
-		g_far.Message(g_far.ModuleNumber, FMSG_WARNING | FMSG_MB_OK, nullptr, MsgItems, ARRAYSIZE(MsgItems), 0);
+		ShowError({g_settings.Msg(M_NO_GPS_METADATA_FOUND)});
 		return;
 	}
 
