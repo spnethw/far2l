@@ -1,5 +1,5 @@
-#include "Common.h"
 #include "Settings.h"
+#include "Common.h"
 #include <KeyFileHelper.h>
 #include <utils.h>
 #include <wchar.h>
